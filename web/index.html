@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>northplan</title>
+  <!-- No build step, no npm, no bundler. Two CDN scripts and one file. -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; line-height: 1.55;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    .sub { opacity: 0.7; margin-top: 0; }
+    .status { padding: 0.75rem 1rem; border-left: 3px solid currentColor; opacity: 0.85; }
+    #chart { height: 24rem; margin-top: 1.5rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body x-data="northplan()" x-init="checkHealth()">
+
+  <h1>northplan</h1>
+  <p class="sub">Canadian household financial planning engine</p>
+
+  <div class="status">
+    <p>
+      API: <strong x-text="health"></strong>
+    </p>
+    <p>
+      The engine is not implemented yet. The simulation endpoints return
+      <code>501</code> by design — see the build order in
+      <code>README.md</code>. Parameters under <code>params/</code> are empty
+      stubs awaiting hand-verified values.
+    </p>
+  </div>
+
+  <!-- Plotly renders here once /api/simulate returns something. -->
+  <div id="chart"></div>
+
+  <script>
+    function northplan() {
+      return {
+        health: 'checking…',
+        async checkHealth() {
+          try {
+            const r = await fetch('/health');
+            this.health = r.ok ? (await r.json()).status : `error ${r.status}`;
+          } catch (e) {
+            this.health = 'unreachable';
+          }
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

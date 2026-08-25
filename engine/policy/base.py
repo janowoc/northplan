@@ -1,0 +1,68 @@
+"""The policy interface and the information a policy is allowed to see."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
+from numpy.typing import NDArray
+
+from engine.core.state import HouseholdState
+from engine.params.loader import ParamYear
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """What a policy decided for one year, for all paths.
+
+    Attributes:
+        contributions: Amount to contribute per person per account type, real
+            dollars. Keys are ``(person_id, account)``; values ``(n_paths,)``.
+        withdrawals: Discretionary withdrawals, same keying. Mandatory minimums
+            are applied by the annual step on top of these, not by the policy.
+        cpp_start_age_months: Age in months at which each person starts CPP.
+            Read once, at the year the decision binds.
+        oas_start_age_months: Age in months at which each person starts OAS.
+    """
+
+    contributions: dict[tuple[str, str], NDArray[np.float64]]
+    withdrawals: dict[tuple[str, str], NDArray[np.float64]]
+    cpp_start_age_months: dict[str, NDArray[np.float64]]
+    oas_start_age_months: dict[str, NDArray[np.float64]]
+
+
+class Policy(Protocol):
+    """A decision rule the optimizer can evaluate.
+
+    Implementations are pure and stateless: everything they need arrives in
+    ``decide``. State kept on the object between years would be a channel for
+    information the policy is not entitled to.
+    """
+
+    def decide(
+        self,
+        state: HouseholdState,
+        params: ParamYear,
+    ) -> Decision:
+        """Choose this year's contributions and withdrawals.
+
+        Args:
+            state: Opening state for the current year. This, and the current
+                year's ``params``, are the *only* inputs. Anything else is
+                clairvoyance.
+            params: Parameters for the current tax year.
+
+        Returns:
+            The year's :class:`Decision`.
+        """
+        ...
+
+    def free_parameters(self) -> dict[str, float]:
+        """The numbers the optimizer is searching over, by name.
+
+        Returns:
+            Parameter name to current value. The optimizer varies these and
+            rebuilds the policy; it never mutates a policy in place.
+        """
+        ...

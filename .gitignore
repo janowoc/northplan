@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# northplan
+#   Real user scenarios stay local. Regression fixtures use the same schema
+#   and the same directory, but are named without .local and are committed.
+*.local.yaml
+*.local.yml
+
+#   Result exports
+*.results.json
+*.results.csv

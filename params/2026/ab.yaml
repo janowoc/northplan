@@ -1,0 +1,20 @@
+# Alberta provincial income tax parameters — tax year 2026
+#
+# STUB. Deliberately empty. Populated by hand, by a human, one value at a time.
+#
+# Rules for this file:
+#   - Every value carries an inline comment with its source URL and the date it
+#     was checked, e.g.
+#         basic_personal_amount: <amount>  # <source-url> checked YYYY-MM-DD
+#   - Every value also gets a row in docs/VERIFICATION.md before it is trusted.
+#   - Amounts are annual dollars unless the key name says otherwise.
+#   - Rates are bare fractions (0.15), never percentages (15) or basis points.
+#   - Dollar amounts here are the nominal amounts as published for the tax year.
+#     The engine works in real dollars internally and does the conversion; do
+#     not pre-deflate anything written here.
+#
+# Claude must never add, edit, infer, or estimate a value in this file. If a
+# needed parameter is absent, the loader raises MissingParameterError and the
+# correct response is to stop and ask.
+#
+# Expected: bracket edges and rates, basic personal amount, provincial credits.

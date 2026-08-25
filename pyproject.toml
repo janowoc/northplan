@@ -1,0 +1,91 @@
+[project]
+name = "northplan"
+version = "0.0.0"
+description = "Canadian household financial planning engine: deterministic simulator, Monte Carlo, policy optimizer"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Jan Owoc" }]
+requires-python = "==3.12.*"
+
+dependencies = [
+    "numpy>=2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+northplan = "cli.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "engine",
+    "engine.params",
+    "engine.tax",
+    "engine.benefits",
+    "engine.accounts",
+    "engine.core",
+    "engine.mc",
+    "engine.policy",
+    "engine.optimize",
+    "api",
+    "cli",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "golden: hand-verified expected values. Never edit an expected value to make one pass.",
+    "characterization: behaviour snapshot. Regenerate only on explicit human instruction.",
+]
+filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+    "NPY",  # numpy-specific
+    "ARG",  # unused arguments
+    "PTH",  # use pathlib
+]
+ignore = [
+    # Stub bodies raise NotImplementedError, so their arguments are unused by
+    # construction. Remove this once the modules are implemented.
+    "ARG001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may assert on private helpers and use long literal tables.
+"tests/**" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["engine", "api", "cli"]

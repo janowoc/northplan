@@ -1,0 +1,15 @@
+services:
+  northplan:
+    build: .
+    # Bound to loopback: this serves a household's complete financial position
+    # and has no authentication. Do not change to 0.0.0.0 without adding some.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Hand-edited parameters take effect on restart, without a rebuild.
+      - ./params:/app/params:ro
+      # Scenarios are files on a mounted volume. There is no database.
+      - ./scenarios:/app/scenarios
+    environment:
+      NORTHPLAN_SCENARIO_DIR: /app/scenarios
+    restart: unless-stopped
