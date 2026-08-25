@@ -7,7 +7,12 @@
 #     was checked, e.g.
 #         basic_personal_amount: <amount>  # <source-url> checked YYYY-MM-DD
 #   - Every value also gets a row in docs/VERIFICATION.md before it is trusted.
-#   - Amounts are annual dollars unless the key name says otherwise.
+#   - Say the period in the key name. Benefits are published monthly and
+#     tax amounts annually, and the engine now steps monthly, so a key that
+#     does not say which it is will eventually be read as the wrong one.
+#     Prefer `maximum_monthly_pension` and `basic_personal_amount_annual`
+#     over a bare name. Never convert between the two here; write the
+#     amount as published and let the engine convert once.
 #   - Rates are bare fractions (0.15), never percentages (15) or basis points.
 #   - Dollar amounts here are the nominal amounts as published for the tax year.
 #     The engine works in real dollars internally and does the conversion; do
@@ -17,4 +22,4 @@
 # needed parameter is absent, the loader raises MissingParameterError and the
 # correct response is to stop and ask.
 #
-# Expected: minimum withdrawal factor by age, and the rule for which age applies (age at start of year), plus the pre-71 formula basis.
+# Expected: minimum withdrawal factor by age, and the rule for which age applies (age at start of year), plus the pre-71 formula basis. The minimum is an annual amount, fixed each January from the 1 January balance and satisfied by 31 December; the monthly loop needs no extra parameter for that, only the conversion age.

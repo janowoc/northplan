@@ -58,7 +58,8 @@ def search(
         initial_state: Opening state, shared by every candidate.
         draws: Common random numbers.
         params_by_year: Loaded parameters keyed by tax year.
-        n_years: Number of years to simulate.
+        n_years: Horizon in years. The simulator steps ``12 * n_years``
+            months internally and reports per year.
         objective: Reduces a :class:`SimulationResult` to a score to maximise.
 
     Returns:

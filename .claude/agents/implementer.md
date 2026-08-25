@@ -56,13 +56,31 @@ a menu of assumptions you have already coded against.
 
 ## Engineering conventions in this repo
 
-- Vectorize across paths, not years. Every function under `engine/tax/` and
+- Vectorize across paths, not time. Every function under `engine/tax/` and
   `engine/benefits/` takes and returns NumPy arrays; use `np.clip` / `np.where`
   for bracket logic. Scalars are valid inputs by broadcasting.
-- Real dollars internally. Convert to nominal only at display.
+- **The timestep is one month.** There is exactly one loop over time and it is
+  in `engine/mc/simulate.py`, calling `engine.core.step.advance_month`. Annual
+  events are phases that step invokes in January, December, and the filing
+  month. Do not write a second loop over time; if a change seems to need one,
+  stop and report.
+- Amounts under `engine/benefits/` are monthly unless the name ends `_annual`.
+  Amounts under `engine/tax/` are annual and assessed once a year, at the
+  December close, on income accumulated over twelve monthly steps.
+- Every annual limit — contribution room, the LIF maximum, an RESP grant
+  maximum, a bracket ceiling a policy fills to — is enforced against the
+  year-to-date total, never against a single month's amount. Enforced per
+  month it permits twelve times the limit and nothing raises.
+- Real dollars internally. Convert to nominal only at display. Periodic
+  indexation and its lag cost a *constant* in real terms, computed once per
+  scenario in `engine.core.indexation` and applied once, by the step. It does
+  not vary by month. A non-indexed amount is the opposite case: its real decay
+  grows without limit and must be applied explicitly.
 - `engine/` must never import `api`, `fastapi`, or `cli`.
 - Policy functions may only read information available at that simulated point
-  in time. Never read a future return, a future balance, or a future bracket.
+  in time. Never read a future return, a future balance, or a future bracket —
+  and never this year's total income, which is not known until December. Year
+  to date is the only income figure a policy may read.
 - Household is a list of persons, always, even for a single-person scenario.
 - One logical change per commit; conventional commit messages.
 - Do not add dependencies without asking.

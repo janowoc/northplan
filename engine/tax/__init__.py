@@ -6,6 +6,27 @@ and ``np.where`` rather than Python branching, so that a scalar input works by
 broadcasting and a golden-number test exercises the identical code path as a
 100,000-path Monte Carlo run.
 
+**These functions are annual, and that has not changed.** The simulation steps
+monthly, but income tax is assessed on a calendar year, so everything in this
+package takes a full year's figures and is called once per simulated year, from
+the year-end close in ``engine/core/step.py``. Nothing here is called twelve
+times a year and nothing here takes a month.
+
+Three consequences worth stating, because the monthly loop around this package
+makes each of them possible:
+
+- The income these functions receive is the year-to-date total accumulated over
+  twelve monthly steps, from ``TaxLedger.ytd_income``. Passing a single month's
+  income to a progressive bracket function produces a number roughly a twelfth
+  the size at a much lower marginal rate — plausible, and wrong.
+- Tax assessed is not tax paid. What these functions return is an assessment;
+  the cash leaves in the following year's filing month, less whatever was
+  withheld along the way. That timing lives in the step, not here.
+- Brackets and credits are indexed once a year, in January. A tax year has one
+  set of them, which is why a ``ParamYear`` is the right granularity and why
+  the indexation decay in ``engine.core.indexation`` applies to benefits paid
+  monthly rather than to anything in this package.
+
 All dollar amounts in and out are real dollars (see ``engine/__init__.py``).
 All parameters come from ``params/`` via ``engine.params.loader``; there is
 never a numeric tax constant in this package.

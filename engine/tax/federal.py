@@ -1,7 +1,14 @@
 """Federal income tax.
 
+Annual, and called once per simulated year from the year-end close in
+``engine/core/step.py``. Every income argument below is a **full calendar
+year's** figure, accumulated over twelve monthly steps in
+``engine.core.state.TaxLedger.ytd_income``. Handing one of these a single
+month's income yields a small number at a low marginal rate and no error.
+
 Parameters come from ``params/{year}/federal.yaml``. Nothing numeric lives in
-this file.
+this file — including the filing month, which is a statutory rule and is read
+from the same place.
 """
 
 from __future__ import annotations
@@ -19,11 +26,13 @@ def taxable_income(
     """Taxable income: gross less deductions, floored at zero.
 
     Args:
-        gross_income: All income sources summed, real dollars, ``(n_paths,)``.
-        deductions: RRSP contributions and other above-the-line deductions.
+        gross_income: All income sources for the full calendar year, summed,
+            real dollars, ``(n_paths,)``.
+        deductions: RRSP contributions made over the year and other
+            above-the-line deductions.
 
     Returns:
-        Taxable income, non-negative.
+        Taxable income for the year, non-negative.
     """
     raise NotImplementedError
 
@@ -38,12 +47,18 @@ def net_income(
     OAS recovery tax and GIS are assessed on net income, so keeping the two
     apart matters — conflating them understates the clawback.
 
+    The result outlives the year that produced it. It is stored in
+    ``TaxLedger.prior_year_net_income`` and read back one or two years later,
+    when the benefit period it governs comes around; see
+    ``engine.core.timeline.benefit_year_income_year``.
+
     Args:
-        gross_income: All income sources summed, real dollars, ``(n_paths,)``.
+        gross_income: All income sources for the full calendar year, summed,
+            real dollars, ``(n_paths,)``.
         deductions: Deductions allowed in arriving at net income.
 
     Returns:
-        Net income, non-negative.
+        Net income for the year, non-negative.
     """
     raise NotImplementedError
 
@@ -75,8 +90,12 @@ def non_refundable_credits(
 
     Args:
         income: Net income, real dollars, ``(n_paths,)``.
-        age: Age in whole years at the end of the tax year, ``(n_paths,)``.
-        pension_income: Eligible pension income for the pension income amount.
+        age: Age in whole years at the end of the tax year, ``(n_paths,)``,
+            from ``engine.core.timeline.age_at_end_of_year``. Not age in the
+            month the assessment runs, which is the same thing only for a
+            December birthday.
+        pension_income: Eligible pension income received over the year, for the
+            pension income amount.
         params: The ``federal`` parameter set for the tax year.
 
     Returns:

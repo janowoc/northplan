@@ -38,16 +38,23 @@ class WithdrawalResult:
     shortfall: NDArray[np.float64]
 
 
-def grow(balance: ArrayLike, real_return: ArrayLike) -> NDArray[np.float64]:
-    """Apply one year of real return to a balance.
+def grow(balance: ArrayLike, monthly_real_return: ArrayLike) -> NDArray[np.float64]:
+    """Apply **one month** of real return to a balance.
+
+    The timestep is a month, so this is a month. The argument is named for the
+    period it covers because the failure mode is silent: passing an annual
+    return here returns a plausible balance that is wrong by an order of
+    magnitude by the end of the first year, and nothing raises.
 
     Args:
-        balance: Opening balance, real dollars, ``(n_paths,)``.
-        real_return: Real return for the year as a bare fraction, ``(n_paths,)``.
-            Real, not nominal — see ``engine/__init__.py``.
+        balance: Opening balance for the month, real dollars, ``(n_paths,)``.
+        monthly_real_return: Real return for this month as a bare fraction,
+            ``(n_paths,)``. Real, not nominal — see ``engine/__init__.py``.
+            Monthly, not annual — the conversion from an annual assumption
+            happens once, in ``engine.mc.returns.generate``.
 
     Returns:
-        Closing balance before any contribution or withdrawal.
+        Closing balance for the month, before any contribution or withdrawal.
     """
     raise NotImplementedError
 
@@ -57,10 +64,33 @@ def withdraw(balance: ArrayLike, requested: ArrayLike) -> tuple[NDArray[np.float
 
     Args:
         balance: Available balance, ``(n_paths,)``.
-        requested: Amount wanted, ``(n_paths,)``. Negative requests raise.
+        requested: Amount wanted this month, ``(n_paths,)``. Negative requests
+            raise.
 
     Returns:
         A tuple of ``(new_balance, withdrawn, shortfall)``, each ``(n_paths,)``.
         ``withdrawn + shortfall == requested`` on every path.
+    """
+    raise NotImplementedError
+
+
+def remaining_annual_allowance(
+    annual_limit: ArrayLike,
+    taken_ytd: ArrayLike,
+) -> NDArray[np.float64]:
+    """How much of an annual limit is left for the rest of the year.
+
+    Every annual bound in this package — the LIF maximum, contribution room,
+    the RESP grant maximum — is enforced through this, against the year-to-date
+    total rather than against a single month's amount. Clamping each month
+    separately against an annual limit permits twelve times the limit, and the
+    resulting run looks entirely reasonable.
+
+    Args:
+        annual_limit: The year's limit, fixed in January, ``(n_paths,)``.
+        taken_ytd: Amount already used this calendar year, ``(n_paths,)``.
+
+    Returns:
+        Remaining allowance, floored at zero, ``(n_paths,)``.
     """
     raise NotImplementedError

@@ -14,15 +14,25 @@ from engine.params.loader import ParamYear
 
 @dataclass(frozen=True, slots=True)
 class Decision:
-    """What a policy decided for one year, for all paths.
+    """What a policy decided for one **month**, for all paths.
+
+    Contributions and withdrawals are this month's amounts, not the year's. A
+    policy that returns an annual figure here has it applied twelve times.
+
+    The benefit start ages are the exception: they are ages, in months, at
+    which a benefit begins, and they do not change from month to month. They
+    are returned every month because the policy is stateless and there is
+    nowhere else to put them; the step reads them once, in the month the
+    decision binds, and ignores them afterwards.
 
     Attributes:
-        contributions: Amount to contribute per person per account type, real
-            dollars. Keys are ``(person_id, account)``; values ``(n_paths,)``.
-        withdrawals: Discretionary withdrawals, same keying. Mandatory minimums
-            are applied by the annual step on top of these, not by the policy.
+        contributions: Amount to contribute *this month* per person per account
+            type, real dollars. Keys are ``(person_id, account)``; values
+            ``(n_paths,)``.
+        withdrawals: Discretionary withdrawals *this month*, same keying.
+            Mandatory minimums are applied by the step on top of these, not by
+            the policy.
         cpp_start_age_months: Age in months at which each person starts CPP.
-            Read once, at the year the decision binds.
         oas_start_age_months: Age in months at which each person starts OAS.
     """
 
@@ -36,8 +46,12 @@ class Policy(Protocol):
     """A decision rule the optimizer can evaluate.
 
     Implementations are pure and stateless: everything they need arrives in
-    ``decide``. State kept on the object between years would be a channel for
-    information the policy is not entitled to.
+    ``decide``. State kept on the object between months would be a channel for
+    information the policy is not entitled to — and with twelve calls a year
+    instead of one, it is also twelve times as easy to accumulate by accident.
+    Anything a policy needs to remember from an earlier month is already in
+    ``HouseholdState``: year-to-date income, room consumed, minimums still
+    outstanding.
     """
 
     def decide(
@@ -45,16 +59,21 @@ class Policy(Protocol):
         state: HouseholdState,
         params: ParamYear,
     ) -> Decision:
-        """Choose this year's contributions and withdrawals.
+        """Choose this month's contributions and withdrawals.
 
         Args:
-            state: Opening state for the current year. This, and the current
-                year's ``params``, are the *only* inputs. Anything else is
-                clairvoyance.
+            state: Opening state for the current month, carrying ``year`` and
+                ``month``. This, and the current tax year's ``params``, are the
+                *only* inputs. Anything else is clairvoyance.
+
+                What the state legitimately offers, and what a monthly policy
+                must be careful with: income accumulated *so far* this year is
+                knowable, and the year's eventual total is not. A policy that
+                reasons about "this year's income" must mean the former.
             params: Parameters for the current tax year.
 
         Returns:
-            The year's :class:`Decision`.
+            The month's :class:`Decision`.
         """
         ...
 

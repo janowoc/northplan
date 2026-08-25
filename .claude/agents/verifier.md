@@ -41,36 +41,94 @@ Review in this order, and grep aggressively rather than trusting a read:
    tolerances (`pytest.approx` with a new `rel`/`abs`), added `skip`, `xfail`,
    deleted assertions, or a test narrowed so it no longer exercises the case
    it names.
-3. **Silent unit and convention mismatches.** Monthly vs annual amounts.
-   Real vs nominal dollars. Percent vs basis points vs a bare fraction.
-   Calendar year vs benefit year (July–June) vs tax year. Age in years vs
-   months. Rates applied per-period vs annualized. A function that takes an
-   annual figure and is called with a monthly one produces a plausible number
-   and no error — look for it explicitly.
-4. **Ordering errors in the annual loop.** Whether the RRIF minimum is
-   computed on the opening balance before growth or the closing balance after
-   it. Whether the OAS clawback is assessed against the correct year's net
-   income. Whether contributions, growth, withdrawals, taxes, and indexation
-   happen in the intended sequence. Whether contribution room is updated
-   before or after the contribution that consumes it. Off-by-one on ages and
-   on the year a person turns 71.
+3. **Silent unit and convention mismatches.** This is the largest category
+   in a monthly engine and deserves the most time.
+   - **Monthly vs annual amounts.** The timestep is a month; tax is a year.
+     A monthly figure used where an annual one belongs is off by twelve, and a
+     rate applied monthly that should be annual compounds to something far
+     worse. Neither raises. Functions in `engine/benefits/` return monthly
+     amounts unless the name ends `_annual`; functions in `engine/tax/` take
+     annual figures and are called once a year from the year-end close.
+   - **Annual limits enforced per month.** A LIF maximum, a contribution room
+     figure, an RESP grant maximum, or a bracket ceiling checked against one
+     month's amount rather than the year-to-date total permits twelve times
+     the limit. The output looks entirely reasonable. Check every annual bound
+     for a year-to-date argument.
+   - **Annual returns applied monthly**, or a monthly return derived by
+     dividing an annual one by twelve rather than compounding — the second
+     understates growth and misstates dispersion by a factor of the square
+     root of twelve.
+   - Real vs nominal dollars. Percent vs basis points vs a bare fraction.
+   - Calendar year vs benefit year vs income year vs tax year. Age in years vs
+     months; age at start of year vs end of year vs the current month.
+   - **Indexation applied twice, or not at all.** Benefit functions return
+     published amounts; `engine.core.indexation.real_factor` is the constant
+     they are multiplied by, applied once, by the step. Applying it inside a
+     benefit function *and* in the step double-counts it; omitting it entirely
+     overstates every indexed benefit slightly and forever. The factor does not
+     depend on the month — anything that recomputes it per month, or threads an
+     adjustment calendar through the loop, has reintroduced a model that was
+     deliberately removed.
+4. **Ordering errors in the loop, within a month and across month
+   boundaries.** The order within a month is fixed in `advance_month`'s
+   docstring; the January, December, and filing-month phases are fixed in
+   `open_year`, `close_year`, and `settle_tax_balance`. Check:
+   - Whether the RRIF minimum is computed in January on the 1 January opening
+     balance, before growth — not recomputed mid-year on a balance that has
+     since grown, and not taken in full every month.
+   - Whether the OAS clawback is assessed against the correct *income* year
+     for the benefit period the month falls in, including across the mid-year
+     benefit-year changeover, where the income year changes within one
+     calendar year.
+   - Whether contributions, growth, withdrawals, benefits, and the year-to-date
+     accrual happen in the intended sequence within the month, and whether
+     growth uses this month's return applied once.
+   - Whether contribution room is granted in January and updated after the
+     contribution that consumes it, never before.
+   - Whether tax assessed at the December close is *paid* in the following
+     year's filing month rather than immediately — paying it in the year the
+     income arose is a full year early and flatters every path.
+   - Whether TFSA room from a withdrawal is restored in the following January
+     rather than in the following month.
+   - Off-by-one on ages, on the month a benefit starts, and on the year a
+     person must convert an RRSP.
+   - A second loop over time anywhere outside `engine/mc/simulate.py`. There
+     is one, and it is over months.
 5. **Clairvoyant policies.** Any function under `engine/policy/` that reads
    information not available at that simulated point in time: a future return,
    a future balance, a realized path outcome, a terminal value, or an array
-   sliced beyond the current year index. This is a correctness bug that makes
+   sliced beyond the current month index. This is a correctness bug that makes
    the optimizer's answer meaningless, not a style issue.
+
+   The monthly timestep adds a disguised form worth checking for by name: a
+   policy that uses the *year's* income, spending, or return where only the
+   year to date is knowable. It touches no future array and is clairvoyant
+   anyway. In January, this year's total is a forecast; only in December is it
+   a fact.
 6. **Broadcasting bugs.** A scalar silently producing a wrong-shaped array.
    Missing or wrong `axis=` on a reduction. A `(N_PATHS,)` array meeting a
-   `(N_YEARS,)` array and broadcasting to `(N_YEARS, N_PATHS)` unnoticed.
-   Reductions that collapse the path axis when they should collapse the year
+   `(N_MONTHS,)` array and broadcasting to `(N_MONTHS, N_PATHS)` unnoticed.
+   Reductions that collapse the path axis when they should collapse the time
    axis. Places where `np.where` operands have mismatched shapes. Check that
    every public function still returns the documented shape when handed a
    scalar.
+
+   Watch the two time axes in particular: draws are `(n_months, ...)` and
+   `SimulationResult` is `(n_years, ...)`. A month index used against a
+   year-indexed array, or the reverse, is in range for the first several years
+   and silently wrong throughout.
 7. **Edge cases.** Exact bracket boundaries (income equal to a bracket edge,
-   both sides). Age thresholds on the exact birthday year (60, 65, 70, 71).
-   Zero income, negative income, zero balance, negative balance. Empty
-   household member list. First and last simulated year. Death in the first
-   year. A person who never starts a benefit.
+   both sides). Age thresholds in the exact month the age is reached, and in
+   the month before and after. Zero income, negative income, zero balance,
+   negative balance. Empty household member list.
+
+   Month-boundary cases specifically: a scenario that opens in a month other
+   than January, and whose first tax year is therefore short. A scenario that
+   ends before the filing month, leaving a balance owing unpaid. December and
+   January in the same step sequence. A death in the first month, and one in
+   December. A benefit starting in December. A person who never starts a
+   benefit. The first and last simulated month, and the first and last
+   simulated year, which are not the same boundaries.
 
 Run the test suite. A passing suite is not evidence of correctness — say so
 when the tests do not cover what you were checking.

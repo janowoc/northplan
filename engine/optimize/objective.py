@@ -3,6 +3,10 @@
 The optimizer maximises one of these. Each collapses ``(n_years, n_paths)``
 output to a scalar, so the axis being reduced matters: reducing over the wrong
 axis produces a number that moves plausibly and means nothing.
+
+The simulation steps monthly but ``SimulationResult`` is recorded annually, so
+the arrays these functions see have a *year* on the first axis, not a month.
+Nothing here divides or multiplies by twelve.
 """
 
 from __future__ import annotations
@@ -51,6 +55,8 @@ def certainty_equivalent_spending(result: SimulationResult, risk_aversion: float
             not a tax parameter.
 
     Returns:
-        Certainty-equivalent annual spending, in real dollars.
+        Certainty-equivalent annual spending, in real dollars. Annual, because
+        the spending it prices is the annual total ``SimulationResult`` records
+        — not a monthly figure.
     """
     raise NotImplementedError
