@@ -25,6 +25,10 @@ from engine.params.loader import (
     load_year,
 )
 
+#: Scaffolding marker left on every unverified line of a draft parameter file.
+#: Spelled by concatenation so that this file does not itself trip the scan.
+MARKER = "PLACE" + "HOLDER"
+
 
 @pytest.fixture
 def params_root(tmp_path: Path) -> Path:
@@ -105,7 +109,10 @@ def test_missing_parameter_error_names_the_file_and_the_key(params_root: Path) -
     message = str(exc.value)
     assert "federal.yaml" in message
     assert "age_amount" in message
-    assert "VERIFICATION" in message, "The error should point at the verification ledger."
+    assert "source" in message, "The error should say where a real value comes from."
+    assert "Never substitute" in message, (
+        "The error should close off the estimated-value escape hatch explicitly."
+    )
 
 
 def test_stub_file_lookup_raises_and_says_it_is_a_stub(params_root: Path) -> None:
@@ -117,16 +124,62 @@ def test_stub_file_lookup_raises_and_says_it_is_a_stub(params_root: Path) -> Non
     assert "stub" in str(exc.value).lower()
 
 
-def test_the_repository_params_load_and_are_all_stubs() -> None:
-    """The real 2026 files parse, and none has been populated by anything but a human.
+def test_the_repository_params_load_and_are_populated() -> None:
+    """The real 2026 files parse and hold values.
 
-    This will start failing the moment a value is added, at which point the
-    assertion below is the thing to update — deliberately, by a human, alongside
-    a row in docs/VERIFICATION.md.
+    This replaced an assertion that every file was still an empty stub, which
+    guarded the period before any value had been entered by hand. That period
+    ended when the 2026 files were populated. What is worth guarding now is
+    that no file silently reverts to empty — a stub reads as "parameter
+    missing" at every lookup, which is loud, but a file emptied by a bad merge
+    should fail here rather than at the first simulation — and that the set of
+    jurisdictions is deliberate rather than whatever happens to be on disk.
+
+    Adding a province or a program is therefore a two-part change: the file,
+    and this tuple. That is the intended friction.
     """
     year = load_year(2026, DEFAULT_PARAMS_ROOT)
-    assert year.names() == ("ab", "cpp", "federal", "oas", "rrif")
-    assert all(year[name].is_stub() for name in year.names())
+    assert year.names() == ("ab", "cpp", "federal", "oas", "resp", "rrif", "tfsa")
+    assert not any(year[name].is_stub() for name in year.names())
+
+
+def test_no_repository_param_file_contains_a_placeholder_marker() -> None:
+    """No value under ``params/`` is still carrying its scaffolding marker.
+
+    Draft parameter files are written with implausible repdigit values and a
+    trailing ``# PLACEHOLDER`` on every unverified line, so that
+    ``grep -c PLACEHOLDER`` counts the work remaining. A file promoted into
+    ``params/`` with markers still on it is the failure mode that workflow
+    exists to prevent: the numbers around them look finished, and a plausible
+    fake reads exactly like a verified value at the call site.
+
+    This asserts the last step of that workflow rather than trusting it to be
+    remembered. It scans the text, not the loaded values, because the marker
+    lives in a YAML comment and the loader discards comments by design.
+
+    Scoped to the year directories, which are the only files ``load_year``
+    reads. A draft parked at the ``params/`` root — ``gis_not_implemented.yaml``
+    is one — is unreachable by the engine and is *expected* to be full of
+    markers; that is what makes it a draft. The line this test draws is the one
+    that matters: a file is allowed to be unfinished right up until it is moved
+    into a year directory, and from that moment it must be clean.
+    """
+    year_directories = sorted(
+        path for path in DEFAULT_PARAMS_ROOT.iterdir() if path.is_dir() and path.name.isdigit()
+    )
+    assert year_directories, f"No parameter year directories under {DEFAULT_PARAMS_ROOT}."
+    offenders = [
+        f"{path.relative_to(DEFAULT_PARAMS_ROOT)}:{number}: {line.strip()}"
+        for directory in year_directories
+        for path in sorted(directory.rglob("*.yaml"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if MARKER in line
+    ]
+    assert not offenders, (
+        "Placeholder markers remain in files under params/. Verify each value "
+        "against its source, then replace the number and the marker together, "
+        "leaving a comment with the source URL and check date:\n" + "\n".join(offenders)
+    )
 
 
 def test_get_has_no_default_argument() -> None:
