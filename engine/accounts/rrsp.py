@@ -9,6 +9,10 @@ Room is granted in January for the year, on the previous year's earnings, and
 is then consumed by contributions across the months. It does not accrue monthly
 from the current month's income; a person may contribute the whole year's room
 in January.
+
+Parameters come from ``params/{year}/rrif.yaml``, which holds both halves of
+one program: the RRSP under ``rrsp:`` and the RRIF it converts into under
+``rrif:``. The conversion age sits at the top level, joining them.
 """
 
 from __future__ import annotations
@@ -27,8 +31,9 @@ def room_accrued(prior_year_earned_income: ArrayLike, params: ParamSet) -> NDArr
         prior_year_earned_income: Earned income over the whole prior calendar
             year, real dollars, ``(n_paths,)``. Last year's, not this year's
             and not this month's.
-        params: The ``federal`` parameter set, supplying the accrual rate and
-            the annual dollar limit.
+        params: The ``rrif`` parameter set — RRSP and RRIF share one file —
+            supplying ``rrsp.room.accrual_rate`` and
+            ``rrsp.room.annual_dollar_limit``.
 
     Returns:
         Room accrued for the year, ``(n_paths,)``.
@@ -66,6 +71,11 @@ def withdraw(balance: ArrayLike, requested: ArrayLike) -> WithdrawalResult:
     month of the withdrawal and reduces the balance owing settled in the
     following year's filing month. This function returns the gross withdrawal;
     the step applies the withholding and records it in ``remitted_ytd``.
+
+    The withholding rate is banded by the size of the individual withdrawal, so
+    two withdrawals of half the amount are not equivalent to one of the whole —
+    a distinction a monthly timestep makes reachable and an annual one hid. The
+    bands are in the ``rrif`` parameter set under ``rrsp.withholding``.
 
     Args:
         balance: Balance at the start of this month, ``(n_paths,)``.

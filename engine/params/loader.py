@@ -3,7 +3,8 @@
 The guardrail behind the most important rule in this repository: no tax or
 benefit constant is ever invented, recalled, or estimated. Every number the
 engine uses is read from a file under ``params/`` that a human populated by
-hand and recorded in ``docs/VERIFICATION.md``.
+hand, under a comment naming the source it was checked against and the date it
+was checked.
 
 The design choice that does the actual work here is a negative one: **no lookup
 in this module accepts a default.** ``ParamSet.get`` has no ``default``
@@ -78,9 +79,9 @@ class MissingParameterError(ParamError):
     """A requested parameter is absent from the file that should hold it.
 
     This is the loud stop that the "never invent a parameter" rule depends on.
-    The correct response is to put the value in the YAML file, by hand, with
-    its source URL and check date, and to add a row to
-    ``docs/VERIFICATION.md``. It is never to supply a fallback here.
+    The correct response is to put the value in the YAML file, by hand, under a
+    comment giving the source it was checked against and the date. It is never
+    to supply a fallback here.
     """
 
 
@@ -237,8 +238,8 @@ class ParamSet:
     def _remedy(self) -> str:
         stub = " The file is an empty stub." if self.is_stub() else ""
         return (
-            f"{stub} Add it to {self.source.name} by hand, with its source URL and "
-            f"check date, and add a row to docs/VERIFICATION.md. Never substitute an "
+            f"{stub} Add it to {self.source.name} by hand, under a comment giving "
+            f"the source it was checked against and the date. Never substitute an "
             f"estimated or remembered value."
         )
 
@@ -296,17 +297,64 @@ class ParamYear:
 
     @property
     def rrif(self) -> ParamSet:
-        """RRIF minimum withdrawal parameters."""
+        """RRSP and RRIF parameters.
+
+        One file, because they are one program at two stages of life. The file
+        keeps them under symmetric ``rrsp:`` and ``rrif:`` keys, so a RRIF
+        lookup through this property reads ``rrif.rrif.minimum_factors...``.
+        The doubled segment is deliberate: the alternative was a file named for
+        one program holding two, or an asymmetry between the halves.
+        """
         return self["rrif"]
+
+    @property
+    def tfsa(self) -> ParamSet:
+        """TFSA contribution room and recontribution rules."""
+        return self["tfsa"]
+
+    @property
+    def resp(self) -> ParamSet:
+        """RESP contribution, grant, and Educational Assistance Payment rules."""
+        return self["resp"]
 
     def province(self, code: str) -> ParamSet:
         """Provincial income tax parameters for a two-letter province code.
+
+        This is the province of *residence*: the jurisdiction whose income tax
+        the household pays. For a locked-in account it is usually the wrong
+        lookup — see :meth:`jurisdiction`.
 
         Args:
             code: Province code, case-insensitive, e.g. ``"ab"``.
 
         Raises:
             ParamFileMissingError: If that province has no file for this year.
+        """
+        return self[code.lower()]
+
+    def jurisdiction(self, code: str) -> ParamSet:
+        """Pension parameters for the jurisdiction a locked-in account is registered in.
+
+        Same files as :meth:`province`, reached deliberately by a different
+        name. A LIF is governed by the pension legislation of the jurisdiction
+        its originating pension was registered under, which is not necessarily
+        where the holder now lives: someone resident in Alberta may hold an
+        Ontario-registered LIF, draw it under Ontario's maximum, and file
+        Alberta income tax. Reading the LIF maximum out of
+        ``province(household.province)`` gets that household wrong, silently
+        and with no test to catch it.
+
+        The two methods return the same object when the household never moved,
+        which is the common case and the reason the bug is easy to ship.
+
+        Args:
+            code: Jurisdiction code, case-insensitive, e.g. ``"on"``.
+
+        Raises:
+            ParamFileMissingError: If that jurisdiction has no file for this
+                year. Federally regulated pensions are a jurisdiction in their
+                own right and will need their own file; there is no such file
+                today and this raises rather than falling back to a province.
         """
         return self[code.lower()]
 

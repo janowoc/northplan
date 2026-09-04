@@ -9,6 +9,12 @@ month's income yields a small number at a low marginal rate and no error.
 Parameters come from ``params/{year}/federal.yaml``. Nothing numeric lives in
 this file — including the filing month, which is a statutory rule and is read
 from the same place.
+
+That file holds income tax and nothing else. The registered account rules that
+once shared it now live one program per file: ``rrif.yaml`` (RRSP and RRIF),
+``tfsa.yaml``, ``resp.yaml``. What stays here is what the Income Tax Act sets
+Canada-wide — brackets, credits, the treatment of investment income, and the
+maximum CPP and EI contributions the contribution credit is capped at.
 """
 
 from __future__ import annotations
@@ -80,13 +86,18 @@ def non_refundable_credits(
     income: ArrayLike,
     age: ArrayLike,
     pension_income: ArrayLike,
+    cpp_ei_contributions: ArrayLike,
     params: ParamSet,
 ) -> NDArray[np.float64]:
     """Value of federal non-refundable credits.
 
-    Credits reduce tax, not income, and are valued at the lowest bracket rate.
-    Several are themselves income-tested (the age amount is clawed back), so
-    this takes income rather than being a constant.
+    Credits reduce tax, not income, and are valued at ``credits.valuation_rate``
+    from ``params``. That rate is read as its own value rather than as
+    ``brackets.rates[0]``: the two coincide today, but they are distinct legal
+    rules and either can change without the other.
+
+    Several credits are themselves income-tested — the age amount is clawed
+    back — so this takes income rather than being a constant.
 
     Args:
         income: Net income, real dollars, ``(n_paths,)``.
@@ -96,6 +107,14 @@ def non_refundable_credits(
             December birthday.
         pension_income: Eligible pension income received over the year, for the
             pension income amount.
+        cpp_ei_contributions: CPP and EI contributions actually withheld over
+            the year, ``(n_paths,)``, accumulated across the twelve monthly
+            steps. Unlike the other credits this one is not a fixed amount: it
+            is what the person paid, capped at the statutory maxima in
+            ``params`` under ``contribution_credit``. Contributions stop
+            partway through the year once a ceiling is reached, so a year's
+            figure is not twelve times a month's and the cap belongs here
+            rather than in the monthly accrual.
         params: The ``federal`` parameter set for the tax year.
 
     Returns:

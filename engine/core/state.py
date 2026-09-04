@@ -91,6 +91,42 @@ class Beneficiary:
 
 
 @dataclass(frozen=True, slots=True)
+class LockedInTerms:
+    """The pension rules one locked-in account is governed by.
+
+    A LIRA, and the LIF it becomes, is governed by the pension legislation of
+    the jurisdiction its originating pension was registered under — not by
+    where the holder lives now. Someone resident in Alberta may hold an
+    Ontario-registered LIF: they draw it under Ontario's maximum withdrawal
+    table and file Alberta income tax, and the two lookups go to different
+    files.
+
+    This is per *account*, not per household, because one person can hold two
+    locked-in accounts from two employers in two jurisdictions, and they do not
+    merge. That is why the code is here rather than as a second field on
+    :class:`Household`.
+
+    When the household never moved, ``registration_jurisdiction`` equals
+    ``Household.province`` and the distinction costs nothing. That is the
+    common case, and the reason reading the LIF maximum out of the residence
+    province is an easy mistake to ship: it is right until it is silently
+    wrong, and no test on a single-jurisdiction household will catch it.
+
+    Attributes:
+        account_id: Stable identifier for the account these terms govern.
+        registration_jurisdiction: Code for the pension jurisdiction, passed to
+            ``engine.params.loader.ParamYear.jurisdiction``. Provinces use
+            their two-letter code. Federally regulated pensions are a
+            jurisdiction of their own and have no parameter file yet, so a
+            household holding one stops the run rather than borrowing a
+            province's table.
+    """
+
+    account_id: str
+    registration_jurisdiction: str
+
+
+@dataclass(frozen=True, slots=True)
 class Household:
     """The people being simulated.
 
@@ -98,8 +134,10 @@ class Household:
         persons: One or two adults. Ordered; order is stable across the run and
             is what per-person arrays are indexed by.
         beneficiaries: RESP beneficiaries, possibly empty.
-        province: Two-letter province code selecting the provincial parameter
-            file, e.g. ``"ab"``.
+        province: Two-letter code for the province of **residence**, selecting
+            the provincial parameter file used for income tax, e.g. ``"ab"``.
+            This is not the jurisdiction a locked-in account is governed by;
+            see :class:`LockedInTerms`.
     """
 
     persons: tuple[Person, ...]
@@ -210,6 +248,11 @@ class HouseholdState:
             over the year — the RRIF minimum still to be taken, the LIF maximum
             still available, contribution room — and the prior year's TFSA
             withdrawals awaiting their January restoration.
+        locked_in_terms: Pension jurisdiction for each locked-in account, keyed
+            by account id. Static for the run; carried here rather than looked
+            up per month so that the jurisdiction a maximum was computed from
+            is always visible next to the balance it applies to. Empty for a
+            household with no locked-in account.
         tax: The bridge between the monthly loop and the annual assessment.
         history: Accumulated records for reporting, appended at each year end.
             Append-only.
@@ -220,5 +263,6 @@ class HouseholdState:
     household: Household
     alive: NDArray[np.bool_]
     accounts: dict[str, Any]
+    locked_in_terms: dict[str, LockedInTerms]
     tax: TaxLedger
     history: tuple[dict[str, Any], ...]

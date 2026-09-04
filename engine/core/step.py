@@ -104,9 +104,18 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        start of the year. It is stored as an annual amount with a running
        "still to be withdrawn" figure, because the withdrawal itself happens
        across the months.
-    5. The year-to-date income ledger is reset to zero and ``remitted_ytd`` with
+    5. The LIF *maximum* for the year is fixed the same way, and read from the
+       parameter set of the jurisdiction each locked-in account is registered
+       in — ``params.jurisdiction(terms.registration_jurisdiction)``, not
+       ``params.province(household.province)``. Where
+       ``engine.accounts.lira.has_maximum`` is false the jurisdiction imposes
+       no ceiling and none is stored; that is a rule, not a missing table.
+    6. The year-to-date income ledger is reset to zero and ``remitted_ytd`` with
        it. ``balance_owing`` is *not* reset: it is still owed until the filing
-       month.
+       month. The per-beneficiary RESP year-to-date figures reset here too:
+       both the grant received and the contributions made, the second because
+       the additional grant tier's eligible window is a dollar amount per
+       calendar year.
 
     Args:
         state: Opening state for January.
@@ -189,8 +198,9 @@ def resolve_deaths(
     The draw is compared against a *monthly* hazard derived from the annual
     mortality table. The conversion from an annual ``q_x`` to a monthly rate
     assumes a constant force of mortality within the year; that assumption is
-    stated here because it is a modelling choice, and it needs a row in
-    ``docs/VERIFICATION.md`` alongside the table it is applied to.
+    stated here because it is a modelling choice rather than a sourced value,
+    and it belongs in a comment beside the mortality table it is applied to as
+    well as here.
 
     Consequences that land in the same month: OAS and GIS cease for the
     deceased from the following month, a RRIF rolls to a surviving spouse

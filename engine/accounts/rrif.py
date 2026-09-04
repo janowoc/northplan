@@ -15,7 +15,11 @@ depends on age. Three things about it are easy to get wrong and are fixed here:
   is forced out by the year-end close. A per-month minimum equal to the annual
   minimum would take twelve times too much.
 
-Factors come from ``params/{year}/rrif.yaml``. There is no formula in this file.
+Factors come from ``params/{year}/rrif.yaml`` under ``rrif.minimum_factors``.
+That file holds one program at two stages of life — the RRSP that accumulates
+and the RRIF it becomes — with the conversion age at the top level joining
+them. There is no formula in this file: even the pre-table basis is a constant
+in the YAML, because ``1 / (C - age)`` puts a ``C`` in a ``.py`` file otherwise.
 """
 
 from __future__ import annotations

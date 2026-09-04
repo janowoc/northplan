@@ -10,6 +10,15 @@ close. Every income argument is a full calendar year's figure.
 The province's parameter file also carries the LIF maximum withdrawal rules
 that ``engine/accounts/lira.py`` reads, since those are provincially set. Those
 are annual limits fixed each January, not monthly ones.
+
+They are in the same file but reached by a different route, and the difference
+matters. Income tax follows the province of **residence**, so this module is
+handed ``ParamYear.province(household.province)``. A LIF follows the province
+its originating pension was **registered** in, so ``lira`` is handed
+``ParamYear.jurisdiction(terms.registration_jurisdiction)``. For a household
+that never moved these resolve to one object; for one that did, taking the LIF
+table from this module's parameter set is wrong and nothing downstream will say
+so.
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ def non_refundable_credits(
     income: ArrayLike,
     age: ArrayLike,
     pension_income: ArrayLike,
+    cpp_ei_contributions: ArrayLike,
     params: ParamSet,
 ) -> NDArray[np.float64]:
     """Value of provincial non-refundable credits.
@@ -49,6 +59,12 @@ def non_refundable_credits(
         age: Age in whole years at the end of the tax year, from
             ``engine.core.timeline.age_at_end_of_year``.
         pension_income: Eligible pension income received over the year.
+        cpp_ei_contributions: CPP and EI contributions actually withheld over
+            the year, ``(n_paths,)``. The same figure this year's federal
+            credit is computed from, valued here at the provincial rate. The
+            statutory maxima it is capped at are Canada-wide and live in
+            ``federal.yaml``, not in this file — the province sets the rate the
+            credit is worth, not the ceiling on the contribution.
         params: The province's parameter set for the tax year.
 
     Returns:

@@ -7,6 +7,10 @@ an over-contribution. That lag is the thing to get right, and a monthly
 timestep makes it easier to get wrong: room restored in the month after a
 withdrawal rather than in the January after it is a plausible-looking bug that
 hands the household eleven months of room it does not have.
+
+Parameters come from ``params/{year}/tfsa.yaml``. It is the smallest parameter
+file in the repository and will stay that way: a TFSA has no tax calculation at
+all, so the only rules are how much room exists and when it appears.
 """
 
 from __future__ import annotations
@@ -27,7 +31,8 @@ def room_accrued(age: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
 
     Args:
         age: Age in whole years at the end of the year, ``(n_paths,)``.
-        params: The ``federal`` parameter set.
+        params: The ``tfsa`` parameter set, supplying
+            ``room.eligibility_age_years`` and ``room.annual_amount``.
 
     Returns:
         Room accrued for the year, ``(n_paths,)``.
