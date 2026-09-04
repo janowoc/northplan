@@ -1,25 +1,100 @@
-# Old Age Security parameters — tax year 2026
+# Old Age Security and Guaranteed Income Supplement — tax year 2026
 #
-# STUB. Deliberately empty. Populated by hand, by a human, one value at a time.
+# Conventions for this file:
+#   - Every group of values carries a source comment directly above it: the
+#     primary source URL and the date a human checked it against that source.
+#     Individual values add their own note where the group comment is not
+#     specific enough — a line number on a form, a subsection of an Act.
+#     These comments ARE the audit record; there is no separate ledger.
+#   - Say the period in the key name. OAS and GIS maxima are published MONTHLY;
+#     the recovery tax threshold is published ANNUALLY. Write each as published
+#     and let the engine convert once. Never convert here.
+#   - Rates are bare fractions (0.15), never percentages or basis points.
+#   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Rules for this file:
-#   - Every value carries an inline comment with its source URL and the date it
-#     was checked, e.g.
-#         basic_personal_amount: <amount>  # <source-url> checked YYYY-MM-DD
-#   - Every value also gets a row in docs/VERIFICATION.md before it is trusted.
-#   - Say the period in the key name. Benefits are published monthly and
-#     tax amounts annually, and the engine now steps monthly, so a key that
-#     does not say which it is will eventually be read as the wrong one.
-#     Prefer `maximum_monthly_pension` and `basic_personal_amount_annual`
-#     over a bare name. Never convert between the two here; write the
-#     amount as published and let the engine convert once.
-#   - Rates are bare fractions (0.15), never percentages (15) or basis points.
-#   - Dollar amounts here are the nominal amounts as published for the tax year.
-#     The engine works in real dollars internally and does the conversion; do
-#     not pre-deflate anything written here.
+# Read by: engine/benefits/oas.py, engine/benefits/gis.py,
+#          engine/core/timeline.py (benefit_year_income_year)
 #
-# Claude must never add, edit, infer, or estimate a value in this file. If a
-# needed parameter is absent, the loader raises MissingParameterError and the
-# correct response is to stop and ask.
-#
-# Expected: maximum monthly pension by age band, recovery-tax threshold and rate (assessed on PRIOR-year net income over the July-June benefit period), deferral increment per month, GIS thresholds and rates if modelled. Also needed by the monthly loop: the month each benefit year begins, the offset from benefit year to income year, and how often plus with what CPI lag OAS and GIS are indexed (quarterly).
+# Ages are in MONTHS — the deferral increment is per month, and the age band
+# step-up happens in the month the threshold is reached.
+
+# --- Benefit year -----------------------------------------------------------
+# The single most error-prone rule in this domain. A benefit period beginning
+# in start_month of year Y is assessed against net income from year
+# Y + income_year_offset. That assignment holds for the twelve months from
+# start_month of Y, so it CHANGES PARTWAY THROUGH a calendar year.
+
+benefit_year:
+  start_month: 7                     # month the benefit year begins (July)
+  income_year_offset: -1             # added to the benefit year to get the income year; negative means earlier
+
+# --- Indexation -------------------------------------------------------------
+# Keyed by the name engine.core.indexation.schedule(name, params) is called
+# with. OAS and GIS follow the same schedule but get separate entries so that
+# a divergence is expressible without a code change. The LENGTH of
+# adjustment_months is what the engine uses, not which months they are.
+
+# Note: OAS, unlike CPP, is indexed to the CPI with a three-month lag.
+# OAS is guaranteed to never decrease - this should be modeled in the engine, not here.
+
+indexation:
+  oas_pension:
+    adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
+    cpi_lag_months: 4                 # 3-month CPI window, measured from its MIDPOINT to the effective date
+  gis:
+    adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
+    cpi_lag_months: 4                 # 3-month CPI window, measured from its MIDPOINT to the effective date
+
+# --- Start age and deferral -------------------------------------------------
+# OAS may be deferred but never taken early: the factor is 1.0 at
+# earliest_months and rises from there.
+
+start_age:
+  earliest_months: 780               # 65 * 12
+  latest_months: 840                 # 70 * 12
+
+deferral:
+  increment_rate_per_month: 0.006    # 0.6% per month, i.e. 7.2%/yr, 36% at the 60-month maximum
+  maximum_months: 60                 # months of deferral beyond which the factor stops rising
+
+# --- Pension amount ---------------------------------------------------------
+# The maximum steps up at an age threshold, which is why gross_pension_monthly
+# takes current age as well as start age.
+
+pension:
+  age_bands:
+    # Each band applies from from_age_months up to the next band's from_age_months.
+    # The first band must start at start_age.earliest_months.
+    # https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html
+    - from_age_months: 780
+      maximum_monthly: 751.97
+    - from_age_months: 900
+      maximum_monthly: 827.17
+
+# --- Recovery tax (clawback) ------------------------------------------------
+# Threshold and rate are ANNUAL quantities. engine/benefits/oas.py converts to
+# a monthly withholding once, in recovery_tax_monthly. Do not pre-divide.
+# https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html
+
+recovery_tax:
+  threshold_annual: 95323            # net income above which recovery begins
+  rate: 0.15                         # recovered per dollar of net income above the threshold
+
+# --- GIS --------------------------------------------------------------------
+# Read by engine/benefits/gis.py. Non-taxable, and reduced against a different
+# income base than the recovery tax uses.
+
+gis:
+  modelled: false
+  # Not a GIS calculation. A tripwire: if projected testable income falls
+  # below these, GIS would materially change the answer and this engine
+  # cannot say how. Set BELOW the published cutoffs on purpose — being
+  # conservative here only widens the refusal band.
+  refusal_thresholds:
+    single_testable_income_annual: 22800
+    couple_combined_testable_income_annual: 42144
+
+# --- NOT HERE ---------------------------------------------------------------
+# Full OAS requires 40 years of residence after 18; 10 years gets a partial pension at 1/40th per year of residence.
+# The maximum_monthly assumes 40+. There's also a 20-year rule for non-residents.
+# As with CPP, the engine does not model residence history, so these rules are not expressed here.

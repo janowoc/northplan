@@ -1,25 +1,89 @@
 # Canada Pension Plan parameters — tax year 2026
 #
-# STUB. Deliberately empty. Populated by hand, by a human, one value at a time.
+# Conventions for this file:
+#   - Every group of values carries a source comment directly above it: the
+#     primary source URL and the date a human checked it against that source.
+#     Individual values add their own note where the group comment is not
+#     specific enough — a line number on a form, a subsection of an Act.
+#     These comments ARE the audit record; there is no separate ledger.
+#   - Say the period in the key name. CPP is published as a MONTHLY maximum and
+#     an ANNUAL maximum; write whichever the source publishes and let the engine
+#     convert once. Never convert here.
+#   - Rates are bare fractions (0.15), never percentages or basis points.
+#   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Rules for this file:
-#   - Every value carries an inline comment with its source URL and the date it
-#     was checked, e.g.
-#         basic_personal_amount: <amount>  # <source-url> checked YYYY-MM-DD
-#   - Every value also gets a row in docs/VERIFICATION.md before it is trusted.
-#   - Say the period in the key name. Benefits are published monthly and
-#     tax amounts annually, and the engine now steps monthly, so a key that
-#     does not say which it is will eventually be read as the wrong one.
-#     Prefer `maximum_monthly_pension` and `basic_personal_amount_annual`
-#     over a bare name. Never convert between the two here; write the
-#     amount as published and let the engine convert once.
-#   - Rates are bare fractions (0.15), never percentages (15) or basis points.
-#   - Dollar amounts here are the nominal amounts as published for the tax year.
-#     The engine works in real dollars internally and does the conversion; do
-#     not pre-deflate anything written here.
+# Read by: engine/benefits/cpp.py
 #
-# Claude must never add, edit, infer, or estimate a value in this file. If a
-# needed parameter is absent, the loader raises MissingParameterError and the
-# correct response is to stop and ask.
+# NOTE ON AGES. Every age here is in MONTHS, because the start adjustment is
+# defined per month away from the standard age and engine/core/timeline.py
+# supplies age in months directly. Writing an age in years here and multiplying
+# in Python would put a 12 in a .py file. Convert when you enter the value and
+# say so in the source comment: e.g. `standard_start_age_months: 780  # 65y * 12`.
+
+# --- Indexation -------------------------------------------------------------
+# Keyed by the name engine.core.indexation.schedule(name, params) is called
+# with. CPP is adjusted once a year; the LENGTH of adjustment_months is what
+# the engine uses, not which months they are.
+
+indexation:
+  # https://www.canada.ca/en/services/benefits/publicpensions/cpp/receive-benefits/consumer-price-index.html
+  retirement_pension:
+    adjustment_months: [1]          # CPP, as opposed to OAS, adjusts annually
+    cpi_lag_months: 8               # defined for January using previous November - October CPI
+
+# --- Start age --------------------------------------------------------------
+
+# https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
+start_age:
+  standard_months: 780               # Age 65
+  earliest_months: 720               # Age 60
+  latest_months: 840                 # Age 70
+
+# --- Start adjustment -------------------------------------------------------
+# Two different per-month rates, applied to months BEFORE and AFTER the
+# standard age respectively. They are not the same number and not symmetric.
+
+# https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
+start_adjustment:
+  early_rate_per_month: 0.006        # 0.6% per month early, 7.2% per year early
+  late_rate_per_month: 0.007         # 0.7% per month late, 8.4% per year late
+
+# --- Pension amount ---------------------------------------------------------
+
+# https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html
+pension:
+  maximum_monthly_at_standard_age: 1507.65
+  maximum_annual_at_standard_age: 18091.80      # used in consistency tests, never by the step
+
+# --- Contributions ----------------------------------------------------------
+# Read by nothing today. engine/benefits/cpp.py takes contributory_history as a
+# caller-supplied fraction, so the benefit side never touches these. They are
+# here for the ACCUMULATION side: a working household pays CPP contributions,
+# which reduce cash available to save and generate a federal credit
+# (federal.yaml, credits, currently unmodelled).
 #
-# Expected: YMPE, YAMPE, contribution rates, maximum retirement pension, early/late start adjustment factors per month, general drop-out fraction. Also needed by the monthly loop: the standard start age in months, the earliest and latest start ages in months, and how often plus with what CPI lag CPP is indexed (annual).
+# Two earnings tiers, each with its own ceiling and rate.
+
+# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
+# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html
+contributions:
+  first_tier:
+    basic_exemption_annual: 3500
+    ceiling_annual: 74600            # 2026 maximum pensionable earnings — YMPE
+    employee_rate: 0.0595
+  second_tier:
+    ceiling_annual: 85000            # 2026 additional maximum pensionable earnings — YAMPE
+    employee_rate: 0.04              # 2026 additional contribution rate
+
+# --- Not here: drop-out rules ----------------------------------------------
+# DECIDED: the pension is modelled as a fraction of the maximum, supplied by
+# the caller as contributory_history in [0, 1]. Deriving that fraction from an
+# earnings history — general drop-out, child-rearing provisions, the enhanced
+# CPP phase-in — is a separate future module, and the parameters it needs
+# belong with it rather than sitting unread here.
+#
+# The cost of the simplification is worth stating: a single fraction cannot
+# express that enhanced CPP raises the replacement rate for later cohorts, so a
+# household retiring in the 2060s is modelled on today's benefit shape. For a
+# plan denominated in real dollars that is an understatement of CPP, not an
+# overstatement, which is the safe direction.

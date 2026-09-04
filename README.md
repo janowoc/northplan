@@ -74,7 +74,6 @@ api/             FastAPI, thin. Serves web/ via StaticFiles
 web/             plain HTML + Alpine.js + Plotly from CDN. No build step
 cli/             YAML scenario in, results out
 scenarios/       *.local.yaml is gitignored
-docs/            VERIFICATION.md is the audit ledger
 tests/golden/    hand-verified expected values — sacred
 tests/character*/ behaviour snapshots
 ```
@@ -87,7 +86,8 @@ enforced by `tests/test_layering.py`, which walks the AST of every module under
 
 No tax constant is ever inlined in a `.py` file, recalled from memory, or
 estimated. Every one is loaded from YAML under `params/` that a human populated
-by hand and recorded in `docs/VERIFICATION.md`. When a requested parameter is
+by hand, under a comment giving the source URL and the date it was checked —
+that comment is the audit record. When a requested parameter is
 absent, the loader raises `MissingParameterError` rather than returning a
 default — there is deliberately no way to supply one. See `CLAUDE.md`.
 

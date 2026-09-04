@@ -1,0 +1,116 @@
+# Registered Education Savings Plan parameters — tax year 2026
+#
+# Conventions for this file:
+#   - Every group of values carries a source comment directly above it: the
+#     primary source URL and the date a human checked it against that source.
+#     Individual values add their own note where the group comment is not
+#     specific enough — a line number on a form, a subsection of an Act.
+#     These comments ARE the audit record; there is no separate ledger.
+#   - Say the period in the key name.
+#   - Rates are bare fractions, never percentages or basis points.
+#   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
+#
+# EVERY LIMIT HERE IS PER BENEFICIARY. Grant room, the lifetime maximums, and
+# the withdrawal window do not aggregate across children. Two children in one
+# plan have two independent entitlements. Nothing in this file is a per-plan or
+# per-household figure, and reading one as such is the error this program is
+# most prone to.
+#
+# Read by: engine/accounts/resp.py
+
+# --- Contributions ----------------------------------------------------------
+
+contributions:
+  lifetime_maximum: 50000
+
+# --- Grant ------------------------------------------------------------------
+# Bounded four ways, and engine/accounts/resp.py::grant_on_contribution applies
+# all four: the match rate, the annual room (which carries forward), the annual
+# maximum measured against grant already received THIS CALENDAR YEAR, and the
+# lifetime maximum. The annual maximum is the one the monthly timestep
+# threatens — enforced per month, twelve monthly contributions each collect a
+# full year's grant.
+
+grant:
+  match_rate: 0.20                  # grant per dollar contributed
+  annual_room: 500                  # grant room accrued per beneficiary per year
+  annual_maximum: 1000              # max grant per beneficiary per CALENDAR YEAR, including room carried forward
+  lifetime_maximum: 7200            # max grant per beneficiary, all years —
+                                    # covers the basic and enhanced tiers
+                                    # COMBINED, which is why resp.py carries a
+                                    # single lifetime_grant_paid rather than
+                                    # one per tier
+
+  # --- Additional (income-tested) grant tier --------------------------------
+  # Read by engine/accounts/resp.py::enhanced_grant_rate and
+  # ::grant_on_contribution.
+  #
+  # Paid ON TOP OF match_rate above, and only on the first
+  # eligible_contribution_annual dollars contributed in the calendar year. Two
+  # limits, not three:
+  #
+  #   match_rates                    a percentage, stepped by family income
+  #   eligible_contribution_annual   a dollar window the percentage applies to
+  #
+  # THERE IS DELIBERATELY NO annual_maximum HERE, unlike the basic grant above.
+  # The enhanced tier has no carry-forward: the window is this year's first
+  # eligible_contribution_annual dollars and nothing accumulates, so the cap is
+  # exactly match_rate * eligible_contribution_annual and a separate key would
+  # be a second source of truth for one fact.
+  #
+  # The basic grant above is the opposite case and that is why it has the key:
+  # annual_maximum (1000) is NOT match_rate * annual_room (0.20 * 500 = 100),
+  # precisely because unused basic room carries forward. Do not read the two
+  # blocks as parallel.
+  #
+  # grant_on_contribution must NOT compute the enhanced cap from a literal —
+  # it falls out of rate * min(contribution, remaining eligible window), with
+  # no constant in the .py file.
+  enhanced:
+    # Income cut-offs, laid out like a bracket table.
+    # INVARIANT: len(match_rates) == len(income_edges_annual) + 1.
+    # These are CLIFFS, not a phase-out: a dollar of income across a cut-off
+    # changes the rate on every eligible dollar. Rates DESCEND as income rises,
+    # which is the opposite direction from a tax bracket table — check the
+    # ordering when you enter them.
+
+    # https://www.canada.ca/en/employment-social-development/services/student-financial-aid/education-savings/resp/resp-promoters/bulletin/notice-2025-1114.html
+    income_edges_annual: [58523, 117045]     # ascending
+    match_rates: [0.20, 0.10, 0.00]          # descending; last entry applies above the highest cut-off and may be zero
+
+    eligible_contribution_annual: 500        # first dollars each year the enhanced rate applies to
+
+    # Which calendar year's family income governs the rate. Added to the
+    # current year, so -1 means "last year's income". Statutory, and read
+    # rather than assumed for the same reason the OAS recovery tax reaches back
+    # through timeline.benefit_year_income_year: guessing the current year
+    # overstates the grant for a household whose income is rising.
+    income_year_offset: -1
+
+    # Whose income counts. The rate is set by FAMILY income, not the
+    # subscriber's — a grandparent subscriber does not make a low-income family
+    # a high-income one. The model has one household, so this is a note rather
+    # than a key; revisit if a subscriber outside the household is ever
+    # modelled.
+
+# --- Educational Assistance Payments ---------------------------------------
+# An EAP is the grant and accumulated income coming out; it is taxable in the
+# STUDENT's hands, not the subscriber's. Contributions come out separately and
+# tax-free. The split is determined by the plan's composition, not chosen.
+
+eap:
+  # The cap on EAP withdrawals during an initial window after enrolment begins.
+  #
+  # THE SOURCE STATES THIS WINDOW IN WEEKS. It is recorded here in months,
+  # fractionally, because engine/accounts/resp.py::withdraw compares it against
+  # months_since_enrolment. Convert when you enter the value and show the
+  # arithmetic in the source comment, e.g.
+  #
+  #     initial_window_months: 2.9897   # 13 weeks * 7 / 365.25 * 12
+  #
+  # Do not round to a whole month: 13 weeks is not 3 months, and rounding up
+  # extends a statutory cap by a fortnight in the student's favour.
+
+# 2026-09-02 https://www.canada.ca/en/services/benefits/education/education-savings/paying-education.html
+  initial_window_months: 2.989794452  # ((13 * 7) / 365.2425) * 12)
+  initial_window_cap: 8000            # maximum EAP payable within that window

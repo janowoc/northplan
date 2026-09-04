@@ -1,0 +1,215 @@
+# --- GIS and the Allowances -------------------------------------------------
+#
+# ============================================================================
+#  PLACEHOLDER. EVERY NUMBER IS FAKE, DELIBERATELY. Repdigits (11111, 0.11)
+#  so a real value stands out. Every unverified line ends `# PLACEHOLDER`.
+#  Month fields are set to 1 — a fill value, not a guess; grep, don't eyeball.
+# ============================================================================
+#
+# Read by: engine/benefits/gis.py, engine/benefits/allowance.py (in the future)
+#
+# SOURCE OF RECORD for every amount and rate below:
+#   Open Government, ESDC, "OAS - Table of Benefit Amounts by marital status
+#   and income level", updated quarterly, five XLSX tables:
+#     https://open.canada.ca/data/en/dataset/dfa4daf1-669e-4514-82cd-982f27707ed0
+#       Table 1  GIS, single person receiving OAS          -> cases.single
+#       Table 2  GIS, spouse of an OAS recipient           -> cases.spouse_receives_oas
+#       Table 3  GIS, spouse of a non-OAS recipient        -> cases.spouse_no_oas
+#       Table 4  GIS and Allowance for a couple            -> cases.spouse_receives_allowance
+#                                                             and allowance
+#       Table 5  Allowance for the Survivor                -> allowance_for_survivor
+#   Statutory basis: Old Age Security Act, ss. 10-22.
+#     https://laws-lois.justice.gc.ca/eng/acts/o-9/FullText.html
+#   Headline maxima cross-check: ESDC quarterly maximum benefit report.
+#
+# THREE THINGS THE HEADLINE MAXIMA DO NOT TELL YOU. Read before filling in.
+#
+# 1. GIS IS A STEP TABLE, NOT A LINE. The source tables give a benefit amount
+#    per income RANGE. The (maximum, reduction_rate) pair below is a linear
+#    approximation of a staircase. That is a deliberate modelling choice, not
+#    the rule. Golden tests must come from the tables, never from arithmetic
+#    over these parameters, or the test only proves the approximation is
+#    self-consistent. See `model.approximation` at the bottom.
+#
+# 2. THE PUBLISHED MAXIMUM INCLUDES A TOP-UP. ESDC's own note: the maximum
+#    amounts include the GIS and Allowance top-ups, paid to those with the
+#    lowest incomes. The top-up phases out over a NARROWER income band at a
+#    DIFFERENT rate than base GIS, putting a kink in the reduction curve well
+#    below where GIS itself runs out. A single reduction_rate is wrong in the
+#    low-income region. Each case below therefore carries base and top-up
+#    parameters separately. If verification shows the top-up has been folded
+#    into the base for a given case, set top_up.applies: false and say so in
+#    the source comment — do not silently collapse the fields.
+#
+# 3. INDEXATION IS QUARTERLY AND THESE AMOUNTS CHANGE FOUR TIMES A YEAR.
+#    "The 2026 GIS maximum" is not a single number. Pick the convention used
+#    in oas.yaml `pension.age_bands` and match it here — the two must agree or
+#    a household's OAS and GIS will be drawn from different quarters.
+
+gis:
+
+  # --- Eligibility ----------------------------------------------------------
+  eligibility:
+    # GIS requires an OAS pension. Structural, not a parameter — stated so the
+    # dependency between benefits/oas.py and benefits/gis.py is visible here.
+    requires_oas_pension: true
+    minimum_residence_years: 11        # PLACEHOLDER
+
+    # A partial-OAS recipient does NOT simply receive proportionally reduced
+    # GIS; the interaction is its own rule. UNRESOLVED — verify before
+    # modelling anyone with under 40 years of residence, and until then let
+    # the loader refuse rather than guess.
+    partial_oas_interaction: unresolved   # PLACEHOLDER — do not model until verified
+
+  # --- Income base ----------------------------------------------------------
+  # NOT the same base as the OAS recovery tax, which uses net income including
+  # the OAS pension. Keeping them in separate blocks is deliberate: one shared
+  # "income" concept would silently unify two different statutory bases.
+  income_base:
+    excludes_oas_pension: true         # verify: OAS itself is not GIS-testable income
+    excludes_gis: true                 # GIS is non-taxable and not self-testing
+    prior_year_income: true            # same July-June cycle as benefit_year above
+
+    # For couples the test is on COMBINED income, but the reduction RATE per
+    # dollar differs by case. gis.py must not assume combined income implies a
+    # halved rate — read both from the case block.
+    couples_use_combined_income: true
+
+    employment_income_exemption:
+      # A first tranche fully exempt, then a fraction of a further tranche.
+      # Applies to employment AND self-employment income.
+      #
+      # NAMING: the third key is the width of the income band over which the
+      # partial rate applies — NOT the maximum exemption granted. The two
+      # readings differ by a factor of 1/partial_exemption_rate. The original
+      # draft's `partial_exemption_maximum_annual` was ambiguous on exactly
+      # this point.
+      full_exemption_annual: 1111              # PLACEHOLDER
+      partial_exemption_rate: 0.11             # PLACEHOLDER
+      partial_exemption_income_band_annual: 2222   # PLACEHOLDER — width of band, not the exemption
+
+  # --- Cases ----------------------------------------------------------------
+  # gis.py branches on exactly these four keys. The original three-case schema
+  # was missing spouse_receives_allowance, which is its own published table.
+  cases:
+
+    single:
+      # Table 1. Single, widowed, or divorced pensioner.
+      # NOTE: a couple separated involuntarily (e.g. one partner in long-term
+      # care) may be assessed as two singles. That is a household-state
+      # question, not a parameter — but it routes to THIS case, so
+      # core/state.py needs a flag for it. Verify the conditions.
+      base:
+        maximum_monthly: 111.11        # PLACEHOLDER
+        reduction_rate: 0.11           # PLACEHOLDER — per dollar of testable income
+      top_up:
+        applies: true                  # PLACEHOLDER — unverified
+        maximum_monthly: 11.11         # PLACEHOLDER
+        reduction_rate: 0.11           # PLACEHOLDER — differs from base rate
+        reduction_threshold_annual: 1111   # PLACEHOLDER — income at which top-up starts reducing
+      # Income at which total benefit reaches zero. DERIVABLE from the four
+      # numbers above. Store it anyway and assert equality: a mismatch means
+      # one of the inputs is wrong and tells you which pair to re-check.
+      income_cutoff_annual: 11111      # PLACEHOLDER — assertion, not an input
+
+    spouse_receives_oas:
+      # Table 2. Both partners 65+, both receiving OAS.
+      base:
+        maximum_monthly: 222.22        # PLACEHOLDER
+        reduction_rate: 0.22           # PLACEHOLDER
+      top_up:
+        applies: true                  # PLACEHOLDER — unverified
+        maximum_monthly: 22.22         # PLACEHOLDER
+        reduction_rate: 0.22           # PLACEHOLDER
+        reduction_threshold_annual: 2222   # PLACEHOLDER
+      income_cutoff_annual: 22222      # PLACEHOLDER — assertion
+
+    spouse_no_oas:
+      # Table 3. Partner receives neither OAS nor the Allowance — typically
+      # under 60, or over 65 without residence qualification.
+      base:
+        maximum_monthly: 333.33        # PLACEHOLDER
+        reduction_rate: 0.33           # PLACEHOLDER
+      top_up:
+        applies: true                  # PLACEHOLDER — unverified
+        maximum_monthly: 33.33         # PLACEHOLDER
+        reduction_rate: 0.33           # PLACEHOLDER
+        reduction_threshold_annual: 3333   # PLACEHOLDER
+      income_cutoff_annual: 33333      # PLACEHOLDER — assertion
+
+    spouse_receives_allowance:
+      # Table 4. MISSING FROM THE ORIGINAL SCHEMA. Partner is 60-64 and
+      # receiving the Allowance. Distinct published rates — not the same as
+      # spouse_no_oas, and not the same as spouse_receives_oas.
+      #
+      # This case is transient by construction: it begins when the younger
+      # partner turns 60 and ends when they turn 65 and the household moves to
+      # spouse_receives_oas. gis.py must re-evaluate the case each month, not
+      # fix it at retirement.
+      base:
+        maximum_monthly: 444.44        # PLACEHOLDER
+        reduction_rate: 0.44           # PLACEHOLDER
+      top_up:
+        applies: true                  # PLACEHOLDER — unverified
+        maximum_monthly: 44.44         # PLACEHOLDER
+        reduction_rate: 0.44           # PLACEHOLDER
+        reduction_threshold_annual: 4444   # PLACEHOLDER
+      income_cutoff_annual: 44444      # PLACEHOLDER — assertion
+
+  # --- Modelling declaration ------------------------------------------------
+  # Not a statutory parameter. Recorded here so the approximation is visible in
+  # the params file rather than buried in gis.py, and so there is something to
+  # point at when someone asks why simulated GIS differs from the published
+  # table by a few dollars.
+  model:
+    approximation: piecewise_linear    # source tables are stepped; see note 1
+    step_width_annual: 11              # PLACEHOLDER — income granularity of the published tables
+
+
+# --- Allowance --------------------------------------------------------------
+# A SEPARATE BENEFIT, not a GIS case. Ages 60-64, for the spouse or
+# common-law partner of a GIS recipient. Absent from the original schema.
+#
+# Whether to model it is a decision, not an omission: it is worth real money
+# for a couple with an age gap, and it interacts with the CPP-start decision
+# because Allowance income is tested. If out of scope, delete this block and
+# record why — do not leave it half-present.
+#
+# Source: Table 4 (couple) of the ESDC dataset.
+
+allowance:
+  in_scope: false                      # PLACEHOLDER — decide and record
+  age_range_months:
+    earliest: 1                        # PLACEHOLDER — month field, fill value
+    latest: 1                          # PLACEHOLDER — month field, fill value
+  base:
+    maximum_monthly: 555.55            # PLACEHOLDER
+    reduction_rate: 0.55               # PLACEHOLDER
+  top_up:
+    applies: true                      # PLACEHOLDER — unverified
+    maximum_monthly: 55.55             # PLACEHOLDER
+    reduction_rate: 0.55               # PLACEHOLDER
+    reduction_threshold_annual: 5555   # PLACEHOLDER
+  income_cutoff_annual: 55555          # PLACEHOLDER — assertion
+
+
+# --- Allowance for the Survivor ---------------------------------------------
+# Ages 60-64, widowed, not remarried. Source: Table 5.
+#
+# Reached from a different household state than `allowance` — a mortality
+# event, not an age transition — so core/state.py must distinguish them.
+
+allowance_for_survivor:
+  in_scope: false                      # PLACEHOLDER — decide and record
+  age_range_months:
+    earliest: 1                        # PLACEHOLDER — month field, fill value
+    latest: 1                          # PLACEHOLDER — month field, fill value
+  base:
+    maximum_monthly: 666.66            # PLACEHOLDER
+    reduction_rate: 0.66               # PLACEHOLDER
+  top_up:
+    applies: true                      # PLACEHOLDER — unverified
+    maximum_monthly: 66.66             # PLACEHOLDER
+    reduction_rate: 0.66               # PLACEHOLDER
+    reduction_threshold_annual: 6666   # PLACEHOLDER
+  income_cutoff_annual: 66666          # PLACEHOLDER — assertion

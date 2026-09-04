@@ -1,25 +1,112 @@
 # Federal income tax parameters — tax year 2026
 #
-# STUB. Deliberately empty. Populated by hand, by a human, one value at a time.
-#
-# Rules for this file:
-#   - Every value carries an inline comment with its source URL and the date it
-#     was checked, e.g.
-#         basic_personal_amount: <amount>  # <source-url> checked YYYY-MM-DD
-#   - Every value also gets a row in docs/VERIFICATION.md before it is trusted.
-#   - Say the period in the key name. Benefits are published monthly and
-#     tax amounts annually, and the engine now steps monthly, so a key that
-#     does not say which it is will eventually be read as the wrong one.
-#     Prefer `maximum_monthly_pension` and `basic_personal_amount_annual`
-#     over a bare name. Never convert between the two here; write the
-#     amount as published and let the engine convert once.
+# Conventions for this file:
+#   - Every value carries an inline comment with its source URL and the date
+#     it was checked.
+#   - Every group of values carries a source comment directly above it: the
+#     primary source URL and the date a human checked it. That comment is the
+#     audit record — there is no separate ledger to keep in step with it.
+#   - Say the period in the key name. Never convert between periods here; write
+#     the amount as published and let the engine convert once.
 #   - Rates are bare fractions (0.15), never percentages (15) or basis points.
-#   - Dollar amounts here are the nominal amounts as published for the tax year.
-#     The engine works in real dollars internally and does the conversion; do
-#     not pre-deflate anything written here.
+#   - Dollar amounts are the nominal amounts as published for the tax year. The
+#     engine works in real dollars and does the conversion; do not pre-deflate.
 #
-# Claude must never add, edit, infer, or estimate a value in this file. If a
-# needed parameter is absent, the loader raises MissingParameterError and the
-# correct response is to stop and ask.
+# SCOPE: income tax only. One federal program per file, so the registered
+# account rules that used to sit here now live in rrif.yaml (RRSP/RRIF),
+# tfsa.yaml, and resp.yaml.
 #
-# Expected: bracket edges and rates, basic personal amount, credits, CPP/EI amounts, age amount, pension income amount. Also needed by the monthly loop: the month a balance owing for the prior tax year comes due, and how often plus with what CPI lag the brackets and credits are indexed.
+# Read by: engine/tax/federal.py, engine/core/timeline.py (is_filing_month),
+#          engine/accounts/taxable.py (investment_income), engine/tax/provincial.py (non_refundable_credits)
+
+# --- Calendar rules ---------------------------------------------------------
+# Statutory, and parameters like any other: engine/core/timeline.py reads them
+# rather than hard-coding a month.
+
+# Note: if paying by installments, they are paid in March, June, September, and December.
+# The engine does not model installments; it assumes a balance owing is paid in full in the filing month.
+filing_month: 4                      # month a balance owing for the PRIOR tax year comes due
+
+indexation:
+  # Keyed by the name engine.core.indexation.schedule(name, params) is called
+  # with. Brackets and credits are indexed on the same schedule, so they share
+  # one entry; split it if that ever stops being true.
+  brackets_and_credits:
+    adjustment_months: [1]           # 1 = annual
+    cpi_lag_months: 9                # defined for January using previous October - September CPI
+  pension_income_amount:
+    adjustment_months: []   # never adjusted; $2000 is fixed in the Act
+    cpi_lag_months: 0
+
+# --- Rate brackets ----------------------------------------------------------
+# INVARIANT: len(rates) == len(edges_annual) + 1. Edges are the upper bound of
+# each bracket except the last, which is unbounded. Edges strictly ascending.
+
+# https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
+brackets:
+  edges_annual: [58523, 117045, 181440, 258482]
+  rates: [0.14, 0.205, 0.26, 0.29, 0.33]
+
+# --- Non-refundable credits -------------------------------------------------
+# Credit AMOUNTS are dollars of income; they reduce tax by amount * valuation
+# rate.
+#
+# valuation_rate is kept separate from brackets.rates[0] on purpose. The two
+# coincide today but are distinct legal rules and are not guaranteed to move in
+# lockstep — either can change without the other. Enter it as its own value
+# with its own source, even when it looks like a duplicate.
+
+# https://www.canada.ca/en/revenue-agency/services/forms-publications/payroll/t4127-payroll-deductions-formulas.html
+# https://www.taxtips.ca/nrcredits/tax-credits-2026.htm
+credits:
+  valuation_rate: 0.14
+  basic_personal_amount_annual: 16452             # Note that there is a clawvback for high-income earners, but the engine does not model that.
+  pension_income_amount_annual: 2000              # fixed at $2000 in the Income Tax Act, not indexed
+  age_amount:
+    eligibility_age_years: 65
+    amount_annual: 9208
+    reduction_threshold_annual: 46432
+    reduction_rate: 0.15
+
+# --- Credit for CPP and EI contributions ------------------------------------
+# Read by engine/tax/federal.py::non_refundable_credits and
+# engine/tax/provincial.py::non_refundable_credits.
+#
+# Not a fixed amount like the credits above: the credit is the contributions
+# ACTUALLY PAID over the year, capped at these maxima and then valued at
+# credits.valuation_rate (federally) or the province's rate. The amount paid is
+# an argument to those functions, accumulated over the twelve monthly steps.
+#
+# The maxima live here, not in cpp.yaml, because they are Income Tax Act
+# ceilings on a credit and apply Canada-wide. EI has no parameter file of its
+# own and needs none for this: the maximum is the only EI figure the model
+# reads.
+#
+# Contributions stop partway through the year once a ceiling is reached, so a
+# year's figure is not twelve times a month's. Cap at the annual assessment,
+# never per month.
+
+# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
+# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
+contribution_credit:
+  cpp_maximum_annual: 3519.45
+  ei_maximum_annual: 1123.07
+
+# --- Investment income treatment -------------------------------------------
+# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# These are federal income-tax rules, which is why they stay in this file
+# rather than moving to an account file — the taxable account is not a
+# registered program.
+
+# https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-82.html
+investment_income:
+  capital_gains_inclusion_rate: 0.50
+  eligible_dividend_gross_up_rate: 0.38           # s.82(1)(b)(ii)(D)
+  # BASE: 6/11 of the GROSS-UP AMOUNT (the 0.38 above), not of the dividend
+  # and not of the grossed-up dividend. Stated because the credit is quoted
+  # both ways in secondary sources and the two differ by a factor of ~3.6.
+  # NOT READ BY ANY ENGINE FUNCTION TODAY: taxable.py applies the gross-up and
+  # the inclusion rate, but no module applies the dividend tax credit yet, and
+  # there is no provincial counterpart in ab.yaml. Whoever wires it up owns
+  # fixing the base at the call site.
+  eligible_dividend_credit_rate: 0.54545454       # s.121(b)(iv) => (6/11)

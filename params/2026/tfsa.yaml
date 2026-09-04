@@ -1,0 +1,49 @@
+# Tax-Free Savings Account parameters — tax year 2026
+#
+# Conventions for this file:
+#   - Every group of values carries a source comment directly above it: the
+#     primary source URL and the date a human checked it against that source.
+#     Individual values add their own note where the group comment is not
+#     specific enough — a line number on a form, a subsection of an Act.
+#     These comments ARE the audit record; there is no separate ledger.
+#   - Say the period in the key name.
+#   - Rates are bare fractions, never percentages or basis points.
+#   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
+#
+# The smallest file here, and it will stay that way: a TFSA has no tax
+# calculation at all. Contributions are not deductible, growth and withdrawals
+# are not taxable, and nothing about it enters net income. The only rules are
+# how much room exists and when it appears.
+#
+# Read by: engine/accounts/tfsa.py
+
+# --- Contribution room ------------------------------------------------------
+# Granted in full on 1 January, not accrued monthly: a person may contribute
+# the whole year's room in January.
+
+# 2026-09-03 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/tax-free-savings-account/contributing/calculate-room.html
+
+room:
+  eligibility_age_years: 18          # age at END of year from which room accrues
+  annual_amount: 7000                # room granted each January
+
+# --- Recontribution of withdrawals -----------------------------------------
+# Withdrawn amounts are added back to room, but only at the start of the
+# FOLLOWING calendar year. Recontributing in the same year is an
+# over-contribution. This is the rule the monthly timestep makes easiest to get
+# wrong: room restored in the month after a withdrawal, rather than in the
+# January after it, hands the household eleven months of room it does not have.
+#
+# The delay is a whole number of JANUARIES, not of months. It is expressed here
+# so that no .py file has to know it.
+
+recontribution:
+  restored_after_n_year_ends: 1      # 1 = room returns at the first 1 January after the withdrawal
+
+# --- Over-contribution penalty ---------------------------------------------
+# NOT MODELLED YET: a plan that deliberately over-contributes is not a plan
+# the optimizer should be searching. Recorded here so that a future implementer
+# finds the key rather than inventing one.
+
+over_contribution:
+  penalty_rate_per_month: 0.01       # of the excess, per month it remains

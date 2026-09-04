@@ -1,6 +1,23 @@
-# Alberta provincial income tax parameters — tax year 2026
+# PROVINCE provincial income tax parameters — tax year XXXX
 #
-# Conventions for this file:
+# ============================================================================
+#  PLACEHOLDER FILE. EVERY NUMBER BELOW IS FAKE, DELIBERATELY.
+#
+#  This shows the SHAPE the real params/2026/PROVINCE.yaml should take.
+#  No value in it was checked against a source and none may be copied into
+#  params/ as-is.
+#
+#  Values are repdigits (11111, 0.11) so that a real number stands out at a
+#  glance. Every unverified line ends in `# PLACEHOLDER`. Replace the number
+#  and the marker together, then `grep -c PLACEHOLDER PROVINCE.yaml` is the work
+#  remaining.
+#
+#  MONTH FIELDS ARE THE EXCEPTION — a month has to be 1..12, so a placeholder
+#  month cannot look absurd. They are set to 1, a fill value, not a guess.
+#  Do not eyeball these; grep for the marker.
+# ============================================================================
+#
+# Conventions for the file you create from this template:
 #   - Every group of values carries a source comment directly above it: the
 #     primary source URL and the date a human checked it against that source.
 #     Individual values add their own note where the group comment is not
@@ -12,6 +29,12 @@
 #
 # Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum)
 #
+# THIS FILE IS THE TEMPLATE FOR EVERY PROVINCE. engine/tax/provincial.py takes
+# a province's parameter set rather than hard-coding one, so adding a province
+# is a copy of this file plus verification rows — not new code. Keep the key
+# names identical across provinces; provincial.py looks up the same paths in
+# all of them.
+#
 # Provincial credit amounts and the rate they are valued at are NOT derivable
 # from the federal ones. Source them separately even where they look familiar.
 
@@ -22,35 +45,29 @@
 
 indexation:
   brackets_and_credits:
-    adjustment_months: [1]  # credits are adjusted annually
-    cpi_lag_months: 9       # defined for January using previous October - September CPI
+    adjustment_months: [1]           # PLACEHOLDER — 1 entry = annual
+    cpi_lag_months: 11               # PLACEHOLDER
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1, same as the federal file.
 # A province with a single flat rate above the personal amount has an empty
 # edges_annual list and one rate — that is a valid table, not a missing one.
 
-# https://www.alberta.ca/personal-income-tax
-# https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
 brackets:
-  edges_annual: [61200, 154259, 185111, 246813, 370220]
-  rates: [0.08, 0.10, 0.12, 0.13, 0.14, 0.15]
+  edges_annual: [11111, 22222]                    # PLACEHOLDER
+  rates: [0.11, 0.22, 0.33]                       # PLACEHOLDER
 
 # --- Non-refundable credits -------------------------------------------------
 
-# https://www.canada.ca/en/revenue-agency/services/forms-publications/tax-packages-years.html
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/5009-c/5009-c-25e.pdf
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/5009-d/5009-d-25e.pdf
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pub/t4127-jan/t4127-01-26e.pdf
 credits:
-  valuation_rate: 0.08                            # Line 53
-  basic_personal_amount_annual: 22769             # Line 16
-  pension_income_amount_annual: 1753              # Line 34
+  valuation_rate: 0.11                            # PLACEHOLDER — provincial rate credit amounts are valued at
+  basic_personal_amount_annual: 11111             # PLACEHOLDER
+  pension_income_amount_annual: 1111              # PLACEHOLDER
   age_amount:
-    eligibility_age_years: 65                     # Line 17 — age at END of year
-    amount_annual: 6345                           # Line 17
-    reduction_threshold_annual: 47234             # Line 3 of Worksheet AB428
-    reduction_rate: 0.15                          # Line 5 of Worksheet AB428
+    eligibility_age_years: 55                     # PLACEHOLDER — age at END of year
+    amount_annual: 2222                           # PLACEHOLDER
+    reduction_threshold_annual: 33333             # PLACEHOLDER
+    reduction_rate: 0.11                          # PLACEHOLDER
 
 # --- LIF maximum withdrawal -------------------------------------------------
 # Read by engine/accounts/lira.py::maximum_withdrawal.
@@ -94,69 +111,29 @@ lif:
   # MissingParameterError fires on a jurisdiction that simply has no such rule,
   # and the pressure is to invent one. Set `has_maximum: false` and omit the
   # table; leave `has_maximum` itself unset and the run stops, which is right.
-  has_maximum: true                  # verified for Alberta
+  has_maximum: true                  # PLACEHOLDER — unverified for Alberta
 
-  # One row per age, 50..89, transcribed from the source table so that it can
-  # be diffed against it line by line. terminal_age_years names the last row,
-  # which applies to that age and every age above it. The first age must equal
-  # unlocking_age_years below; both are 50.
-  #
-  # These factors are recomputed annually from the prescribed interest rate,
-  # so this table belongs to 2026 and is re-sourced every year — it is not a
-  # fixed statutory schedule that can be copied forward.
+  # The six rows below are nonsense standing in for the real table; they run
+  # 55..60 precisely because no real LIF table starts at 55. The real table
+  # needs a row for every age in the permitted range.
   maximum_factors:
     # Age at the START of the year -> factor applied to the 1 January balance.
-    # https://open.alberta.ca/dataset/f0c27086-6b12-4aa3-881a-b895498221fa/resource/613dd0f1-130b-41fb-a271-4b03b0750cf4/download/tbf-superintendent-of-pensions-interest-rate-tables-2026.pdf
     by_age:
-      50: 0.0627
-      51: 0.0631
-      52: 0.0635
-      53: 0.0640
-      54: 0.0645
-      55: 0.0651
-      56: 0.0657
-      57: 0.0663
-      58: 0.0670
-      59: 0.0677
-      60: 0.0685
-      61: 0.0694
-      62: 0.0704
-      63: 0.0714
-      64: 0.0726
-      65: 0.0738
-      66: 0.0752
-      67: 0.0767
-      68: 0.0783
-      69: 0.0802
-      70: 0.0822
-      71: 0.0845
-      72: 0.0871
-      73: 0.0900
-      74: 0.0934
-      75: 0.0971
-      76: 0.1015
-      77: 0.1066
-      78: 0.1125
-      79: 0.1196
-      80: 0.1282
-      81: 0.1387
-      82: 0.1519
-      83: 0.1690
-      84: 0.1919
-      85: 0.2240
-      86: 0.2723
-      87: 0.3529
-      88: 0.5146
-      89: 1.0000
-    terminal_age_years: 89
+      55: 0.1111                     # PLACEHOLDER
+      56: 0.2222                     # PLACEHOLDER
+      57: 0.3333                     # PLACEHOLDER
+      58: 0.4444                     # PLACEHOLDER
+      59: 0.5555                     # PLACEHOLDER
+      60: 0.6666                     # PLACEHOLDER
+    terminal_age_years: 60           # PLACEHOLDER — this row applies to this age and every age above it
 
   # Some jurisdictions define the maximum as the GREATER of the factor result
   # and the prior year's investment return. lira.maximum_withdrawal takes only
   # the opening balance and the age, so if this is true for Alberta the
   # signature is wrong. Verifying the flag is a lookup; changing the signature
   # is a design decision.
-  maximum_is_greater_of_factor_and_prior_year_return: true   # https://open.alberta.ca/publications/private-sector-pensions-interest-rate-tables-and-prescribed-amounts
+  maximum_is_greater_of_factor_and_prior_year_return: false   # PLACEHOLDER — unverified
 
   # Unlocking. Withdrawals are barred before this age, which is what
   # distinguishes a LIRA from an RRSP.
-  unlocking_age_years: 50            # https://www.alberta.ca/pensions-individuals
+  unlocking_age_years: 11            # PLACEHOLDER
