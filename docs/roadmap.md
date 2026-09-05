@@ -36,10 +36,15 @@ issues hold the specifications.
 | 22 | Objectives, search, and the RESP oracle test | agent | 20 | oracle test passes |
 | 23 | Command line | agent | 22 | example runs end to end; `ARG001` ignore removed |
 | 24 | API and web page | agent | 23 | chart renders for the example |
+| 25 | Derive golden tolerance from a declared rounding | agent | 3 | no numeric tolerance field remains |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
 19.
+
+Issue 25 is out of sequence: it came out of the review of 3 and belongs
+immediately after it, before 15 and 17 write the first real cases against the
+format it changes.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
