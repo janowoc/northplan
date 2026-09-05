@@ -17,6 +17,7 @@ wrong module if pytest's import naming ever changes.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,9 @@ import pytest
 from engine.params.loader import ParamFileMissingError, ParamSet, ParamYearMissingError
 
 from .conftest import (
+    _DEFAULT_ROUNDING,
+    _ROUNDING_ID_SUFFIXES,
+    ROUNDING_TOLERANCES,
     GoldenCase,
     GoldenCaseError,
     _load_year_cached,
@@ -65,7 +69,26 @@ def _write(tmp_path: Path, filename: str, text: str) -> Path:
     return path
 
 
-def _well_formed_case(name: str = "seven doubled", *, expected: float = 14.0) -> str:
+def _well_formed_case(
+    name: str = "seven doubled",
+    *,
+    expected: float = 14.0,
+    rounding: str | None = None,
+    tolerance: float | None = None,
+) -> str:
+    """A synthetic ``double`` case, optionally declaring ``rounding`` or the removed ``tolerance``.
+
+    ``rounding`` and ``tolerance`` are inserted verbatim as written, not
+    validated here, so a caller can also use them to construct a
+    deliberately malformed value (a number, a list, an empty string standing
+    in for a bare ``rounding:`` key) for a discovery-rejection test, without
+    a second near-duplicate helper to keep in sync with this one.
+    """
+    extra = ""
+    if rounding is not None:
+        extra += f"\n    rounding: {rounding}"
+    if tolerance is not None:
+        extra += f"\n    tolerance: {tolerance}"
     return f"""
 target: {_THIS_MODULE}.double
 cases:
@@ -75,7 +98,7 @@ cases:
     inputs:
       x: 7.0
     expected:
-      value: {expected}
+      value: {expected}{extra}
 """
 
 
@@ -792,128 +815,402 @@ cases:
     assert "params spec has a typo'd key" in str(excinfo.value)
 
 
-# --- tolerance validation ----------------------------------------------------
+# --- rounding validation and derivation ---------------------------------------
+#
+# Issue #25: `tolerance` was replaced by a declared `rounding`, from which the
+# harness derives the absolute tolerance. There is no numeric field any more —
+# see `conftest.ROUNDING_TOLERANCES` for the derivation table and its rationale.
 
 
-def test_non_numeric_tolerance_fails_discovery(tmp_path: Path) -> None:
+def test_omitting_rounding_gives_the_cent_tolerance(tmp_path: Path) -> None:
+    _write(tmp_path, "synthetic.yaml", _well_formed_case("plain case", expected=14.0))
+
+    cases = discover_cases(tmp_path)
+
+    assert cases[0].rounding == "source_rounds_to_cent"
+    assert cases[0].tolerance == pytest.approx(0.01)
+    assert cases[0].id == "synthetic::plain case"  # no suffix at the default
+
+
+@pytest.mark.parametrize(
+    ("rounding", "expected_tolerance"),
+    [
+        ("source_rounds_to_cent", 0.01),
+        ("source_rounds_to_dollar", 0.50),
+        ("source_rounds_to_ten_dollars", 5.00),
+        ("monthly_cent_times_twelve", 0.06),
+    ],
+)
+def test_each_rounding_member_derives_its_documented_tolerance(
+    tmp_path: Path, rounding: str, expected_tolerance: float
+) -> None:
     _write(
         tmp_path,
         "synthetic.yaml",
-        f"""
-target: {_THIS_MODULE}.double
-cases:
-  - name: tolerance is not a number
-    source: "synthetic"
-    checked: 2026-01-01
-    inputs:
-      x: 7.0
-    expected:
-      value: 14.0
-    tolerance: "abc"
-""",
-    )
-
-    with pytest.raises(GoldenCaseError) as excinfo:
-        discover_cases(tmp_path)
-
-    assert "tolerance is not a number" in str(excinfo.value)
-
-
-def test_negative_tolerance_fails_discovery(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "synthetic.yaml",
-        f"""
-target: {_THIS_MODULE}.double
-cases:
-  - name: tolerance is negative
-    source: "synthetic"
-    checked: 2026-01-01
-    inputs:
-      x: 7.0
-    expected:
-      value: 14.0
-    tolerance: -1
-""",
-    )
-
-    with pytest.raises(GoldenCaseError) as excinfo:
-        discover_cases(tmp_path)
-
-    assert "tolerance is negative" in str(excinfo.value)
-
-
-def test_zero_tolerance_fails_discovery(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "synthetic.yaml",
-        f"""
-target: {_THIS_MODULE}.double
-cases:
-  - name: tolerance is zero
-    source: "synthetic"
-    checked: 2026-01-01
-    inputs:
-      x: 7.0
-    expected:
-      value: 14.0
-    tolerance: 0
-""",
-    )
-
-    with pytest.raises(GoldenCaseError) as excinfo:
-        discover_cases(tmp_path)
-
-    assert "tolerance is zero" in str(excinfo.value)
-
-
-def test_infinite_tolerance_fails_discovery(tmp_path: Path) -> None:
-    """The green-washing route: an unbounded tolerance passes anything."""
-    _write(
-        tmp_path,
-        "synthetic.yaml",
-        f"""
-target: {_THIS_MODULE}.double
-cases:
-  - name: tolerance is infinite
-    source: "synthetic"
-    checked: 2026-01-01
-    inputs:
-      x: 7.0
-    expected:
-      value: 14.0
-    tolerance: .inf
-""",
-    )
-
-    with pytest.raises(GoldenCaseError) as excinfo:
-        discover_cases(tmp_path)
-
-    assert "tolerance is infinite" in str(excinfo.value)
-
-
-def test_generous_tolerance_override_makes_a_would_be_failure_pass(tmp_path: Path) -> None:
-    """A legitimate, finite, per-case override still works as documented."""
-    _write(
-        tmp_path,
-        "synthetic.yaml",
-        f"""
-target: {_THIS_MODULE}.double
-cases:
-  - name: generous tolerance
-    source: "synthetic"
-    checked: 2026-01-01
-    inputs:
-      x: 7.0
-    expected:
-      value: 14.5
-    tolerance: 1.0
-""",
+        _well_formed_case("declared rounding", expected=14.0, rounding=rounding),
     )
 
     cases = discover_cases(tmp_path)
 
-    run_case(cases[0])  # 14.0 is within 1.0 of 14.5; must not raise
+    assert cases[0].rounding == rounding
+    assert cases[0].tolerance == pytest.approx(expected_tolerance)
+
+
+def test_rounding_tolerances_and_id_suffixes_stay_in_step(tmp_path: Path) -> None:
+    """Guards the one extension path the issue sanctions: adding a fifth member.
+
+    ``GoldenCase.id`` falls back to the unsuffixed id on a lookup miss in
+    ``_ROUNDING_ID_SUFFIXES``, so a new key added to ``ROUNDING_TOLERANCES``
+    without a matching entry here would run at a loosened tolerance while
+    still rendering a plain id — the exact invisible loosening the suffix
+    exists to prevent. This does not touch a case file at all; it pins the
+    two tables against each other directly, which is the only place this
+    invariant is checkable.
+    """
+    assert set(ROUNDING_TOLERANCES) - {_DEFAULT_ROUNDING} == set(_ROUNDING_ID_SUFFIXES)
+    assert _DEFAULT_ROUNDING in ROUNDING_TOLERANCES
+
+
+def test_every_rounding_tolerance_is_finite_and_positive() -> None:
+    """The invariant the deleted numeric-``tolerance`` validation used to guard.
+
+    A case file can no longer reach an unbounded or non-positive tolerance —
+    ``rounding`` only ever selects one of these four fixed numbers — but the
+    table itself is still where that number ultimately comes from, so the
+    invariant is pinned here instead of left unreachable and unchecked.
+    """
+    for rounding, tolerance in ROUNDING_TOLERANCES.items():
+        assert math.isfinite(tolerance), rounding
+        assert tolerance > 0, rounding
+
+
+@pytest.mark.parametrize(
+    ("rounding", "suffix"),
+    [
+        ("source_rounds_to_dollar", "dollar"),
+        ("source_rounds_to_ten_dollars", "ten_dollars"),
+        ("monthly_cent_times_twelve", "monthly_cent_x12"),
+    ],
+)
+def test_non_default_rounding_carries_its_suffix_in_the_id(
+    tmp_path: Path, rounding: str, suffix: str
+) -> None:
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case("suffixed case", expected=14.0, rounding=rounding),
+    )
+
+    cases = discover_cases(tmp_path)
+
+    assert cases[0].id == f"synthetic::suffixed case ({suffix})"
+
+
+def test_fails_at_cent_rounding_but_passes_at_dollar_rounding(tmp_path: Path) -> None:
+    """Proves the derivation is actually applied, not decoratively ignored.
+
+    ``double(7.0)`` is ``14.0``; the case expects ``14.2`` — 0.2 off, which is
+    more than the cent tolerance (0.01) and less than the dollar tolerance
+    (0.50). Without this test, every ``rounding`` member could silently
+    resolve to the same default tolerance and the rest of this suite would
+    still be green.
+    """
+    at_cent = _well_formed_case("off by twenty cents", expected=14.2)
+    at_dollar = _well_formed_case(
+        "off by twenty cents", expected=14.2, rounding="source_rounds_to_dollar"
+    )
+
+    _write(tmp_path, "synthetic.yaml", at_cent)
+    cent_case = discover_cases(tmp_path)[0]
+    assert cent_case.tolerance == pytest.approx(0.01)
+    with pytest.raises(AssertionError):
+        run_case(cent_case)
+
+    _write(tmp_path, "synthetic.yaml", at_dollar)
+    dollar_case = discover_cases(tmp_path)[0]
+    assert dollar_case.tolerance == pytest.approx(0.50)
+    run_case(dollar_case)  # must not raise
+
+
+def test_unrecognized_rounding_fails_discovery_naming_file_and_case(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case(
+            "rounding is not a real member", expected=14.0, rounding="source_rounds_to_nickel"
+        ),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "rounding is not a real member" in message
+    assert "source_rounds_to_nickel" in message
+    for member in (
+        "source_rounds_to_cent",
+        "source_rounds_to_dollar",
+        "source_rounds_to_ten_dollars",
+        "monthly_cent_times_twelve",
+    ):
+        assert member in message
+
+
+def test_numeric_rounding_fails_discovery(tmp_path: Path) -> None:
+    """``rounding: 0.5`` (unquoted) parses as a YAML float, not a string."""
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case("rounding is a number", expected=14.0, rounding="0.5"),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "rounding is a number" in message
+    assert "must be a string" in message
+
+
+def test_list_rounding_fails_discovery(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case(
+            "rounding is a list", expected=14.0, rounding="[source_rounds_to_cent]"
+        ),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "rounding is a list" in message
+    assert "must be a string" in message
+
+
+def test_bare_rounding_key_fails_discovery(tmp_path: Path) -> None:
+    """A bare ``rounding:`` key parses to ``None``, not "omitted"."""
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case("rounding key is bare", expected=14.0, rounding=""),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "rounding key is bare" in message
+    assert "must be a string" in message
+
+
+def test_case_still_setting_tolerance_is_rejected_by_the_dedicated_message(
+    tmp_path: Path,
+) -> None:
+    """Must fail via the dedicated ``tolerance``-was-removed branch, not the generic one.
+
+    ``rounding`` is a member of ``_ALLOWED_CASE_FIELDS`` and ``tolerance`` is
+    the one unrecognized field being reported, so the *generic* "unrecognized
+    field(s)" message also contains both the literal substrings "rounding"
+    and "tolerance" — asserting only on those, as a first pass at this test
+    did, passes even if the dedicated ``if "tolerance" in unknown`` branch in
+    ``discover_cases`` is deleted outright. This pins language unique to that
+    branch, all four members by name, and the explicit *absence* of the
+    generic message, so deleting the branch fails this test again.
+    """
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case("still sets tolerance", expected=14.0, tolerance=1.0),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "still sets tolerance" in message
+    assert "was removed" in message
+    assert "unrecognized field" not in message
+    for member in (
+        "source_rounds_to_cent",
+        "source_rounds_to_dollar",
+        "source_rounds_to_ten_dollars",
+        "monthly_cent_times_twelve",
+    ):
+        assert member in message
+
+
+# --- id collisions and the reserved rounding-suffix pattern -------------------
+
+
+def test_a_name_colliding_with_a_suffixed_sibling_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Two cases that would render one id are rejected — by the name guard.
+
+    A duplicate ``name`` check alone does not catch this, because the names
+    differ: ``basic rate`` at dollar rounding and ``basic rate (dollar)`` at
+    the default both render ``synthetic::basic rate (dollar)``. ``id`` is what
+    every comparison and lookup failure message carries, so two cases sharing
+    one would make either's failure text indistinguishable from the other's.
+
+    The rejection comes from ``_reject_reserved_suffix``, which fires on the
+    second case's *name* before any id is computed — not from the ``seen_ids``
+    uniqueness check in ``discover_cases``, which no input can reach while the
+    name guard stands. This test asserts which mechanism fired, so that
+    removing the name guard fails here rather than silently falling through to
+    a check that would then be doing the work unannounced.
+    """
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: basic rate
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+    expected:
+      value: 14.0
+    rounding: source_rounds_to_dollar
+  - name: basic rate (dollar)
+    source: "synthetic, second occurrence"
+    checked: 2026-01-01
+    inputs:
+      x: 8.0
+    expected:
+      value: 16.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "basic rate (dollar)" in message
+    assert "reserved" in message, message
+    assert "is used by more than one case" not in message, message
+
+
+def test_case_name_ending_in_a_reserved_suffix_fails_discovery(tmp_path: Path) -> None:
+    """A name that merely *looks* suffixed is rejected regardless of its own rounding.
+
+    Left unchecked, a case named this way would advertise loose rounding in
+    every run's output while actually running at whatever ``rounding`` it
+    declares (cent, here, since none is set), making the suffix untrustworthy
+    as evidence of anything.
+    """
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case("looks loosened (dollar)", expected=14.0),
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "looks loosened (dollar)" in message
+    assert "reserved" in message
+
+
+@pytest.mark.parametrize("suffix", ["dollar", "ten_dollars", "monthly_cent_x12"])
+def test_case_name_ending_in_any_reserved_suffix_fails_discovery(
+    tmp_path: Path, suffix: str
+) -> None:
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        _well_formed_case(f"a case named like it is loose ({suffix})", expected=14.0),
+    )
+
+    with pytest.raises(GoldenCaseError):
+        discover_cases(tmp_path)
+
+
+# --- tolerance is a derived property, not an independently settable field ----
+
+
+def test_golden_case_cannot_be_constructed_with_an_explicit_tolerance() -> None:
+    """The inconsistent state — a tolerance that disagrees with ``rounding`` — is unrepresentable.
+
+    Before this was a property, ``GoldenCase(..., tolerance=1e9)`` would
+    construct without complaint and ``run_case`` would honour the bogus
+    tolerance; that escape hatch existed one level above any case file, in
+    code that hand-builds a ``GoldenCase`` directly.
+    """
+    with pytest.raises(TypeError):
+        GoldenCase(
+            file=Path("synthetic.yaml"),
+            name="mismatched tolerance",
+            target=f"{_THIS_MODULE}.double",
+            source="synthetic",
+            checked=dt.date(2026, 1, 1),
+            expected={"value": 14.0},
+            tolerance=1e9,  # type: ignore[call-arg]
+        )
+
+
+def test_rounding_tolerances_table_is_immutable() -> None:
+    with pytest.raises(TypeError):
+        ROUNDING_TOLERANCES["source_rounds_to_cent"] = 1e9  # type: ignore[index]
+
+
+def test_rounding_id_suffixes_table_is_immutable() -> None:
+    with pytest.raises(TypeError):
+        _ROUNDING_ID_SUFFIXES["source_rounds_to_dollar"] = "x"  # type: ignore[index]
+
+
+# --- named-output failure labels read naturally, suffix trailing the output --
+
+
+def double_named_off_by_twenty_cents(x: float) -> dict[str, float]:
+    """Same shape as ``double_named``, but deliberately wrong by 0.2 for the message test."""
+    return {"doubled": x * 2.0 + 0.2}
+
+
+def test_named_output_failure_message_keeps_output_name_adjacent_to_case_name(
+    tmp_path: Path,
+) -> None:
+    """The rounding suffix must trail ``[output_name]``, not sit in front of it.
+
+    ``case.id`` alone (``name (monthly_cent_x12)``) is not what a
+    named-output failure should render, because gluing ``[doubled]`` onto the
+    end of that reads as ``name (monthly_cent_x12)[doubled]``, with the
+    suffix wedged between the name and the output it has nothing to do with.
+    The 0.2 mismatch is deliberately larger than ``monthly_cent_times_twelve``'s
+    0.06 tolerance, so the case fails and there is a message to inspect.
+    """
+    _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double_named_off_by_twenty_cents
+cases:
+  - name: named output with loose rounding
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+    expected:
+      doubled: 14.0
+    rounding: monthly_cent_times_twelve
+""",
+    )
+    cases = discover_cases(tmp_path)
+
+    with pytest.raises(AssertionError) as excinfo:
+        run_case(cases[0])
+
+    message = str(excinfo.value)
+    assert "[doubled] (monthly_cent_x12)" in message
+    assert "(monthly_cent_x12)[doubled]" not in message
 
 
 # --- unrecognized fields ------------------------------------------------------

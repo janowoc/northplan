@@ -54,13 +54,61 @@ the whole result and cannot appear alongside a named output in the same
 `expected` — a case that mixed them would have `value`'s meaning silently
 change from "the whole result" to "the output named `value`" the moment a
 second key was added, so the harness rejects the combination at discovery
-instead. Comparison uses `pytest.approx(abs=tolerance)`, where `tolerance`
-defaults to 0.01, must be a finite number greater than zero, and may be
-overridden per case. `expected` itself must be non-empty, and every number in
-it must be finite: a case with nothing under `expected` asserts nothing and
-would otherwise report green having checked no number at all, and a case
-expecting `inf` would report green off an overflowing target via
-`inf == approx(inf)`, so both are rejected at discovery.
+instead. `expected` itself must be non-empty, and every number in it must be
+finite: a case with nothing under `expected` asserts nothing and would
+otherwise report green having checked no number at all, and a case expecting
+`inf` would report green off an overflowing target via `inf == approx(inf)`,
+so both are rejected at discovery.
+
+## Tolerance is derived from a declared `rounding`, not written by hand
+
+Comparison uses `pytest.approx(abs=tolerance)`, but a case never writes
+`tolerance` itself. Instead it may declare `rounding` — a statement of *why*
+the source is imprecise — and the harness derives the tolerance from it. The
+premise: a case needs slack because the source is imprecise, not because the
+engine is approximately right, and the ways a source is imprecise are few and
+enumerable. There is deliberately no numeric field to widen; loosening a case
+means changing a claim about the source, which a reviewer can check against
+the `source` URL sitting in the same case.
+
+`rounding` is one of four members, each with a fixed, derived tolerance:
+
+| `rounding` | Tolerance | Why |
+|---|---|---|
+| `source_rounds_to_cent` | 0.01 | Half the last displayed digit is 0.005; 0.01 leaves room for float representation |
+| `source_rounds_to_dollar` | 0.50 | Half the last displayed digit |
+| `source_rounds_to_ten_dollars` | 5.00 | Half the last displayed digit |
+| `monthly_cent_times_twelve` | 0.06 | A monthly figure rounded to the cent, multiplied by 12, compounds ±0.005 twelve times |
+
+Omitting `rounding` means `source_rounds_to_cent`, so the harness's original
+default tolerance of 0.01 is preserved and most cases write nothing. An
+unrecognized value — including a number, a list, `None`, or a bare
+`rounding:` key, which parses to `None` — fails at discovery naming the file,
+the case, the offending value, and the four allowed members. A case that
+still sets the old `tolerance:` field is rejected too, with a message that
+names `rounding` as its replacement.
+
+These four numbers describe how a source *publishes* a figure, never the tax
+system itself — no bracket, rate, threshold, or credit lives among them —
+which is why they are fixed in `conftest.py` (`ROUNDING_TOLERANCES`) rather
+than under `params/`, which `CLAUDE.md` reserves for hand-populated tax
+parameters. There is deliberately no fifth, numeric escape hatch: a source
+whose imprecision none of the four members describes gets a new member added
+to that table, in a diff someone reviews, not a bespoke tolerance a case
+writer can quietly inflate. If real cases later prove this too strict,
+reinstating a numeric escape with a mandatory written justification is a
+separate, deliberate change — not something to work around here.
+
+A case whose `rounding` is not the default carries a short suffix in its test
+id — `(dollar)`, `(ten_dollars)`, or `(monthly_cent_x12)` — for example:
+
+```
+tests/golden/test_cases.py::test_golden_case[federal::basic rate on 100k (dollar)]
+```
+
+so that loosening a case changes its id in the diff, and every run's output
+shows which cases run loose. A case at the default cent rounding keeps the
+plain `<file stem>::<case name>` id.
 
 `inputs` must be a mapping with string keys — a YAML list where a mapping was
 meant (`inputs: [x: 7.0]` instead of `inputs: {x: 7.0}`) is a small, easy
@@ -93,7 +141,7 @@ cases:
       x: 7.0
     expected:
       value: 14.0
-    tolerance: 0.01   # optional; this is the default
+    rounding: source_rounds_to_cent   # optional; this is the default
 ```
 
 ## An empty `cases/` directory is a valid state
