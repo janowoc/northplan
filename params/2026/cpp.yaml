@@ -26,14 +26,14 @@
 # the engine uses, not which months they are.
 
 indexation:
-  # https://www.canada.ca/en/services/benefits/publicpensions/cpp/receive-benefits/consumer-price-index.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/receive-benefits/consumer-price-index.html
   retirement_pension:
     adjustment_months: [1]          # CPP, as opposed to OAS, adjusts annually
     cpi_lag_months: 8               # defined for January using previous November - October CPI
 
 # --- Start age --------------------------------------------------------------
 
-# https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
 start_age:
   standard_months: 780               # Age 65
   earliest_months: 720               # Age 60
@@ -43,14 +43,14 @@ start_age:
 # Two different per-month rates, applied to months BEFORE and AFTER the
 # standard age respectively. They are not the same number and not symmetric.
 
-# https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
 start_adjustment:
   early_rate_per_month: 0.006        # 0.6% per month early, 7.2% per year early
   late_rate_per_month: 0.007         # 0.7% per month late, 8.4% per year late
 
 # --- Pension amount ---------------------------------------------------------
 
-# https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html
 pension:
   maximum_monthly_at_standard_age: 1507.65
   maximum_annual_at_standard_age: 18091.80      # used in consistency tests, never by the step
@@ -64,8 +64,8 @@ pension:
 #
 # Two earnings tiers, each with its own ceiling and rate.
 
-# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
-# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html
 contributions:
   first_tier:
     basic_exemption_annual: 3500

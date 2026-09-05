@@ -65,7 +65,7 @@ pension:
   age_bands:
     # Each band applies from from_age_months up to the next band's from_age_months.
     # The first band must start at start_age.earliest_months.
-    # https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html
     - from_age_months: 780
       maximum_monthly: 751.97
     - from_age_months: 900
@@ -74,7 +74,7 @@ pension:
 # --- Recovery tax (clawback) ------------------------------------------------
 # Threshold and rate are ANNUAL quantities. engine/benefits/oas.py converts to
 # a monthly withholding once, in recovery_tax_monthly. Do not pre-divide.
-# https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html
+# 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html
 
 recovery_tax:
   threshold_annual: 95323            # net income above which recovery begins

@@ -42,7 +42,7 @@ indexation:
 # INVARIANT: len(rates) == len(edges_annual) + 1. Edges are the upper bound of
 # each bracket except the last, which is unbounded. Edges strictly ascending.
 
-# https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
 brackets:
   edges_annual: [58523, 117045, 181440, 258482]
   rates: [0.14, 0.205, 0.26, 0.29, 0.33]
@@ -56,8 +56,8 @@ brackets:
 # lockstep — either can change without the other. Enter it as its own value
 # with its own source, even when it looks like a duplicate.
 
-# https://www.canada.ca/en/revenue-agency/services/forms-publications/payroll/t4127-payroll-deductions-formulas.html
-# https://www.taxtips.ca/nrcredits/tax-credits-2026.htm
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/forms-publications/payroll/t4127-payroll-deductions-formulas.html
+# 2026-09-04 https://www.taxtips.ca/nrcredits/tax-credits-2026.htm
 credits:
   valuation_rate: 0.14
   basic_personal_amount_annual: 16452             # Note that there is a clawvback for high-income earners, but the engine does not model that.
@@ -86,8 +86,8 @@ credits:
 # year's figure is not twelve times a month's. Cap at the annual assessment,
 # never per month.
 
-# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
-# https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
 contribution_credit:
   cpp_maximum_annual: 3519.45
   ei_maximum_annual: 1123.07
@@ -98,7 +98,7 @@ contribution_credit:
 # rather than moving to an account file — the taxable account is not a
 # registered program.
 
-# https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-82.html
+# 2026-09-04 https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-82.html
 investment_income:
   capital_gains_inclusion_rate: 0.50
   eligible_dividend_gross_up_rate: 0.38           # s.82(1)(b)(ii)(D)

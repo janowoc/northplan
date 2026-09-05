@@ -30,18 +30,15 @@ indexation:
 # A province with a single flat rate above the personal amount has an empty
 # edges_annual list and one rate — that is a valid table, not a missing one.
 
-# https://www.alberta.ca/personal-income-tax
-# https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
+# 2026-09-04 https://www.alberta.ca/personal-income-tax
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html
 brackets:
   edges_annual: [61200, 154259, 185111, 246813, 370220]
   rates: [0.08, 0.10, 0.12, 0.13, 0.14, 0.15]
 
 # --- Non-refundable credits -------------------------------------------------
 
-# https://www.canada.ca/en/revenue-agency/services/forms-publications/tax-packages-years.html
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/5009-c/5009-c-25e.pdf
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/5009-d/5009-d-25e.pdf
-# https://www.canada.ca/content/dam/cra-arc/formspubs/pub/t4127-jan/t4127-01-26e.pdf
+# 2026-09-04 https://www.canada.ca/content/dam/cra-arc/formspubs/pub/t4127-jan/t4127-01-26e.pdf
 credits:
   valuation_rate: 0.08                            # Line 53
   basic_personal_amount_annual: 22769             # Line 16
@@ -106,7 +103,8 @@ lif:
   # fixed statutory schedule that can be copied forward.
   maximum_factors:
     # Age at the START of the year -> factor applied to the 1 January balance.
-    # https://open.alberta.ca/dataset/f0c27086-6b12-4aa3-881a-b895498221fa/resource/613dd0f1-130b-41fb-a271-4b03b0750cf4/download/tbf-superintendent-of-pensions-interest-rate-tables-2026.pdf
+# https://open.alberta.ca/publications/private-sector-pensions-interest-rate-tables-and-prescribed-amounts
+# 2026-09-04 https://open.alberta.ca/dataset/f0c27086-6b12-4aa3-881a-b895498221fa/resource/613dd0f1-130b-41fb-a271-4b03b0750cf4/download/tbf-superintendent-of-pensions-interest-rate-tables-2026.pdf
     by_age:
       50: 0.0627
       51: 0.0631
@@ -155,8 +153,10 @@ lif:
   # the opening balance and the age, so if this is true for Alberta the
   # signature is wrong. Verifying the flag is a lookup; changing the signature
   # is a design decision.
-  maximum_is_greater_of_factor_and_prior_year_return: true   # https://open.alberta.ca/publications/private-sector-pensions-interest-rate-tables-and-prescribed-amounts
+  maximum_is_greater_of_factor_and_prior_year_return: true
 
   # Unlocking. Withdrawals are barred before this age, which is what
   # distinguishes a LIRA from an RRSP.
-  unlocking_age_years: 50            # https://www.alberta.ca/pensions-individuals
+# https://www.alberta.ca/pensions-individuals
+# 2026-09-04 https://open.alberta.ca/dataset/3e08374c-ba38-4b96-abf0-6fd15dae7109/resource/c2419a4b-4a85-4453-91e8-4bb3ef51831b/download/tbf-accessing-pension-funds-information-for-individuals-2026.pdf
+  unlocking_age_years: 50
