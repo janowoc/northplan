@@ -8,12 +8,17 @@ matter of audit completeness rather than correctness — the engine runs fine on
 an undated value, right up until nobody can say whether it was read off the
 2025 page or the 2026 one.
 
-**These warn rather than fail, deliberately.** The source comments are the audit
-record now that there is no separate ledger, and coverage of the date half is
-still partial. A failing test on partially-complete bookkeeping gets suppressed
-or deleted within a week; a warning that names the file every run stays visible
-and shrinks as the gap closes. When coverage reaches every file, change
-``warnings.warn`` to ``pytest.fail`` here and the ratchet holds.
+Coverage of the date half is complete as of issue #1: every live parameter
+file carries at least one dated source, and every date parses and falls in the
+past. This test's job now is to keep it that way, so a new parameter file
+added with no dated source fails the suite rather than printing a warning
+nobody reads.
+
+What is enforced is a floor of one dated source per file, not a date on every
+source. An undated URL added to a file that already carries a dated one still
+passes here. Catching that would mean flagging every source line that is not
+a dated source line, which is a stricter test than this one and a separate
+decision.
 
 The canonical form, matched below::
 
@@ -23,18 +28,12 @@ Date first, then the URL, on its own comment line above the group of values it
 sources. Date first because it sorts and greps: ``grep -h '^# 20' params/2026/*``
 lists every check in the repository in date order, which is the query the
 deleted ledger existed to answer.
-
-``filterwarnings = ["error"]`` in ``pyproject.toml`` makes every warning a
-failure, which is the right default for the rest of the suite. The
-``filterwarnings("always")`` mark below re-enables warning behaviour for these
-tests alone rather than weakening that setting globally.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import re
-import warnings
 from pathlib import Path
 
 import pytest
@@ -47,14 +46,6 @@ DATED_SOURCE = re.compile(r"^\s*#\s*(\d{4}-\d{2}-\d{2})\s+(https?://\S+)")
 #: Any comment carrying a URL, dated or not. Used to tell "no source recorded"
 #: from "source recorded but not dated" — different problems, different fixes.
 ANY_SOURCE = re.compile(r"^\s*#.*?(https?://\S+)")
-
-
-class UndatedParameterSourceWarning(UserWarning):
-    """A live parameter file records no date against any of its sources."""
-
-
-class ImplausibleCheckDateWarning(UserWarning):
-    """A source comment carries a date that is not a real past date."""
 
 
 def _live_param_files() -> list[Path]:
@@ -77,7 +68,6 @@ LIVE_FILES = _live_param_files()
 IDS = [f"{path.parent.name}/{path.name}" for path in LIVE_FILES]
 
 
-@pytest.mark.filterwarnings("always")
 @pytest.mark.parametrize("path", LIVE_FILES, ids=IDS)
 def test_file_records_at_least_one_dated_source(path: Path) -> None:
     """Each live parameter file carries at least one ``# YYYY-MM-DD https://...``.
@@ -96,25 +86,20 @@ def test_file_records_at_least_one_dated_source(path: Path) -> None:
     undated = [line for line in lines if ANY_SOURCE.match(line)]
     where = f"{path.parent.name}/{path.name}"
     if undated:
-        warnings.warn(
+        pytest.fail(
             f"{where}: {len(undated)} source URL(s), none with a check date. "
             f"A URL alone does not say whether it was read for this tax year. "
             f"Prefix each with the date it was checked: "
             f"'# YYYY-MM-DD https://...'.",
-            UndatedParameterSourceWarning,
-            stacklevel=1,
         )
     else:
-        warnings.warn(
+        pytest.fail(
             f"{where}: no source comment at all. Every value in this file is "
             f"currently unattributable. Add '# YYYY-MM-DD https://...' above each "
             f"group of values.",
-            UndatedParameterSourceWarning,
-            stacklevel=1,
         )
 
 
-@pytest.mark.filterwarnings("always")
 @pytest.mark.parametrize("path", LIVE_FILES, ids=IDS)
 def test_check_dates_are_real_and_not_in_the_future(path: Path) -> None:
     """Dates parse as calendar dates and do not postdate today.
@@ -134,18 +119,13 @@ def test_check_dates_are_real_and_not_in_the_future(path: Path) -> None:
         try:
             checked = dt.date.fromisoformat(stamp)
         except ValueError:
-            warnings.warn(
+            pytest.fail(
                 f"{path.parent.name}/{path.name}:{number}: {stamp!r} is not a "
                 f"calendar date.",
-                ImplausibleCheckDateWarning,
-                stacklevel=1,
             )
-            continue
         if checked > today:
-            warnings.warn(
+            pytest.fail(
                 f"{path.parent.name}/{path.name}:{number}: check date {stamp} is in "
                 f"the future. A source cannot have been checked on a day that has "
                 f"not happened; this is usually the tax year copied in by mistake.",
-                ImplausibleCheckDateWarning,
-                stacklevel=1,
             )

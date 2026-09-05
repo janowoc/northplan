@@ -29,10 +29,3 @@ which source to check, never what the answer is.
 - **More policies.** Dynamic spending rules, a glide path per account, RESP
   capital preservation near enrolment, spousal RRSPs. See L44.
 - **Stochastic inflation** and mortality improvement scales. See L6, L8.
-
-## Bookkeeping
-
-- Four parameter files carry source URLs without check dates: `ab`, `cpp`,
-  `federal`, `oas`. `tests/params/test_param_provenance.py` warns every run.
-  When all files are dated, the two `warnings.warn` calls become
-  `pytest.fail`. This is the first roadmap issue.

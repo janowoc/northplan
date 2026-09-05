@@ -5,7 +5,7 @@ description = "Canadian household financial planning engine: deterministic simul
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Jan Owoc" }]
-requires-python = "==3.12.*"
+requires-python = ">=3.12"
 
 dependencies = [
     "numpy>=2.0",
@@ -52,7 +52,7 @@ addopts = [
     "-ra",
 ]
 markers = [
-    "golden: hand-verified expected values. Never edit an expected value to make one pass.",
+    "golden: expected values supplied by the human in tests/golden/cases. Never edit one to make a test pass.",
     "characterization: behaviour snapshot. Regenerate only on explicit human instruction.",
 ]
 filterwarnings = ["error"]
@@ -79,7 +79,8 @@ select = [
 ]
 ignore = [
     # Stub bodies raise NotImplementedError, so their arguments are unused by
-    # construction. Remove this once the modules are implemented.
+    # construction. Removed by roadmap issue 23, "Command line", whose success
+    # criterion is that the example runs end to end without it.
     "ARG001",
 ]
 

@@ -391,11 +391,27 @@ def test_every_rate_is_a_fraction_not_a_percentage(year: ParamYear) -> None:
     The single most likely units error in these files, and the one that is
     hardest to see: 15 and 0.15 both look like reasonable things to write next
     to the word "rate", and only one of them is what every consumer expects.
+
+    A rate expressed per month is the same units trap as any other rate, so a
+    stem ending ``_rate_per_month`` is included alongside the plain ``_rate``
+    and ``_rates`` forms. Without it the CPP start adjustments, the OAS
+    deferral increment and the TFSA over-contribution penalty were all
+    unchecked.
+
+    Note what this bound does and does not prove. It catches a per-month rate
+    written in whole percent — ``6`` where ``0.06`` was meant — because that
+    leaves [0, 1]. It does not catch a decimal shift that stays inside the
+    range: ``increment_rate_per_month`` was once 0.06 against a comment
+    reading "6% per month", and 0.06 and 0.6 both pass here. Bounding a
+    per-month rate more tightly is a judgement about plausible magnitudes
+    rather than a units check, and does not belong in this test.
     """
     for name in year.names():
         for path, value in _leaves(year[name].values):
             leaf = _stem(path)
-            if leaf in {"rate", "rates"} or leaf.endswith(("_rate", "_rates")):
+            if leaf in {"rate", "rates"} or leaf.endswith(
+                ("_rate", "_rates", "_rate_per_month")
+            ):
                 assert isinstance(value, (int, float)), f"{name}.{path} is not numeric."
                 assert 0 <= value <= 1, (
                     f"{name}.{path} is {value}, outside [0, 1]. Rates are bare "
