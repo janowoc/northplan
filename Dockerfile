@@ -1,3 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# A BuildKit parser directive — `# syntax=...` — would have to go ABOVE the two
+# lines here. BuildKit stops looking for directives at the first comment, blank
+# line, or instruction, so one placed below them is read as an ordinary comment
+# and silently ignored: no error, just the default frontend. There is no such
+# directive today.
+
 # One container: the API and the static files it serves.
 FROM python:3.12-slim
 

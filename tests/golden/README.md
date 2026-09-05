@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Golden tests
 
 A golden test asserts that an engine function returns a specific, known-correct

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """YAML parameter files -> typed, frozen, defaultless parameter objects.
 
 The guardrail behind the most important rule in this repository: no tax or

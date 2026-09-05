@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Return and mortality draw generation.
 
 Generated once per scenario, from an explicit seed, and reused across every

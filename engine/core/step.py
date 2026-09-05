@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The monthly step. One month, all paths, one implementation.
 
 ``advance_month`` is the only place simulated time passes. Monte Carlo calls it

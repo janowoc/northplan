@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Parameterized decision rules — what the optimizer searches over.
 
 A policy is a small set of numbers plus the rules that turn state into

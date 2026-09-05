@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Self-tests of the golden harness itself.
 
 These are not golden cases and carry no ``@pytest.mark.golden`` — they check

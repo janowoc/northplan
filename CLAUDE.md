@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Working rules
 
 ## Tax and benefit constants — the most important rule in this repo

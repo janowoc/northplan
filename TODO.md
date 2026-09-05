@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Outstanding work
 
 Planned work is tracked as GitHub issues, in the order given in

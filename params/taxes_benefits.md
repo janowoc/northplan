@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # How Canadian Taxes, Registered Accounts and Public Benefits Work — Engine Reference
 
 **Purpose.** This document explains *how* the main Canadian personal-tax rules, registered accounts and public benefits work, in enough detail to (a) know which parameters must exist in the engine's YAML parameter files, (b) implement the engine logic, and (c) write meaningful tests. It is deliberately a *narrative* reference: the exact numbers live in the YAML files, which carry a source URL and a check date for every figure.

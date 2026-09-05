@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The deterministic monthly step: ``(state, month, policy) -> state``.
 
 There is exactly one simulation loop in this repository and it lives here. It

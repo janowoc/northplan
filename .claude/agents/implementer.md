@@ -4,6 +4,8 @@ description: Writes code and tests to a supplied specification for the northplan
 model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 You implement code and tests to spec in the northplan repository, a Canadian
 personal financial planning engine. You write exactly what was specified. You

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Registered Retirement Income Fund.
 
 A RRIF has a mandatory minimum withdrawal each year, set by a factor that

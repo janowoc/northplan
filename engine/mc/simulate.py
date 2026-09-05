@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The path loop: run every month for all paths, under one policy.
 
 This calls ``engine.core.step.advance_month`` in a loop over months. It

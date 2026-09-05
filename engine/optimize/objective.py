@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Scalar objectives that reduce a path distribution to one number.
 
 The optimizer maximises one of these. Each collapses ``(n_years, n_paths)``

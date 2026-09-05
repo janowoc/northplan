@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Shared account primitives.
 
 Growth and the split of a withdrawal into its tax components are the same

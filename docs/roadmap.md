@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
 # Roadmap
 
 The ordered sequence of work toward a first end-to-end version. Each step is a

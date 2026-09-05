@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Registered and taxable account mechanics.
 
 Each module models one account type: contribution room, growth, withdrawal, and

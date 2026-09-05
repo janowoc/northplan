@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Accumulation policies: how to split a savings budget across accounts.
 
 The free variables the optimizer searches for the accumulation use case are the

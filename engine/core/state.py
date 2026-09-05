@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Household state carried from one simulated month to the next.
 
 Everything here is a frozen dataclass. The monthly step returns a new state

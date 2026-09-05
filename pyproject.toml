@@ -1,9 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 [project]
 name = "northplan"
 version = "0.0.0"
 description = "Canadian household financial planning engine: deterministic simulator, Monte Carlo, policy optimizer"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [{ name = "Jan Owoc" }]
 requires-python = ">=3.12"
 
@@ -25,7 +29,7 @@ dev = [
 northplan = "cli.main:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -68,6 +72,13 @@ line-length = 100
 extend-exclude = ["web"]
 
 [tool.ruff.lint]
+# `explicit-preview-rules` is load-bearing, not cosmetic. Bare `preview = true`
+# also changes the behaviour of the `E`/`W`/`F`/`B`/`UP`/`N`/`SIM`/`RUF`/`NPY`/
+# `ARG`/`PTH` selections below and would land unrelated diagnostics here. With
+# it, the only preview rule in effect is the one named in `select`, CPY001, and
+# nothing else changes.
+preview = true
+explicit-preview-rules = true
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
@@ -81,6 +92,7 @@ select = [
     "NPY",  # numpy-specific
     "ARG",  # unused arguments
     "PTH",  # use pathlib
+    "CPY001",  # missing copyright notice (preview; see the two flags above)
 ]
 ignore = [
     # Stub bodies raise NotImplementedError, so their arguments are unused by
@@ -88,6 +100,18 @@ ignore = [
     # criterion is that the example runs end to end without it.
     "ARG001",
 ]
+
+[tool.ruff.lint.flake8-copyright]
+# CPY001 covers Python only, and reads just the first 4096 bytes of a file.
+#
+# It also checks neither the copyright holder nor the licence: ruff has no
+# option for either, so this pattern matches any SPDX-FileCopyrightText line
+# with a year on it. A .py file headed `2026 Somebody Else` /
+# `SPDX-License-Identifier: MIT` passes `ruff check` clean — verified. That
+# matters because `ruff check .` is what a pre-commit hook and a hurried
+# reader run. tests/test_licence_headers.py is the binding constraint on the
+# holder, the licence, and every non-Python file, and it pins both.
+notice-rgx = "(?i)SPDX-FileCopyrightText:\\s*\\d{4}"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may assert on private helpers and use long literal tables.

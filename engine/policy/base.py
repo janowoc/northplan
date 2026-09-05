@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The policy interface and the information a policy is allowed to see."""
 
 from __future__ import annotations

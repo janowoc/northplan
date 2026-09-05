@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Registered Education Savings Plan — tracked per beneficiary.
 
 **Never one pot.** Grant room, the lifetime contribution limit, and the

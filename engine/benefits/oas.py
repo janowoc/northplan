@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Old Age Security, including the recovery tax (clawback).
 
 Parameters from ``params/{year}/oas.yaml``.

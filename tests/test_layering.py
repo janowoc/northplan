@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The layering rule: ``engine/`` may not depend on the layers above it.
 
 ``engine/`` must be importable and fully testable with FastAPI absent. That is

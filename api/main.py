@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """FastAPI application: one container, API plus static files.
 
 Endpoints are deliberately few. Simulation and optimization endpoints return

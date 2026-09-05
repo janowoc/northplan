@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Registered Retirement Savings Plan.
 
 Contributions are deductible against income in the year made; withdrawals are

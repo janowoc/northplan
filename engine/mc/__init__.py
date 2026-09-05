@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Monte Carlo: return generation and the loop over months.
 
 **Common random numbers.** The return matrix and the mortality draws are

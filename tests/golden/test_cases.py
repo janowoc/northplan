@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Discover and run every human-written case under ``tests/golden/cases/``.
 
 All the interesting logic — parsing a case file, validating that ``source``

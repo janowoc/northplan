@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Guaranteed Income Supplement — **not modelled**, and a tripwire that says so.
 
 GIS is income-tested, non-taxable, and reduced against a different income base

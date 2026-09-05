@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """HTTP layer. Thin by construction.
 
 Translates JSON to engine calls and engine results back to JSON, and serves

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Tests for the parameter loader — the guardrail behind the parameter rule.
 
 The rule "never invent a tax parameter" is only as strong as the loader's

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """``northplan`` command line interface.
 
 Reads a scenario YAML file, runs it, writes results as CSV (row per year) or

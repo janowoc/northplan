@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The constant real-terms cost of periodic, lagged indexation.
 
 An engine that works in real dollars and steps annually can treat a fully

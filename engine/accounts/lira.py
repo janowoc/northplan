@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Locked-In Retirement Account and the LIF it becomes.
 
 Like an RRSP in tax treatment and unlike it in access: withdrawals are barred

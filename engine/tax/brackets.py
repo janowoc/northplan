@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Progressive bracket arithmetic, shared by federal and provincial tax.
 
 The one piece of bracket machinery in the repository. Federal and provincial

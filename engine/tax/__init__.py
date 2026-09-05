@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Array-valued pure functions for Canadian income tax.
 
 Every function here takes and returns NumPy arrays of shape ``(n_paths,)`` and

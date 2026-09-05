@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Brute-force grid search over policy parameters.
 
 Obviously correct and, over a simulator vectorized across paths, fast enough.

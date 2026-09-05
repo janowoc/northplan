@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Total household tax: federal plus provincial, across all persons.
 
 The single entry point the year-end close calls, once per simulated year, on

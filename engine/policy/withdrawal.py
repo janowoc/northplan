@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Decumulation policies: withdrawal order, thresholds, and benefit start ages.
 
 The free variables the optimizer searches for the decumulation use case are the

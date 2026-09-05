@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Non-registered (taxable) investment account.
 
 The only account whose tax depends on how the money got there. It carries an

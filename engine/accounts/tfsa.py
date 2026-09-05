@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Tax-Free Savings Account.
 
 Contributions are not deductible; growth and withdrawals are entirely

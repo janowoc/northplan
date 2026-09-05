@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Request and response models for the HTTP API.
 
 Pydantic models, distinct from the engine's frozen dataclasses. Keeping them

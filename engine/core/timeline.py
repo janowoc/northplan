@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Month arithmetic for the simulation timeline.
 
 The monthly loop needs a small amount of calendar reasoning, and it needs

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Structural invariants over the real parameter files under ``params/``.
 
 Not golden values. Nothing here asserts that a bracket edge is 58523 — that is

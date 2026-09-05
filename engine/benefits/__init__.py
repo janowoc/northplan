@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Government benefits: CPP, OAS, GIS.
 
 Same shape as ``engine/tax/``: array-valued pure functions over ``(n_paths,)``,

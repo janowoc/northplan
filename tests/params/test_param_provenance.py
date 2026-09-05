@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Provenance of the real parameter files: does each one say where it came from?
 
 Separate from ``test_param_file_structure.py`` because it asks a different kind
