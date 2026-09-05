@@ -10,7 +10,9 @@ plausible wrong number.
 from __future__ import annotations
 
 import inspect
+import shutil
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -28,6 +30,42 @@ from engine.params.loader import (
 #: Scaffolding marker left on every unverified line of a draft parameter file.
 #: Spelled by concatenation so that this file does not itself trip the scan.
 MARKER = "PLACE" + "HOLDER"
+
+#: The parameter sets that must exist for 2026. Issue 5 adds ``"mortality"``
+#: here when ``params/2026/mortality.yaml`` lands; until then the template at
+#: the ``params/`` root is out of ``load_year``'s reach and this tuple is
+#: correct without it. Recording the names is deliberate friction: dropping a
+#: file into a year directory without adding its name here fails, which is the
+#: point.
+EXPECTED_2026_SETS: Final[tuple[str, ...]] = (
+    "ab",
+    "cpp",
+    "federal",
+    "oas",
+    "resp",
+    "rrif",
+    "tfsa",
+)
+
+
+def _files_with_markers(root: Path) -> list[str]:
+    """Every ``path:line: text`` under ``root``'s year directories still marked.
+
+    Scoped to the year directories because those are the only files
+    ``load_year`` reads. Takes the root as an argument so the scan itself can
+    be exercised against a tree that deliberately contains an offender.
+    """
+    year_directories = sorted(
+        path for path in root.iterdir() if path.is_dir() and path.name.isdigit()
+    )
+    assert year_directories, f"No parameter year directories under {root}."
+    return [
+        f"{path.relative_to(root)}:{number}: {line.strip()}"
+        for directory in year_directories
+        for path in sorted(directory.rglob("*.yaml"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if MARKER in line
+    ]
 
 
 @pytest.fixture
@@ -136,10 +174,12 @@ def test_the_repository_params_load_and_are_populated() -> None:
     jurisdictions is deliberate rather than whatever happens to be on disk.
 
     Adding a province or a program is therefore a two-part change: the file,
-    and this tuple. That is the intended friction.
+    and this tuple. That is the intended friction. The tuple itself lives in
+    ``EXPECTED_2026_SETS`` so that a change to it is visible at the top of this
+    module rather than buried in an assertion.
     """
     year = load_year(2026, DEFAULT_PARAMS_ROOT)
-    assert year.names() == ("ab", "cpp", "federal", "oas", "resp", "rrif", "tfsa")
+    assert year.names() == EXPECTED_2026_SETS
     assert not any(year[name].is_stub() for name in year.names())
 
 
@@ -164,21 +204,32 @@ def test_no_repository_param_file_contains_a_placeholder_marker() -> None:
     that matters: a file is allowed to be unfinished right up until it is moved
     into a year directory, and from that moment it must be clean.
     """
-    year_directories = sorted(
-        path for path in DEFAULT_PARAMS_ROOT.iterdir() if path.is_dir() and path.name.isdigit()
-    )
-    assert year_directories, f"No parameter year directories under {DEFAULT_PARAMS_ROOT}."
-    offenders = [
-        f"{path.relative_to(DEFAULT_PARAMS_ROOT)}:{number}: {line.strip()}"
-        for directory in year_directories
-        for path in sorted(directory.rglob("*.yaml"))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if MARKER in line
-    ]
+    offenders = _files_with_markers(DEFAULT_PARAMS_ROOT)
     assert not offenders, (
         "Placeholder markers remain in files under params/. Verify each value "
         "against its source, then replace the number and the marker together, "
         "leaving a comment with the source URL and check date:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_marker_scan_catches_a_template_promoted_into_a_year_directory(
+    tmp_path: Path,
+) -> None:
+    """The scan above only means something if it can fail, so make it fail.
+
+    Copying ``params/mortality-template.yaml`` into a year directory with its
+    markers still on it is the exact mistake issue 5 could make: the file loads,
+    every structural test passes, and every number in it is fake. This proves
+    the guard fires on that.
+    """
+    year = tmp_path / "2030"
+    year.mkdir()
+    shutil.copyfile(DEFAULT_PARAMS_ROOT / "mortality-template.yaml", year / "mortality.yaml")
+
+    offenders = _files_with_markers(tmp_path)
+    assert offenders, "A template full of markers was copied in and the scan found nothing."
+    assert any("mortality.yaml" in offender for offender in offenders), (
+        f"The scan must name the offending file; it reported {offenders[:3]}."
     )
 
 

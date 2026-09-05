@@ -18,6 +18,12 @@ These run against ``DEFAULT_PARAMS_ROOT``, not a fixture. That is deliberate:
 their whole purpose is to fail on the files that ship, and a mistake in the
 2026 files is invisible to a test that builds its own YAML in ``tmp_path``.
 
+The mortality block at the end is the exception, and only because it has no
+shipped file to run against yet. Its checks run over the live year like every
+other, but they also run over the template at the ``params/`` root and over
+deliberately broken copies of it in ``tmp_path`` — the copies exercise the
+checks themselves, which is a different job from checking the files.
+
 Two of these have already earned their keep. ``terminal_age_years`` was 90 in
 ``rrif.yaml`` against a table running to 95, silently capping a 95-year-old's
 minimum withdrawal at the age-90 factor; and ``increment_rate_per_month`` was
@@ -27,17 +33,26 @@ deferred OAS roughly six-fold.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+import re
+import shutil
+from collections.abc import Callable, Iterator, Mapping
 from itertools import pairwise
-from typing import Any
+from pathlib import Path
+from typing import Any, Final
 
 import pytest
+import yaml
 
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamSet, ParamYear, load_year
 
-#: Parameter sets that are federal programs. Anything else in a year directory
-#: is a province or pension jurisdiction and must satisfy the province contract.
-FEDERAL_SETS = frozenset({"cpp", "federal", "oas", "resp", "rrif", "tfsa"})
+#: Everything in a year directory that is NOT a province or pension
+#: jurisdiction. Anything outside this set must satisfy the province contract
+#: below. Most members are federal programs, which is where the name came from;
+#: ``mortality`` is not a program at all but a national statistical table, and
+#: it belongs here because the only question this set answers is "is this file
+#: a jurisdiction?". The name stays as it is — renaming it would reach across
+#: files for no behavioural gain.
+FEDERAL_SETS = frozenset({"cpp", "federal", "mortality", "oas", "resp", "rrif", "tfsa"})
 
 #: Every parameter set holding a progressive rate table, and the path to it.
 BRACKET_TABLES = "brackets.edges_annual", "brackets.rates"
@@ -473,3 +488,456 @@ def test_province_files_are_not_federal_programs(year: ParamYear) -> None:
             f"not a province. Drafts and templates belong at the params/ root, "
             f"where load_year does not reach them."
         )
+
+
+# --- Mortality tables -------------------------------------------------------
+#
+# ``mortality`` is a life table rather than a program: ``q_x`` maps an age to
+# the probability of dying before the next birthday, one table per sex. The
+# checks below are written as free functions rather than as tests so that the
+# same four assertions can be pointed at a live year directory, at the pristine
+# template, and at deliberately broken copies of it.
+#
+# DELIBERATELY ABSENT: a monotonicity check. ``q_x`` does NOT increase with
+# age. Infant mortality exceeds childhood mortality, so a real table falls from
+# age 0 to roughly age 10 and only rises after that. The non-decreasing
+# assertion in ``test_age_factor_tables_are_contiguous_and_monotonic``, which
+# is correct for the RRIF and LIF factor tables, would reject the true life
+# table. The same warning is in the header of
+# ``params/mortality-template.yaml``, because whoever is about to add the check
+# will have read only one of the two.
+
+#: The template a real ``params/YYYY/mortality.yaml`` is copied from. It lives
+#: at the ``params/`` root, where ``load_year`` cannot reach it.
+MORTALITY_TEMPLATE: Final[Path] = DEFAULT_PARAMS_ROOT / "mortality-template.yaml"
+
+#: Scaffolding marker left on every unverified line of a draft parameter file.
+#: Spelled by concatenation so that this file does not itself trip the scan.
+MARKER: Final[str] = "PLACE" + "HOLDER"
+
+#: The comment carried by the two rows that are true by construction rather
+#: than unverified, byte-identical in both sex tables so a text test can key on
+#: it.
+TERMINAL_ROW_COMMENT: Final[str] = (
+    "# certain death at the terminal age, by construction — not a placeholder"
+)
+
+#: A line that assigns a number to a key, in a parameter file's raw text.
+_ASSIGNS_A_NUMBER = re.compile(r"^\s*\w+:\s*[-+.0-9]")
+
+#: A line that opens one of the two sex tables.
+_OPENS_A_SEX_TABLE = re.compile(r"^\s*([fm]):\s*$")
+
+#: A row inside a sex table: an age key with a value.
+_IS_AN_AGE_ROW = re.compile(r"^\s+(\d+):\s*(\S+)")
+
+#: ``terminal_age_years`` as the template's own text writes it.
+_TERMINAL_AGE_LINE = re.compile(r"^terminal_age_years:\s*(\d+)")
+
+
+def _terminal_age_in_template(lines: list[str]) -> int:
+    """The template's own ``terminal_age_years``, read out of its text.
+
+    Read rather than restated. The row count per sex is one more than this
+    number, and writing that count as a literal here would put a value derived
+    from a file under ``params/`` into a ``.py`` file — and would invite
+    revising the literal, rather than the file, on the day the human's source
+    turns out to end at a different age.
+    """
+    for line in lines:
+        found = _TERMINAL_AGE_LINE.match(line)
+        if found:
+            return int(found.group(1))
+    raise AssertionError(f"{MORTALITY_TEMPLATE} declares no terminal_age_years.")
+
+
+def _check_q_x_has_exactly_the_two_sex_tables(name: str, params: ParamSet) -> None:
+    """``q_x`` holds one table per sex the engine will ask for, and no others.
+
+    A third key is a table nothing in the engine will ever read. The other
+    checks here do walk it — they iterate whatever ``q_x`` holds — so its rows
+    are validated and then ignored, which is the worst of both: the file looks
+    thoroughly checked and a third of it is inert. A missing key is louder:
+    one spouse's mortality resolves to ``MissingParameterError`` partway
+    through a run, after the scenario has already been accepted.
+    """
+    tables = set(params.get("q_x"))
+    assert tables == {"f", "m"}, (
+        f"{name}.q_x holds {sorted(tables)}. It must hold exactly ['f', 'm']: an "
+        f"extra table is never looked up, and a missing one raises "
+        f"MissingParameterError mid-run for the spouse it belongs to."
+    )
+
+
+def _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age(
+    name: str, params: ParamSet
+) -> None:
+    """One row per age, 0 through ``terminal_age_years``, keyed by digit strings.
+
+    The gap in the middle is the failure that matters. Depending on how the
+    consumer indexes, a missing age either raises or compounds a hazard
+    belonging to a different age for a whole year of the survival curve — and
+    the second is invisible in the output.
+
+    Note the key type. ``_freeze`` casts every mapping key to ``str``, so an
+    age written ``71:`` in YAML arrives as ``"71"`` and consumers must index
+    with ``str(age)``. Asserting the keys are digit strings writes that
+    contract down somewhere other than the loader's implementation.
+    """
+    terminal = int(params.number("terminal_age_years"))
+    for sex, table in params.get("q_x").items():
+        path = f"{name}.q_x.{sex}"
+        assert all(key.isdigit() for key in table), (
+            f"{path}: ages must be whole-number keys, got {sorted(table)}."
+        )
+        ages = sorted(int(key) for key in table)
+        expected = list(range(0, terminal + 1))
+        assert ages == expected, (
+            f"{path}: ages must run 0..{terminal} with no gaps. "
+            f"Missing: {sorted(set(expected) - set(ages))}. "
+            f"Unexpected: {sorted(set(ages) - set(expected))}."
+        )
+
+
+def _check_every_death_probability_is_in_the_unit_interval(name: str, params: ParamSet) -> None:
+    """Every ``q`` is a number in ``(0, 1]``.
+
+    Zero is excluded at the bottom, not included: a ``q`` of exactly 0 is an
+    age at which nobody can die, and a run that reaches it has one year of
+    guaranteed survival written into the table rather than into a modelling
+    decision. Above 1 is the units error — a probability transcribed in percent
+    or per mille. Under the monthly hazard the template states,
+    ``1 - (1 - q) ** (1/12)``, a ``q`` above 1 raises a negative base to a
+    fractional power: NumPy returns ``nan``, so every ``draw < hazard``
+    comparison is False and *nobody* dies at that age. The survival curve goes
+    flat, not up, and nothing raises.
+    """
+    for sex, table in params.get("q_x").items():
+        for age, q in table.items():
+            path = f"{name}.q_x.{sex}.{age}"
+            assert not isinstance(q, bool) and isinstance(q, (int, float)), (
+                f"{path} is {q!r} ({type(q).__name__}), not a number."
+            )
+            assert 0 < q <= 1, (
+                f"{path} is {q}, outside (0, 1]. Probabilities here are bare "
+                f"fractions — 0.01111, never 1.111 percent and never 0."
+            )
+
+
+def _check_only_the_terminal_row_is_certain_death(name: str, params: ParamSet) -> None:
+    """``q`` is 1 at ``terminal_age_years`` and nowhere else.
+
+    Below the terminal age a ``q`` of 1 truncates every path at that age with
+    nothing in the output to say why — the household simply dies young in every
+    scenario. At the terminal age anything below 1 leaves paths alive past the
+    end of the table, which is the state ``docs/limitations.md`` L10 forbids:
+    the simulation runs to the second death and has no separate horizon to stop
+    it.
+    """
+    terminal = int(params.number("terminal_age_years"))
+    for sex, table in params.get("q_x").items():
+        path = f"{name}.q_x.{sex}"
+        assert str(terminal) in table, (
+            f"{path} has no row at the terminal age {terminal}, so no path is "
+            f"ever certain to die."
+        )
+        last = table[str(terminal)]
+        assert not isinstance(last, bool) and last == 1.0, (
+            f"{path}.{terminal} is {last!r}, not 1.0. The terminal row is death "
+            f"by construction; paths surviving it run off the end of the table."
+        )
+        early = {
+            age: q for age, q in table.items() if age != str(terminal) and q == 1.0
+        }
+        assert not early, (
+            f"{path}: q is 1.0 below the terminal age {terminal} at {sorted(early)}. "
+            f"Every path would die at that age, silently."
+        )
+
+
+def _check_the_two_sex_tables_are_not_identical(name: str, params: ParamSet) -> None:
+    """The ``f`` and ``m`` tables are not the same column pasted twice.
+
+    The one check here that is a heuristic rather than an invariant, and the
+    one that catches the likeliest way to get this file wrong. The source is
+    filtered to a sex before its column is copied; filtering once and pasting
+    twice produces a file in which every value is a real published ``q(x)``,
+    every other check passes, the marker scan passes, and the provenance test
+    passes — and half the household is modelled with the wrong sex's
+    mortality. Nothing downstream looks wrong: the run just loses the sex
+    differential in joint survival, which moves the second death and with it
+    the estate and the whole drawdown horizon.
+
+    A hundred-odd independently published probabilities do not coincide at
+    every age, so equality means duplication rather than coincidence. The
+    template ships the two tables with different repdigits precisely so this
+    check can exist.
+    """
+    tables = params.get("q_x")
+    if "f" not in tables or "m" not in tables:
+        return  # A missing table is the previous check's failure, not this one's.
+    assert dict(tables["f"]) != dict(tables["m"]), (
+        f"{name}.q_x: the f and m tables are identical at every age. Two "
+        f"independently published columns do not coincide everywhere — this is "
+        f"one sex's column pasted into both."
+    )
+
+
+#: Every structural check applying to a parameter set named ``mortality``.
+MORTALITY_CHECKS: tuple[Callable[[str, ParamSet], None], ...] = (
+    _check_q_x_has_exactly_the_two_sex_tables,
+    _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age,
+    _check_every_death_probability_is_in_the_unit_interval,
+    _check_only_the_terminal_row_is_certain_death,
+    _check_the_two_sex_tables_are_not_identical,
+)
+
+MORTALITY_CHECK_IDS = [check.__name__.lstrip("_") for check in MORTALITY_CHECKS]
+
+
+@pytest.mark.parametrize("check", MORTALITY_CHECKS, ids=MORTALITY_CHECK_IDS)
+def test_live_mortality_tables_satisfy_every_structural_check(
+    year: ParamYear, check: Callable[[str, ParamSet], None]
+) -> None:
+    """Every shipped ``mortality`` set passes every check above.
+
+    The loop is empty today: no year directory holds a mortality file yet, and
+    issue 5 is what puts one there. The parametrization is over a static
+    four-tuple and is never empty, so ``empty_parameter_set_mark`` is not in
+    play and this collects as four passing tests either way.
+
+    This is deliberately NOT written with the ``if CASES:`` guard that
+    ``tests/golden/test_cases.py`` uses. That guard exists because its
+    parametrize argument is read off disk and can genuinely be empty; here the
+    argument is a literal, and copying the guard would only hide the day a
+    check starts failing on the real file.
+
+    ISSUE 5 OWES THIS TEST A GUARD. Every other collection-driven test in this
+    module asserts it found something — ``assert tables``, ``assert
+    candidates``, ``assert provinces``. This one cannot yet, because there is
+    no mortality file to find. From the moment there is one, its absence must
+    fail rather than pass silently: deleting ``params/2026/mortality.yaml``
+    would otherwise turn four named mortality tests green while checking
+    nothing. Landing the file, adding ``"mortality"`` to ``EXPECTED_2026_SETS``
+    in ``test_loader.py``, and adding ``assert "mortality" in year.names()``
+    here are one change, not three.
+    """
+    for name in year.names():
+        if name == "mortality":
+            check(name, year[name])
+
+
+# --- The mortality template -------------------------------------------------
+
+
+@pytest.fixture
+def pristine_mortality_set(tmp_path: Path) -> ParamSet:
+    """The committed template, copied byte for byte into a fixture year directory.
+
+    ``shutil.copyfile`` rather than a YAML round trip, so that a syntax error
+    in the committed template surfaces here rather than being normalised away
+    by a load and dump.
+    """
+    year_dir = tmp_path / "2030"
+    year_dir.mkdir()
+    shutil.copyfile(MORTALITY_TEMPLATE, year_dir / "mortality.yaml")
+    return load_year(2030, tmp_path)["mortality"]
+
+
+def _mortality_set_broken_by(tmp_path: Path, mutate: Callable[[dict], None]) -> ParamSet:
+    """Load the template, apply ``mutate`` to the plain dict, and reload it as a set."""
+    raw = yaml.safe_load(MORTALITY_TEMPLATE.read_text(encoding="utf-8"))
+    mutate(raw)
+    year_dir = tmp_path / "2030"
+    year_dir.mkdir()
+    (year_dir / "mortality.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return load_year(2030, tmp_path)["mortality"]
+
+
+#: ``(check, description, mutate)``: a break to the template, and the one check
+#: that must notice it. A mutation may legitimately trip more than the check
+#: named — a third sex table also breaks contiguity — so the test asserts only
+#: that the named check fires.
+MORTALITY_BREAKAGES: tuple[tuple[Callable[[str, ParamSet], None], str, Callable[[dict], None]], ...] = (
+    (
+        _check_q_x_has_exactly_the_two_sex_tables,
+        "a third sex table",
+        lambda raw: raw["q_x"].update({"x": dict(raw["q_x"]["f"])}),
+    ),
+    (
+        _check_q_x_has_exactly_the_two_sex_tables,
+        "the male table missing entirely",
+        lambda raw: raw["q_x"].pop("m"),
+    ),
+    (
+        _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age,
+        "a gap at age 50",
+        lambda raw: raw["q_x"]["f"].pop(50),
+    ),
+    (
+        _check_every_death_probability_is_in_the_unit_interval,
+        "a probability written in percent",
+        lambda raw: raw["q_x"]["m"].update({3: 1.5}),
+    ),
+    (
+        _check_every_death_probability_is_in_the_unit_interval,
+        "an age of immortality",
+        lambda raw: raw["q_x"]["f"].update({7: 0.0}),
+    ),
+    (
+        _check_only_the_terminal_row_is_certain_death,
+        "certain death at 40",
+        lambda raw: raw["q_x"]["m"].update({40: 1.0}),
+    ),
+    (
+        _check_only_the_terminal_row_is_certain_death,
+        "survival past the terminal age",
+        lambda raw: raw["q_x"]["f"].update({raw["terminal_age_years"]: 0.9}),
+    ),
+    # The three below pin assertions that no other breakage reaches. Without
+    # them each could be deleted and the whole suite would still pass, which is
+    # the same "never seen to fail" problem the in-step guard exists to catch,
+    # one level down. The terminal-row-presence guard is the one with teeth:
+    # remove it and a table missing that row raises KeyError on the next line,
+    # which `pytest.raises(AssertionError)` would not catch.
+    (
+        _check_only_the_terminal_row_is_certain_death,
+        "no row at the terminal age at all",
+        lambda raw: raw["q_x"]["f"].pop(raw["terminal_age_years"]),
+    ),
+    (
+        _check_every_death_probability_is_in_the_unit_interval,
+        "a probability written as a YAML boolean",
+        lambda raw: raw["q_x"]["m"].update({5: True}),
+    ),
+    (
+        _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age,
+        "an age key that is not a whole number",
+        lambda raw: raw["q_x"]["f"].update({"7x": 0.11111}),
+    ),
+    (
+        _check_the_two_sex_tables_are_not_identical,
+        "one sex's column pasted into both tables",
+        lambda raw: raw["q_x"].update({"m": dict(raw["q_x"]["f"])}),
+    ),
+)
+
+
+@pytest.mark.parametrize("check", MORTALITY_CHECKS, ids=MORTALITY_CHECK_IDS)
+def test_the_pristine_template_satisfies_every_structural_check(
+    pristine_mortality_set: ParamSet, check: Callable[[str, ParamSet], None]
+) -> None:
+    """The template starts from a shape the whole suite already accepts.
+
+    This is what makes issue 5 safe. The human filling in real values starts
+    from a layout that has already been proved acceptable, so a layout failure
+    afterwards is one they introduced while filling it in rather than one they
+    inherited. It says nothing about the edited copy: a deleted row, a mistyped
+    age key, or a changed ``terminal_age_years`` are all still layout failures,
+    and the live test above is what catches them once issue 5 lands.
+    """
+    check("mortality", pristine_mortality_set)
+
+
+@pytest.mark.parametrize(
+    ("check", "description", "mutate"),
+    MORTALITY_BREAKAGES,
+    ids=[description for _, description, _ in MORTALITY_BREAKAGES],
+)
+def test_a_broken_mortality_table_fails_the_check_that_covers_it(
+    tmp_path: Path,
+    check: Callable[[str, ParamSet], None],
+    description: str,
+    mutate: Callable[[dict], None],
+) -> None:
+    """Each check actually fires on the damage it is there to catch.
+
+    Only the named check is asserted. A mutation often trips others too, and
+    pinning down which would make this table brittle for no gain.
+    """
+    broken = _mortality_set_broken_by(tmp_path, mutate)
+    with pytest.raises(AssertionError):
+        check("mortality", broken)
+
+
+def test_every_mortality_check_has_a_breakage_exercising_it() -> None:
+    """No check goes unexercised.
+
+    A fifth entry in ``MORTALITY_CHECKS`` with nothing in
+    ``MORTALITY_BREAKAGES`` pointed at it is a check that has never been seen
+    to fail, which is indistinguishable from a check that cannot fail. This
+    keeps the two tables in step.
+
+    Note the granularity: this proves every *check* is exercised, not every
+    assertion inside one. The same argument does apply one level down, and the
+    breakage table covers each assertion individually today — but nothing here
+    enforces that, so an assertion added inside an existing check arrives
+    unexercised and this test stays green.
+    """
+    exercised = {check for check, _, _ in MORTALITY_BREAKAGES}
+    assert exercised == set(MORTALITY_CHECKS), (
+        f"Checks with no breakage: "
+        f"{sorted(c.__name__ for c in set(MORTALITY_CHECKS) - exercised)}. "
+        f"Breakages naming a check that is not registered: "
+        f"{sorted(c.__name__ for c in exercised - set(MORTALITY_CHECKS))}."
+    )
+
+
+def test_every_unverified_line_of_the_template_carries_the_marker() -> None:
+    """Every number in the template is marked, except the two that are not guesses.
+
+    ``grep -c PLACEHOLDER``, less the header banner, is the count of work
+    remaining. The banner qualifier is not a quibble: three lines of the header
+    prose contain the word while describing the convention, so the raw grep
+    count never falls below three while the banner is present, and a human
+    copying this file for issue 5 deletes the banner along with the last marker.
+    The property this test asserts is the one the count depends on — that no
+    line assigning a number escaped the marker when the file was written. The
+    two terminal rows are the sole exception: they are 1.0 by construction
+    rather than by transcription, so they carry a fixed comment instead and
+    must NOT carry the marker.
+
+    Lines are parsed rather than counted. A hard-coded total would have to be
+    revised every time a sentence is added to the header, and the first person
+    to hit that would revise the number rather than the file.
+    """
+    lines = MORTALITY_TEMPLATE.read_text(encoding="utf-8").splitlines()
+
+    assignments = [line for line in lines if _ASSIGNS_A_NUMBER.match(line)]
+    assert assignments, f"{MORTALITY_TEMPLATE} assigns no numbers at all."
+
+    terminal_rows = [line for line in assignments if line.rstrip().endswith(TERMINAL_ROW_COMMENT)]
+    assert len(terminal_rows) == 2, (
+        f"Expected exactly two rows carrying {TERMINAL_ROW_COMMENT!r}, one per "
+        f"sex, found {len(terminal_rows)}: {terminal_rows}."
+    )
+    for line in terminal_rows:
+        assert MARKER not in line, (
+            f"The terminal row is 1.0 by construction and must not be marked "
+            f"unverified: {line!r}"
+        )
+        value = line.split(":", 1)[1].split("#", 1)[0].strip()
+        assert value == "1.0", f"A terminal row holds {value!r}, not 1.0: {line!r}"
+
+    unmarked = [line for line in assignments if MARKER not in line]
+    assert unmarked == terminal_rows, (
+        f"Numeric lines in {MORTALITY_TEMPLATE.name} with no marker, which "
+        f"grep would count as finished work: "
+        f"{[line for line in unmarked if line not in terminal_rows]}"
+    )
+
+    rows_per_sex: dict[str, int] = {}
+    sex: str | None = None
+    for line in lines:
+        opened = _OPENS_A_SEX_TABLE.match(line)
+        if opened:
+            sex = opened.group(1)
+            rows_per_sex[sex] = 0
+        elif sex is not None and _IS_AN_AGE_ROW.match(line):
+            rows_per_sex[sex] += 1
+    terminal = int(_terminal_age_in_template(lines))
+    expected_rows = terminal + 1
+    assert rows_per_sex == {"f": expected_rows, "m": expected_rows}, (
+        f"The template must write out every age 0..{terminal} for both sexes so "
+        f"the human replaces numbers rather than typing keys, found {rows_per_sex}."
+    )

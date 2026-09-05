@@ -1,0 +1,305 @@
+# Mortality: annual probability of death q(x) by sex — tax year XXXX
+#
+# ============================================================================
+#  PLACEHOLDER FILE. EVERY NUMBER BELOW IS FAKE, DELIBERATELY.
+#
+#  This shows the SHAPE the real params/YYYY/mortality.yaml should take. No
+#  value in it was checked against a source and none may be copied into a year
+#  directory as-is.
+#
+#  Values are repdigits (0.11111) so that a real number stands out at a
+#  glance. Every unverified line ends in `# PLACEHOLDER`. Replace the number and
+#  the marker together, then `grep -c PLACEHOLDER mortality.yaml` is the work
+#  remaining — less this banner, which mentions the marker three times while
+#  describing it, and which you delete along with the last one.
+#
+#  THE TWO TABLES USE DIFFERENT REPDIGITS: 0.11111 for f, 0.22222 for m. Not
+#  decoration. The likeliest way to get this file wrong is to filter the source
+#  to one sex, paste the column, and forget to re-filter before pasting the
+#  other — every value is then a real published q(x), and half of them belong
+#  to the wrong person. A structural test asserts the two tables are not
+#  identical, and it can only do that if the template does not ship them
+#  identical.
+# ============================================================================
+#
+# SOURCE OF RECORD for every value below:
+#   Statistics Canada Table 13-10-0114-01, "Life expectancy and other elements
+#   of the complete life table, three-year estimates, Canada, all provinces
+#   except Prince Edward Island", element "Death probability between age x and
+#   x+1", by sex.
+#
+#   RECORD THE GEOGRAPHY AND THE REFERENCE PERIOD in the dated source comment
+#   below. The table publishes several of each — write down whether these rows
+#   are Alberta or Canada, and which three-year period they cover. Neither is
+#   recoverable from the numbers once they are in the file.
+#
+#   It is a PERIOD table: it carries no mortality improvement, so a 40-year-old
+#   in the run meets today's 80-year-old mortality on reaching 80
+#   (docs/limitations.md L8).
+#
+# The engine derives a monthly hazard assuming a constant force of mortality
+# within each year of age:
+#
+#     q_month = 1 - (1 - q_x) ** (1/12)
+#
+# That is a modelling choice rather than anything the source states, and it is
+# written down both here and in engine/core/mortality.py (L9).
+#
+# Every path dies by terminal_age_years, where q is 1 by construction. The
+# simulation runs each path to the second death and has no separate horizon
+# (L10).
+#
+# ---------------------------------------------------------------------------
+# THIS TABLE IS NOT MONOTONIC IN AGE. NO TEST MAY ASSUME IT IS.
+#
+# Infant mortality exceeds childhood mortality: a real q(x) FALLS from age 0 to
+# roughly age 10 and only rises after that. tests/params/
+# test_param_file_structure.py asserts that the RRIF and LIF factor tables
+# never decrease with age, and a reader arriving here will be tempted to point
+# that same assertion at these rows. It would reject the true table. The
+# omission from MORTALITY_CHECKS is deliberate. Do not add it.
+# ---------------------------------------------------------------------------
+#
+# Conventions for the file you create from this template:
+#   - Probabilities are bare fractions (0.01111), never percentages or per
+#     mille.
+#   - One row per age, no gaps, 0 through terminal_age_years, in both tables.
+#   - The two tables are keyed f and m, the two the source publishes.
+#   - IF THE SOURCE PUBLISHES 0.000000 FOR AN AGE, STOP AND RAISE IT. The
+#     structural test bounds q to (0, 1] and will reject the file. Do not
+#     substitute a small value to get past it: a zero is either a suppressed
+#     cell or a genuine no-deaths-observed cell in a three-year provincial
+#     table, and which one it is decides what belongs here. That is a
+#     modelling decision and it gets made deliberately, not in passing.
+#
+# Read by: engine/core/mortality.py
+#
+# YYYY-MM-DD https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1310011401   # PLACEHOLDER
+# GEOGRAPHY:                                                                    # PLACEHOLDER
+# REFERENCE PERIOD:                                                             # PLACEHOLDER
+terminal_age_years: 110     # PLACEHOLDER — the last row; q_x there is 1.0
+q_x:
+  f:
+    0:   0.11111             # PLACEHOLDER
+    1:   0.11111             # PLACEHOLDER
+    2:   0.11111             # PLACEHOLDER
+    3:   0.11111             # PLACEHOLDER
+    4:   0.11111             # PLACEHOLDER
+    5:   0.11111             # PLACEHOLDER
+    6:   0.11111             # PLACEHOLDER
+    7:   0.11111             # PLACEHOLDER
+    8:   0.11111             # PLACEHOLDER
+    9:   0.11111             # PLACEHOLDER
+    10:  0.11111             # PLACEHOLDER
+    11:  0.11111             # PLACEHOLDER
+    12:  0.11111             # PLACEHOLDER
+    13:  0.11111             # PLACEHOLDER
+    14:  0.11111             # PLACEHOLDER
+    15:  0.11111             # PLACEHOLDER
+    16:  0.11111             # PLACEHOLDER
+    17:  0.11111             # PLACEHOLDER
+    18:  0.11111             # PLACEHOLDER
+    19:  0.11111             # PLACEHOLDER
+    20:  0.11111             # PLACEHOLDER
+    21:  0.11111             # PLACEHOLDER
+    22:  0.11111             # PLACEHOLDER
+    23:  0.11111             # PLACEHOLDER
+    24:  0.11111             # PLACEHOLDER
+    25:  0.11111             # PLACEHOLDER
+    26:  0.11111             # PLACEHOLDER
+    27:  0.11111             # PLACEHOLDER
+    28:  0.11111             # PLACEHOLDER
+    29:  0.11111             # PLACEHOLDER
+    30:  0.11111             # PLACEHOLDER
+    31:  0.11111             # PLACEHOLDER
+    32:  0.11111             # PLACEHOLDER
+    33:  0.11111             # PLACEHOLDER
+    34:  0.11111             # PLACEHOLDER
+    35:  0.11111             # PLACEHOLDER
+    36:  0.11111             # PLACEHOLDER
+    37:  0.11111             # PLACEHOLDER
+    38:  0.11111             # PLACEHOLDER
+    39:  0.11111             # PLACEHOLDER
+    40:  0.11111             # PLACEHOLDER
+    41:  0.11111             # PLACEHOLDER
+    42:  0.11111             # PLACEHOLDER
+    43:  0.11111             # PLACEHOLDER
+    44:  0.11111             # PLACEHOLDER
+    45:  0.11111             # PLACEHOLDER
+    46:  0.11111             # PLACEHOLDER
+    47:  0.11111             # PLACEHOLDER
+    48:  0.11111             # PLACEHOLDER
+    49:  0.11111             # PLACEHOLDER
+    50:  0.11111             # PLACEHOLDER
+    51:  0.11111             # PLACEHOLDER
+    52:  0.11111             # PLACEHOLDER
+    53:  0.11111             # PLACEHOLDER
+    54:  0.11111             # PLACEHOLDER
+    55:  0.11111             # PLACEHOLDER
+    56:  0.11111             # PLACEHOLDER
+    57:  0.11111             # PLACEHOLDER
+    58:  0.11111             # PLACEHOLDER
+    59:  0.11111             # PLACEHOLDER
+    60:  0.11111             # PLACEHOLDER
+    61:  0.11111             # PLACEHOLDER
+    62:  0.11111             # PLACEHOLDER
+    63:  0.11111             # PLACEHOLDER
+    64:  0.11111             # PLACEHOLDER
+    65:  0.11111             # PLACEHOLDER
+    66:  0.11111             # PLACEHOLDER
+    67:  0.11111             # PLACEHOLDER
+    68:  0.11111             # PLACEHOLDER
+    69:  0.11111             # PLACEHOLDER
+    70:  0.11111             # PLACEHOLDER
+    71:  0.11111             # PLACEHOLDER
+    72:  0.11111             # PLACEHOLDER
+    73:  0.11111             # PLACEHOLDER
+    74:  0.11111             # PLACEHOLDER
+    75:  0.11111             # PLACEHOLDER
+    76:  0.11111             # PLACEHOLDER
+    77:  0.11111             # PLACEHOLDER
+    78:  0.11111             # PLACEHOLDER
+    79:  0.11111             # PLACEHOLDER
+    80:  0.11111             # PLACEHOLDER
+    81:  0.11111             # PLACEHOLDER
+    82:  0.11111             # PLACEHOLDER
+    83:  0.11111             # PLACEHOLDER
+    84:  0.11111             # PLACEHOLDER
+    85:  0.11111             # PLACEHOLDER
+    86:  0.11111             # PLACEHOLDER
+    87:  0.11111             # PLACEHOLDER
+    88:  0.11111             # PLACEHOLDER
+    89:  0.11111             # PLACEHOLDER
+    90:  0.11111             # PLACEHOLDER
+    91:  0.11111             # PLACEHOLDER
+    92:  0.11111             # PLACEHOLDER
+    93:  0.11111             # PLACEHOLDER
+    94:  0.11111             # PLACEHOLDER
+    95:  0.11111             # PLACEHOLDER
+    96:  0.11111             # PLACEHOLDER
+    97:  0.11111             # PLACEHOLDER
+    98:  0.11111             # PLACEHOLDER
+    99:  0.11111             # PLACEHOLDER
+    100: 0.11111             # PLACEHOLDER
+    101: 0.11111             # PLACEHOLDER
+    102: 0.11111             # PLACEHOLDER
+    103: 0.11111             # PLACEHOLDER
+    104: 0.11111             # PLACEHOLDER
+    105: 0.11111             # PLACEHOLDER
+    106: 0.11111             # PLACEHOLDER
+    107: 0.11111             # PLACEHOLDER
+    108: 0.11111             # PLACEHOLDER
+    109: 0.11111             # PLACEHOLDER
+    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
+  m:
+    0:   0.22222             # PLACEHOLDER
+    1:   0.22222             # PLACEHOLDER
+    2:   0.22222             # PLACEHOLDER
+    3:   0.22222             # PLACEHOLDER
+    4:   0.22222             # PLACEHOLDER
+    5:   0.22222             # PLACEHOLDER
+    6:   0.22222             # PLACEHOLDER
+    7:   0.22222             # PLACEHOLDER
+    8:   0.22222             # PLACEHOLDER
+    9:   0.22222             # PLACEHOLDER
+    10:  0.22222             # PLACEHOLDER
+    11:  0.22222             # PLACEHOLDER
+    12:  0.22222             # PLACEHOLDER
+    13:  0.22222             # PLACEHOLDER
+    14:  0.22222             # PLACEHOLDER
+    15:  0.22222             # PLACEHOLDER
+    16:  0.22222             # PLACEHOLDER
+    17:  0.22222             # PLACEHOLDER
+    18:  0.22222             # PLACEHOLDER
+    19:  0.22222             # PLACEHOLDER
+    20:  0.22222             # PLACEHOLDER
+    21:  0.22222             # PLACEHOLDER
+    22:  0.22222             # PLACEHOLDER
+    23:  0.22222             # PLACEHOLDER
+    24:  0.22222             # PLACEHOLDER
+    25:  0.22222             # PLACEHOLDER
+    26:  0.22222             # PLACEHOLDER
+    27:  0.22222             # PLACEHOLDER
+    28:  0.22222             # PLACEHOLDER
+    29:  0.22222             # PLACEHOLDER
+    30:  0.22222             # PLACEHOLDER
+    31:  0.22222             # PLACEHOLDER
+    32:  0.22222             # PLACEHOLDER
+    33:  0.22222             # PLACEHOLDER
+    34:  0.22222             # PLACEHOLDER
+    35:  0.22222             # PLACEHOLDER
+    36:  0.22222             # PLACEHOLDER
+    37:  0.22222             # PLACEHOLDER
+    38:  0.22222             # PLACEHOLDER
+    39:  0.22222             # PLACEHOLDER
+    40:  0.22222             # PLACEHOLDER
+    41:  0.22222             # PLACEHOLDER
+    42:  0.22222             # PLACEHOLDER
+    43:  0.22222             # PLACEHOLDER
+    44:  0.22222             # PLACEHOLDER
+    45:  0.22222             # PLACEHOLDER
+    46:  0.22222             # PLACEHOLDER
+    47:  0.22222             # PLACEHOLDER
+    48:  0.22222             # PLACEHOLDER
+    49:  0.22222             # PLACEHOLDER
+    50:  0.22222             # PLACEHOLDER
+    51:  0.22222             # PLACEHOLDER
+    52:  0.22222             # PLACEHOLDER
+    53:  0.22222             # PLACEHOLDER
+    54:  0.22222             # PLACEHOLDER
+    55:  0.22222             # PLACEHOLDER
+    56:  0.22222             # PLACEHOLDER
+    57:  0.22222             # PLACEHOLDER
+    58:  0.22222             # PLACEHOLDER
+    59:  0.22222             # PLACEHOLDER
+    60:  0.22222             # PLACEHOLDER
+    61:  0.22222             # PLACEHOLDER
+    62:  0.22222             # PLACEHOLDER
+    63:  0.22222             # PLACEHOLDER
+    64:  0.22222             # PLACEHOLDER
+    65:  0.22222             # PLACEHOLDER
+    66:  0.22222             # PLACEHOLDER
+    67:  0.22222             # PLACEHOLDER
+    68:  0.22222             # PLACEHOLDER
+    69:  0.22222             # PLACEHOLDER
+    70:  0.22222             # PLACEHOLDER
+    71:  0.22222             # PLACEHOLDER
+    72:  0.22222             # PLACEHOLDER
+    73:  0.22222             # PLACEHOLDER
+    74:  0.22222             # PLACEHOLDER
+    75:  0.22222             # PLACEHOLDER
+    76:  0.22222             # PLACEHOLDER
+    77:  0.22222             # PLACEHOLDER
+    78:  0.22222             # PLACEHOLDER
+    79:  0.22222             # PLACEHOLDER
+    80:  0.22222             # PLACEHOLDER
+    81:  0.22222             # PLACEHOLDER
+    82:  0.22222             # PLACEHOLDER
+    83:  0.22222             # PLACEHOLDER
+    84:  0.22222             # PLACEHOLDER
+    85:  0.22222             # PLACEHOLDER
+    86:  0.22222             # PLACEHOLDER
+    87:  0.22222             # PLACEHOLDER
+    88:  0.22222             # PLACEHOLDER
+    89:  0.22222             # PLACEHOLDER
+    90:  0.22222             # PLACEHOLDER
+    91:  0.22222             # PLACEHOLDER
+    92:  0.22222             # PLACEHOLDER
+    93:  0.22222             # PLACEHOLDER
+    94:  0.22222             # PLACEHOLDER
+    95:  0.22222             # PLACEHOLDER
+    96:  0.22222             # PLACEHOLDER
+    97:  0.22222             # PLACEHOLDER
+    98:  0.22222             # PLACEHOLDER
+    99:  0.22222             # PLACEHOLDER
+    100: 0.22222             # PLACEHOLDER
+    101: 0.22222             # PLACEHOLDER
+    102: 0.22222             # PLACEHOLDER
+    103: 0.22222             # PLACEHOLDER
+    104: 0.22222             # PLACEHOLDER
+    105: 0.22222             # PLACEHOLDER
+    106: 0.22222             # PLACEHOLDER
+    107: 0.22222             # PLACEHOLDER
+    108: 0.22222             # PLACEHOLDER
+    109: 0.22222             # PLACEHOLDER
+    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
