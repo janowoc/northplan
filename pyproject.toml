@@ -56,6 +56,11 @@ markers = [
     "characterization: behaviour snapshot. Regenerate only on explicit human instruction.",
 ]
 filterwarnings = ["error"]
+# A parametrization that collects nothing is skipped by default, so a suite
+# whose cases come from files on disk reports green when it finds no files.
+# Both the provenance tests and the golden harness are shaped that way; make
+# the empty collection a failure instead.
+empty_parameter_set_mark = "fail_at_collect"
 
 [tool.ruff]
 target-version = "py312"
