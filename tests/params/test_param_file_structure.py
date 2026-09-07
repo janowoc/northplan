@@ -704,27 +704,24 @@ def test_live_mortality_tables_satisfy_every_structural_check(
 ) -> None:
     """Every shipped ``mortality`` set passes every check above.
 
-    The loop is empty today: no year directory holds a mortality file yet, and
-    issue 5 is what puts one there. The parametrization is over a static
-    four-tuple and is never empty, so ``empty_parameter_set_mark`` is not in
-    play and this collects as four passing tests either way.
+    The guard on the first line is the point of the test as much as the loop
+    is. Every other collection-driven test in this module asserts it found
+    something — ``assert tables``, ``assert candidates``, ``assert
+    provinces`` — because without that, deleting the file under test turns
+    each named test green while checking nothing. That risk became real when
+    issue 5 landed ``params/2026/mortality.yaml``; before it there was nothing
+    to find and the guard could not be written.
 
     This is deliberately NOT written with the ``if CASES:`` guard that
     ``tests/golden/test_cases.py`` uses. That guard exists because its
     parametrize argument is read off disk and can genuinely be empty; here the
     argument is a literal, and copying the guard would only hide the day a
     check starts failing on the real file.
-
-    ISSUE 5 OWES THIS TEST A GUARD. Every other collection-driven test in this
-    module asserts it found something — ``assert tables``, ``assert
-    candidates``, ``assert provinces``. This one cannot yet, because there is
-    no mortality file to find. From the moment there is one, its absence must
-    fail rather than pass silently: deleting ``params/2026/mortality.yaml``
-    would otherwise turn four named mortality tests green while checking
-    nothing. Landing the file, adding ``"mortality"`` to ``EXPECTED_2026_SETS``
-    in ``test_loader.py``, and adding ``assert "mortality" in year.names()``
-    here are one change, not three.
     """
+    assert "mortality" in year.names(), (
+        "No mortality set in this parameter year, so every check below ran "
+        "against nothing. params/2026/mortality.yaml is what issue 5 landed."
+    )
     for name in year.names():
         if name == "mortality":
             check(name, year[name])

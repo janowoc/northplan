@@ -34,16 +34,16 @@ from engine.params.loader import (
 #: Spelled by concatenation so that this file does not itself trip the scan.
 MARKER = "PLACE" + "HOLDER"
 
-#: The parameter sets that must exist for 2026. Issue 5 adds ``"mortality"``
-#: here when ``params/2026/mortality.yaml`` lands; until then the template at
-#: the ``params/`` root is out of ``load_year``'s reach and this tuple is
-#: correct without it. Recording the names is deliberate friction: dropping a
-#: file into a year directory without adding its name here fails, which is the
-#: point.
+#: The parameter sets that must exist for 2026. Recording the names is
+#: deliberate friction: dropping a file into a year directory without adding
+#: its name here fails, which is the point. ``"mortality"`` arrived with issue
+#: 5; the template at the ``params/`` root stays out of ``load_year``'s reach
+#: and is not a member.
 EXPECTED_2026_SETS: Final[tuple[str, ...]] = (
     "ab",
     "cpp",
     "federal",
+    "mortality",
     "oas",
     "resp",
     "rrif",

@@ -79,6 +79,18 @@ no improvement scale. Direction: conservative on longevity, therefore
 optimistic on estate and on the sufficiency of savings. Lives in
 `params/2026/mortality.yaml`, `engine/core/mortality.py`.
 
+**L45. One national life table for every province.** In reality mortality
+differs by province, and Statistics Canada publishes a separate table for each
+one in 13-10-0114-01. We load a single Canada-wide table and apply it to every
+household regardless of where they live. Direction: a province whose all-cause
+mortality is heavier than the national average has its longevity overstated,
+therefore conservative on estate and on the sufficiency of savings, the
+opposite way round from L8; a province lighter than the average gets the
+reverse and compounds L8. Which of the two applies to Alberta, the only
+province modelled today, has not been established against the source and this
+entry does not assert it. Lives in
+`params/2026/mortality.yaml`, whose `GEOGRAPHY` comment records the choice.
+
 **L9. Monthly hazard.** The table gives annual death probabilities. We assume
 a constant force of mortality within each year of age to derive a monthly
 hazard, and draw one uniform per person per path mapped through the survival
