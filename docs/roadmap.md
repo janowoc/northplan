@@ -41,6 +41,7 @@ issues hold the specifications.
 | 24 | API and web page | agent | 23 | chart renders for the example |
 | 25 | Derive golden tolerance from a declared rounding | agent | 3 | no numeric tolerance field remains |
 | 26 | Copyright and licence headers on every source file | agent | — | every source file carries an SPDX header; ruff and a test enforce it |
+| 27 | Shape check for mortality tables: fall to a trough, then rise | agent | 4, 5 | a transposed q(x) fails; the boxed warning in both files is narrowed |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -54,6 +55,12 @@ Issue 26 is housekeeping and depends on nothing, but every file it touches is
 a file some other issue will also touch, so it is cheapest done between two
 pieces of work rather than alongside one. It carries a narrow authorisation to
 add the two header lines — and only those — to files under `params/`.
+
+Issue 27 came out of reviewing the table issue 5 landed. It is the only
+automated guard on a hand transcription of 222 numbers, so it belongs before
+the engine reads the table in 12 rather than after. Like 26 it carries a narrow
+authorisation under `params/`: rewriting one boxed comment in the template and
+in `params/2026/mortality.yaml`, and nothing else.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
