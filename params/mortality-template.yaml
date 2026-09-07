@@ -10,19 +10,49 @@
 #  value in it was checked against a source and none may be copied into a year
 #  directory as-is.
 #
-#  Values are repdigits (0.11111) so that a real number stands out at a
-#  glance. Every unverified line ends in `# PLACEHOLDER`. Replace the number and
-#  the marker together, then `grep -c PLACEHOLDER mortality.yaml` is the work
-#  remaining — less this banner, which mentions the marker three times while
-#  describing it, and which you delete along with the last one.
+#  EVERY INSTRUCTION ADDRESSED TO YOU IS INSIDE THIS BANNER, and this banner is
+#  the only part of the file that does not belong in the copy. Everything below
+#  it describes the finished file and travels into the copy unchanged. Work the
+#  list, delete the banner, and the file is done.
 #
-#  THE TWO TABLES USE DIFFERENT REPDIGITS: 0.11111 for f, 0.22222 for m. Not
-#  decoration. The likeliest way to get this file wrong is to filter the source
-#  to one sex, paste the column, and forget to re-filter before pasting the
-#  other — every value is then a real published q(x), and half of them belong
-#  to the wrong person. A structural test asserts the two tables are not
-#  identical, and it can only do that if the template does not ship them
-#  identical.
+#   1. Replace XXXX on the title line above with the tax year.
+#
+#   2. Fill the three marked comment lines just below the header: the dated
+#      source URL, GEOGRAPHY, and REFERENCE PERIOD. The table publishes several
+#      of each — write down whether these rows are Alberta or Canada, and which
+#      three-year period they cover. Neither is recoverable from the numbers
+#      once they are in the file, and no test can check them for you. One
+#      dated URL per sex, if the source is filtered one sex at a time.
+#
+#   3. Replace every q(x), and the marker on its line with it. Values here are
+#      repdigits (0.11111) so that a real number stands out at a glance, and
+#      every unverified line ends in `# PLACEHOLDER`. Replace the number and the
+#      marker together and `grep -c PLACEHOLDER mortality.yaml` is the work
+#      remaining — less this banner, which mentions the marker while describing
+#      it, and which you delete along with the last one.
+#
+#      THE TWO TABLES USE DIFFERENT REPDIGITS: 0.11111 for f, 0.22222 for m.
+#      Not decoration. The likeliest way to get this file wrong is to filter
+#      the source to one sex, paste the column, and forget to re-filter before
+#      pasting the other — every value is then a real published q(x), and half
+#      of them belong to the wrong person. A structural test asserts the two
+#      tables are not identical, and it can only do that if the template does
+#      not ship them identical.
+#
+#   4. IF THE SOURCE PUBLISHES 0.000000 FOR AN AGE, STOP AND RAISE IT. The
+#      structural test bounds q to (0, 1] and will reject the file. Do not
+#      substitute a small value to get past it: a zero is either a suppressed
+#      cell or a genuine no-deaths-observed cell in a three-year provincial
+#      table, and which one it is decides what belongs here. That is a
+#      modelling decision and it gets made deliberately, not in passing.
+#
+#   5. Confirm the two terminal rows. Both are 1.0 and neither is marked,
+#      because our convention sets them rather than the transcription (L10).
+#      Check that the source agrees at the terminal age; if it publishes
+#      something other than 1.000000 there, the comment on those two rows is
+#      wrong for your file and the convention needs restating, not editing out.
+#
+#   6. Delete this banner.
 # ============================================================================
 #
 # SOURCE OF RECORD for every value below:
@@ -31,14 +61,9 @@
 #   except Prince Edward Island", element "Death probability between age x and
 #   x+1", by sex.
 #
-#   RECORD THE GEOGRAPHY AND THE REFERENCE PERIOD in the dated source comment
-#   below. The table publishes several of each — write down whether these rows
-#   are Alberta or Canada, and which three-year period they cover. Neither is
-#   recoverable from the numbers once they are in the file.
-#
 #   It is a PERIOD table: it carries no mortality improvement, so a 40-year-old
 #   in the run meets today's 80-year-old mortality on reaching 80
-#   (docs/limitations.md L8).
+#   (docs/limitations.md L8). One national table serves every province (L45).
 #
 # The engine derives a monthly hazard assuming a constant force of mortality
 # within each year of age:
@@ -48,9 +73,8 @@
 # That is a modelling choice rather than anything the source states, and it is
 # written down both here and in engine/core/mortality.py (L9).
 #
-# Every path dies by terminal_age_years, where q is 1 by construction. The
-# simulation runs each path to the second death and has no separate horizon
-# (L10).
+# Every path dies by terminal_age_years, where q is 1. The simulation runs each
+# path to the second death and has no separate horizon (L10).
 #
 # ---------------------------------------------------------------------------
 # THIS TABLE IS NOT MONOTONIC IN AGE. NO TEST MAY ASSUME IT IS.
@@ -63,17 +87,11 @@
 # omission from MORTALITY_CHECKS is deliberate. Do not add it.
 # ---------------------------------------------------------------------------
 #
-# Conventions for the file you create from this template:
+# Conventions this file holds:
 #   - Probabilities are bare fractions (0.01111), never percentages or per
 #     mille.
 #   - One row per age, no gaps, 0 through terminal_age_years, in both tables.
 #   - The two tables are keyed f and m, the two the source publishes.
-#   - IF THE SOURCE PUBLISHES 0.000000 FOR AN AGE, STOP AND RAISE IT. The
-#     structural test bounds q to (0, 1] and will reject the file. Do not
-#     substitute a small value to get past it: a zero is either a suppressed
-#     cell or a genuine no-deaths-observed cell in a three-year provincial
-#     table, and which one it is decides what belongs here. That is a
-#     modelling decision and it gets made deliberately, not in passing.
 #
 # Read by: engine/core/mortality.py
 #
