@@ -83,8 +83,15 @@
 # roughly age 10 and only rises after that. tests/params/
 # test_param_file_structure.py asserts that the RRIF and LIF factor tables
 # never decrease with age, and a reader arriving here will be tempted to point
-# that same assertion at these rows. It would reject the true table. The
-# omission from MORTALITY_CHECKS is deliberate. Do not add it.
+# that same assertion at these rows. It would reject the true table.
+#
+# What a test MAY assume instead is the shape a real q(x) actually has: it
+# falls to a single trough in early childhood and rises strictly from there to
+# the terminal age. MORTALITY_CHECKS' own
+# _check_the_table_falls_to_a_single_trough_then_rises asserts exactly that
+# (issue 27). It is exempted from the pristine-template check: the repdigit
+# placeholders below have no shape at all, by design, so it only runs once
+# real values replace them.
 # ---------------------------------------------------------------------------
 #
 # Conventions this file holds:

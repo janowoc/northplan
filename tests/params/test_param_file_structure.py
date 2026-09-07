@@ -498,17 +498,20 @@ def test_province_files_are_not_federal_programs(year: ParamYear) -> None:
 # ``mortality`` is a life table rather than a program: ``q_x`` maps an age to
 # the probability of dying before the next birthday, one table per sex. The
 # checks below are written as free functions rather than as tests so that the
-# same four assertions can be pointed at a live year directory, at the pristine
-# template, and at deliberately broken copies of it.
+# same six checks can be pointed at a live year directory and at deliberately
+# broken copies of the template. Five of the six are also pointed at the
+# pristine template; see ``PRISTINE_TEMPLATE_EXEMPT`` for the sixth.
 #
-# DELIBERATELY ABSENT: a monotonicity check. ``q_x`` does NOT increase with
-# age. Infant mortality exceeds childhood mortality, so a real table falls from
-# age 0 to roughly age 10 and only rises after that. The non-decreasing
-# assertion in ``test_age_factor_tables_are_contiguous_and_monotonic``, which
-# is correct for the RRIF and LIF factor tables, would reject the true life
-# table. The same warning is in the header of
-# ``params/mortality-template.yaml``, because whoever is about to add the check
-# will have read only one of the two.
+# NOT a blanket monotonicity check. ``q_x`` does NOT increase with age
+# everywhere: infant mortality exceeds childhood mortality, so a real table
+# falls from age 0 to roughly age 10 and only rises after that. The
+# non-decreasing assertion in ``test_age_factor_tables_are_contiguous_and_
+# monotonic``, which is correct for the RRIF and LIF factor tables, would
+# reject the true life table (issue 27). What a test may assume instead is the
+# fall-to-a-single-trough-then-rise shape that
+# ``_check_the_table_falls_to_a_single_trough_then_rises`` asserts below. The
+# same, narrower warning is in the header of ``params/mortality-template.yaml``
+# and ``params/2026/mortality.yaml``.
 
 #: The template a real ``params/YYYY/mortality.yaml`` is copied from. It lives
 #: at the ``params/`` root, where ``load_year`` cannot reach it.
@@ -686,6 +689,108 @@ def _check_the_two_sex_tables_are_not_identical(name: str, params: ParamSet) -> 
     )
 
 
+#: The trough of a real human life table falls in early childhood. A trough at
+#: age 0 means the column is reversed or the infant row is wrong; a trough
+#: above 15 means the adult rise starts too late — either way a transcription
+#: error, not a modelling choice, so the bound is a property of the shape
+#: itself rather than a tax parameter and belongs here rather than in
+#: ``params/``.
+_SHAPE_TROUGH_BOUND: Final[range] = range(1, 16)  # ages 1..15 inclusive
+
+
+def _check_the_table_falls_to_a_single_trough_then_rises(name: str, params: ParamSet) -> None:
+    """``q(x)`` falls through infancy and childhood to one trough, then rises.
+
+    A real life table is not monotonic in age (see the boxed warning in
+    ``params/mortality-template.yaml``), but it is not shapeless either:
+    mortality falls from infancy to a single low point in early childhood and
+    rises from there to the terminal age. Hand transcription of a
+    two-hundred-plus-row table is the error-prone step in issue 5, and this is
+    the only automated guard on the order of its values.
+
+    WHAT THIS DOES NOT SEE. The check is purely ordinal, so every error that
+    preserves the order of the column survives it: the whole column pasted one
+    row off, the two sex columns swapped, an adult block scaled by a constant,
+    a value replaced by anything between its two neighbours, and any single
+    digit slip small enough to stay inside the envelope — including one on
+    ``q(0)``, which no ordinal rule can reach. A green suite is not a proof of
+    transcription. Catching those needs a magnitude anchor, which is a separate
+    decision and not this check.
+
+    The trough is the *last* age achieving the minimum, not the first: both
+    published tables carry a tie plateau at the bottom (issue 27's evidence:
+    ages 8-9 for ``f``, 7-10 for ``m``), so the descent must tolerate equality
+    on the way down or a multi-age plateau would fail for the wrong reason.
+
+    The ascent tolerates equality too, but only up to the top of
+    ``_SHAPE_TROUGH_BOUND``. Around the trough a five-decimal table steps by
+    one unit in the last published decimal — the shipped ``f`` column does
+    exactly that at ages 9-13, 23-24 and 25-26 — and one unit of rounding
+    difference in another geography or reference period would tie two adjacent
+    rows and reject a correctly transcribed file. That is the same fragility
+    issue 27 cited when it rejected a hard-coded start age, and it costs
+    nothing to remove: a transposition produces a strict *decrease*, which
+    ``>=`` still catches. Above the bound, q is large enough that a tie is
+    itself worth stopping on.
+    """
+    for sex, table in params.get("q_x").items():
+        path = f"{name}.q_x.{sex}"
+        if not table or not all(str(key).isdigit() for key in table):
+            # An empty or non-numerically-keyed table is the contiguity check's
+            # failure, not this one's. Falling through would raise ValueError
+            # out of min() or int(), which pytest.raises(AssertionError) does
+            # not catch, and would bury that check's clear message under a
+            # traceback from this one.
+            continue
+
+        ages = sorted(int(key) for key in table)
+        values = [float(table[str(age)]) for age in ages]
+        minimum = min(values)
+        trough_index = max(index for index, value in enumerate(values) if value == minimum)
+        trough_age = ages[trough_index]
+
+        # The bound goes first. A mistyped adult row low enough to become the
+        # new global minimum moves the trough to itself, and then the descent
+        # loop blames the first pair above the childhood plateau — two rows
+        # that are perfectly correct. Reporting the trough first points at the
+        # damage instead of at the collateral.
+        assert trough_age in _SHAPE_TROUGH_BOUND, (
+            f"{path}: trough at age {trough_age}, outside "
+            f"{_SHAPE_TROUGH_BOUND.start}..{_SHAPE_TROUGH_BOUND.stop - 1}. A trough "
+            f"at {_SHAPE_TROUGH_BOUND.start - 1} means the column is reversed or "
+            f"the infant row is wrong; a trough above "
+            f"{_SHAPE_TROUGH_BOUND.stop - 1} means the adult rise is broken, or one "
+            f"adult row was mistyped below the childhood minimum."
+        )
+
+        # Both loops name the offending pair rather than the range it lies in.
+        # This check exists to help whoever transcribed two hundred rows by
+        # hand find the one they mistyped, and "somewhere between age 10 and
+        # age 110" sends them back through the whole table.
+        for index in range(1, trough_index + 1):
+            assert values[index] <= values[index - 1], (
+                f"{path}: q rises from {values[index - 1]} at age {ages[index - 1]} "
+                f"to {values[index]} at age {ages[index]}, before the trough at age "
+                f"{trough_age}. A real table only falls or holds flat on the way down."
+            )
+
+        for index in range(trough_index + 1, len(values)):
+            ties_allowed = ages[index] in _SHAPE_TROUGH_BOUND
+            if ties_allowed:
+                assert values[index] >= values[index - 1], (
+                    f"{path}: q falls from {values[index - 1]} at age "
+                    f"{ages[index - 1]} to {values[index]} at age {ages[index]}, after "
+                    f"the trough at age {trough_age}. Adjacent rows may tie this close "
+                    f"to the trough, but they may not go backwards."
+                )
+            else:
+                assert values[index] > values[index - 1], (
+                    f"{path}: q does not rise from {values[index - 1]} at age "
+                    f"{ages[index - 1]} to {values[index]} at age {ages[index]}, after "
+                    f"the trough at age {trough_age}."
+                )
+
+
 #: Every structural check applying to a parameter set named ``mortality``.
 MORTALITY_CHECKS: tuple[Callable[[str, ParamSet], None], ...] = (
     _check_q_x_has_exactly_the_two_sex_tables,
@@ -693,6 +798,7 @@ MORTALITY_CHECKS: tuple[Callable[[str, ParamSet], None], ...] = (
     _check_every_death_probability_is_in_the_unit_interval,
     _check_only_the_terminal_row_is_certain_death,
     _check_the_two_sex_tables_are_not_identical,
+    _check_the_table_falls_to_a_single_trough_then_rises,
 )
 
 MORTALITY_CHECK_IDS = [check.__name__.lstrip("_") for check in MORTALITY_CHECKS]
@@ -744,8 +850,13 @@ def pristine_mortality_set(tmp_path: Path) -> ParamSet:
     return load_year(2030, tmp_path)["mortality"]
 
 
-def _mortality_set_broken_by(tmp_path: Path, mutate: Callable[[dict], None]) -> ParamSet:
-    """Load the template, apply ``mutate`` to the plain dict, and reload it as a set."""
+def _mortality_set_with(tmp_path: Path, mutate: Callable[[dict], None]) -> ParamSet:
+    """Load the template, apply ``mutate`` to the plain dict, and reload it as a set.
+
+    Named for what it does rather than for the breakages that are most of its
+    callers: one caller passes a mutation that damages nothing, to prove the
+    synthetic column the shape breakages are built from is sound to begin with.
+    """
     raw = yaml.safe_load(MORTALITY_TEMPLATE.read_text(encoding="utf-8"))
     mutate(raw)
     year_dir = tmp_path / "2030"
@@ -754,45 +865,118 @@ def _mortality_set_broken_by(tmp_path: Path, mutate: Callable[[dict], None]) -> 
     return load_year(2030, tmp_path)["mortality"]
 
 
-#: ``(check, description, mutate)``: a break to the template, and the one check
-#: that must notice it. A mutation may legitimately trip more than the check
-#: named — a third sex table also breaks contiguity — so the test asserts only
-#: that the named check fires.
-MORTALITY_BREAKAGES: tuple[tuple[Callable[[str, ParamSet], None], str, Callable[[dict], None]], ...] = (
+#: Age at which the synthetic shape column below reaches its trough, and the
+#: age it runs to. Both are made up for this test module; see
+#: ``_synthetic_shape_column``.
+_SYNTHETIC_TROUGH: Final[int] = 8
+_SYNTHETIC_TERMINAL: Final[int] = 40
+
+
+def _synthetic_shape_column(
+    terminal: int = _SYNTHETIC_TERMINAL, trough: int = _SYNTHETIC_TROUGH
+) -> dict[int, float]:
+    """An obviously synthetic q(x) column, shaped like a real one but made up.
+
+    Falls in round 0.01 steps from 0.50 at age 0 to a trough, then rises in
+    round 0.01 steps back up, with the terminal row forced to 1.0 by the same
+    convention the real tables use (L10). Every value is a fixed step chosen
+    for readability and round enough that nobody could mistake it for a
+    published probability — CLAUDE.md permits exactly this kind of made-up
+    table to exercise arithmetic.
+
+    Used only to build the three breakages for
+    ``_check_the_table_falls_to_a_single_trough_then_rises`` below, and to
+    prove — before those breakages are trusted — that the unbroken column
+    passes the check it is meant to break.
+    """
+    column: dict[int, float] = {age: round(0.50 - 0.01 * age, 2) for age in range(trough + 1)}
+    floor = column[trough]
+    for age in range(trough + 1, terminal):
+        column[age] = round(floor + 0.01 * (age - trough), 2)
+    column[terminal] = 1.0
+    return column
+
+
+def _transposed(column: dict[int, float], age_a: int, age_b: int) -> dict[int, float]:
+    """A copy of ``column`` with the rows at ``age_a`` and ``age_b`` swapped.
+
+    The shape this repository's issue 27 calls "one interior value
+    transposed" — the paste-the-wrong-row error a human transcribing 222
+    numbers by hand is prone to make.
+    """
+    swapped = dict(column)
+    swapped[age_a], swapped[age_b] = swapped[age_b], swapped[age_a]
+    return swapped
+
+
+def _replace_q_x_with(raw: dict, column: dict[int, float]) -> None:
+    """Replace both sex tables in ``raw`` with ``column``, in place.
+
+    Both sexes get the same synthetic column: the sex-identity check is not
+    the one under test here, so making the two tables differ would only add
+    noise. ``terminal_age_years`` moves with the table so the two agree, even
+    though the shape check itself never reads that field.
+    """
+    raw["q_x"] = {"f": dict(column), "m": dict(column)}
+    raw["terminal_age_years"] = max(column)
+
+
+#: ``(check, description, mutate, expected)``: a break to the template, the one
+#: check that must notice it, and a fragment of the message it must produce. A
+#: mutation may legitimately trip more than the check named — a third sex table
+#: also breaks contiguity — so the test asserts only that the named check fires.
+#:
+#: ``expected`` is what stops a check's several assertions from covering for
+#: one another. Four breakages point at the shape check alone, and without a
+#: message to match, moving ``_SYNTHETIC_TROUGH`` would silently make two of
+#: them trip the same assertion while the suite stayed green — leaving another
+#: assertion pinned by nothing, which is the "never seen to fail" problem
+#: ``test_every_mortality_check_has_a_breakage_exercising_it`` exists to
+#: prevent, one level down. Matched as a literal, not a pattern.
+MORTALITY_BREAKAGES: tuple[
+    tuple[Callable[[str, ParamSet], None], str, Callable[[dict], None], str], ...
+] = (
     (
         _check_q_x_has_exactly_the_two_sex_tables,
         "a third sex table",
         lambda raw: raw["q_x"].update({"x": dict(raw["q_x"]["f"])}),
+        "holds ['f', 'm', 'x']",
     ),
     (
         _check_q_x_has_exactly_the_two_sex_tables,
         "the male table missing entirely",
         lambda raw: raw["q_x"].pop("m"),
+        "holds ['f']. It must hold",
     ),
     (
         _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age,
         "a gap at age 50",
         lambda raw: raw["q_x"]["f"].pop(50),
+        "no gaps. Missing: [50]",
     ),
     (
         _check_every_death_probability_is_in_the_unit_interval,
         "a probability written in percent",
         lambda raw: raw["q_x"]["m"].update({3: 1.5}),
+        "m.3 is 1.5, outside (0, 1]",
     ),
     (
         _check_every_death_probability_is_in_the_unit_interval,
         "an age of immortality",
         lambda raw: raw["q_x"]["f"].update({7: 0.0}),
+        "f.7 is 0.0, outside (0, 1]",
     ),
     (
         _check_only_the_terminal_row_is_certain_death,
         "certain death at 40",
         lambda raw: raw["q_x"]["m"].update({40: 1.0}),
+        "q is 1.0 below the terminal age 110 at ['40']",
     ),
     (
         _check_only_the_terminal_row_is_certain_death,
         "survival past the terminal age",
         lambda raw: raw["q_x"]["f"].update({raw["terminal_age_years"]: 0.9}),
+        "f.110 is 0.9, not 1.0",
     ),
     # The three below pin assertions that no other breakage reaches. Without
     # them each could be deleted and the whole suite would still pass, which is
@@ -804,30 +988,90 @@ MORTALITY_BREAKAGES: tuple[tuple[Callable[[str, ParamSet], None], str, Callable[
         _check_only_the_terminal_row_is_certain_death,
         "no row at the terminal age at all",
         lambda raw: raw["q_x"]["f"].pop(raw["terminal_age_years"]),
+        "has no row at the terminal age 110",
     ),
     (
         _check_every_death_probability_is_in_the_unit_interval,
         "a probability written as a YAML boolean",
         lambda raw: raw["q_x"]["m"].update({5: True}),
+        "m.5 is True (bool), not a number",
     ),
     (
         _check_ages_are_contiguous_digit_strings_up_to_the_terminal_age,
         "an age key that is not a whole number",
         lambda raw: raw["q_x"]["f"].update({"7x": 0.11111}),
+        "ages must be whole-number keys",
     ),
     (
         _check_the_two_sex_tables_are_not_identical,
         "one sex's column pasted into both tables",
         lambda raw: raw["q_x"].update({"m": dict(raw["q_x"]["f"])}),
+        "identical at every age",
+    ),
+    # These three replace q_x outright with a synthetic column rather than
+    # mutating the template's repdigits — the template's values are shapeless
+    # by construction, so the shape check would already be failing before any
+    # of these mutations, and every one of them would pass for the wrong
+    # reason. See _synthetic_shape_column.
+    (
+        _check_the_table_falls_to_a_single_trough_then_rises,
+        "an interior transposition breaks the descent before the trough",
+        lambda raw: _replace_q_x_with(raw, _transposed(_synthetic_shape_column(), 3, 4)),
+        "before the trough at age 8",
+    ),
+    (
+        _check_the_table_falls_to_a_single_trough_then_rises,
+        "an interior transposition breaks the ascent after the trough",
+        lambda raw: _replace_q_x_with(raw, _transposed(_synthetic_shape_column(), 15, 16)),
+        "does not rise from 0.5 at age 15",
+    ),
+    (
+        _check_the_table_falls_to_a_single_trough_then_rises,
+        "the ascent goes backwards inside the tie-tolerant stretch",
+        lambda raw: _replace_q_x_with(raw, _transposed(_synthetic_shape_column(), 10, 11)),
+        "may tie this close to the trough",
+    ),
+    (
+        _check_the_table_falls_to_a_single_trough_then_rises,
+        "the trough sits outside the 1..15 bound",
+        lambda raw: _replace_q_x_with(raw, _synthetic_shape_column(terminal=50, trough=20)),
+        "trough at age 20, outside 1..15",
     ),
 )
 
 
-@pytest.mark.parametrize("check", MORTALITY_CHECKS, ids=MORTALITY_CHECK_IDS)
-def test_the_pristine_template_satisfies_every_structural_check(
+#: Checks a shapeless placeholder table cannot satisfy by construction. The
+#: template ships repdigit q(x) values (0.11111 for every f row, 0.22222 for
+#: every m row) so that a real number stands out at a glance — but that also
+#: means the template has no shape at all, and the minimum spans every row
+#: from 0 to 109, so the *last* minimum (the trough, by this check's own
+#: definition) lands at 109, outside the 1..15 bound. The five other checks
+#: are satisfiable by a constant column, and these placeholders were chosen to
+#: satisfy them — three of the five constrain values rather than layout: the
+#: unit interval, the terminal row, and the two tables not being equal. This
+#: check is the only one constraining the RELATIONSHIP BETWEEN rows, which no
+#: constant column can express. That, not a layout-versus-values split, is what
+#: qualifies a check for this set.
+#: ``test_every_exempt_check_still_rejects_the_pristine_template`` below pins
+#: this exemption live, so a stale exemption — one whose check would now pass
+#: — fails loudly rather than sitting here unnoticed.
+PRISTINE_TEMPLATE_EXEMPT: Final[frozenset[Callable[[str, ParamSet], None]]] = frozenset(
+    {_check_the_table_falls_to_a_single_trough_then_rises}
+)
+
+#: ``MORTALITY_CHECKS`` minus the exemption above, for the pristine-template
+#: test only. Every other test in this module still runs the full set.
+_PRISTINE_TEMPLATE_CHECKS = tuple(
+    check for check in MORTALITY_CHECKS if check not in PRISTINE_TEMPLATE_EXEMPT
+)
+_PRISTINE_TEMPLATE_CHECK_IDS = [check.__name__.lstrip("_") for check in _PRISTINE_TEMPLATE_CHECKS]
+
+
+@pytest.mark.parametrize("check", _PRISTINE_TEMPLATE_CHECKS, ids=_PRISTINE_TEMPLATE_CHECK_IDS)
+def test_the_pristine_template_satisfies_every_unexempted_check(
     pristine_mortality_set: ParamSet, check: Callable[[str, ParamSet], None]
 ) -> None:
-    """The template starts from a shape the whole suite already accepts.
+    """The template starts from a layout the rest of the suite already accepts.
 
     This is what makes issue 5 safe. The human filling in real values starts
     from a layout that has already been proved acceptable, so a layout failure
@@ -835,35 +1079,74 @@ def test_the_pristine_template_satisfies_every_structural_check(
     inherited. It says nothing about the edited copy: a deleted row, a mistyped
     age key, or a changed ``terminal_age_years`` are all still layout failures,
     and the live test above is what catches them once issue 5 lands.
+
+    Runs every check except ``PRISTINE_TEMPLATE_EXEMPT``: the shape check
+    constrains values, not layout, and the template's repdigit placeholders
+    have no shape by design. See that constant.
     """
     check("mortality", pristine_mortality_set)
 
 
+def test_every_exempt_check_still_rejects_the_pristine_template(
+    pristine_mortality_set: ParamSet,
+) -> None:
+    """The exemption above is live, not stale.
+
+    If the template's placeholder values were ever changed such that
+    ``_check_the_table_falls_to_a_single_trough_then_rises`` started passing
+    on them, that would mean the "obviously fake" repdigits had accidentally
+    acquired a real shape — and the exemption in
+    ``test_the_pristine_template_satisfies_every_unexempted_check`` would go
+    stale, silently no longer testing anything. This fails loudly instead.
+    """
+    for check in PRISTINE_TEMPLATE_EXEMPT:
+        with pytest.raises(AssertionError):
+            check("mortality", pristine_mortality_set)
+
+
+def test_a_correctly_shaped_synthetic_table_passes_the_shape_check(tmp_path: Path) -> None:
+    """The base synthetic column the breakages above are built from is itself valid.
+
+    Establishes that a breakage derived from ``_synthetic_shape_column`` fails
+    because of what was done *to* it — the transposition, or the shifted
+    trough — not because the base column was never shaped correctly to begin
+    with.
+    """
+    unbroken = _mortality_set_with(
+        tmp_path, lambda raw: _replace_q_x_with(raw, _synthetic_shape_column())
+    )
+    _check_the_table_falls_to_a_single_trough_then_rises("mortality", unbroken)
+
+
 @pytest.mark.parametrize(
-    ("check", "description", "mutate"),
+    ("check", "description", "mutate", "expected"),
     MORTALITY_BREAKAGES,
-    ids=[description for _, description, _ in MORTALITY_BREAKAGES],
+    ids=[description for _, description, _, _ in MORTALITY_BREAKAGES],
 )
 def test_a_broken_mortality_table_fails_the_check_that_covers_it(
     tmp_path: Path,
     check: Callable[[str, ParamSet], None],
     description: str,
     mutate: Callable[[dict], None],
+    expected: str,
 ) -> None:
     """Each check actually fires on the damage it is there to catch.
 
     Only the named check is asserted. A mutation often trips others too, and
     pinning down which would make this table brittle for no gain.
+
+    ``expected`` does pin which assertion *within* that check fires; see
+    ``MORTALITY_BREAKAGES``.
     """
-    broken = _mortality_set_broken_by(tmp_path, mutate)
-    with pytest.raises(AssertionError):
+    broken = _mortality_set_with(tmp_path, mutate)
+    with pytest.raises(AssertionError, match=re.escape(expected)):
         check("mortality", broken)
 
 
 def test_every_mortality_check_has_a_breakage_exercising_it() -> None:
     """No check goes unexercised.
 
-    A fifth entry in ``MORTALITY_CHECKS`` with nothing in
+    A new entry in ``MORTALITY_CHECKS`` with nothing in
     ``MORTALITY_BREAKAGES`` pointed at it is a check that has never been seen
     to fail, which is indistinguishable from a check that cannot fail. This
     keeps the two tables in step.
@@ -874,12 +1157,56 @@ def test_every_mortality_check_has_a_breakage_exercising_it() -> None:
     enforces that, so an assertion added inside an existing check arrives
     unexercised and this test stays green.
     """
-    exercised = {check for check, _, _ in MORTALITY_BREAKAGES}
+    exercised = {check for check, _, _, _ in MORTALITY_BREAKAGES}
     assert exercised == set(MORTALITY_CHECKS), (
         f"Checks with no breakage: "
         f"{sorted(c.__name__ for c in set(MORTALITY_CHECKS) - exercised)}. "
         f"Breakages naming a check that is not registered: "
         f"{sorted(c.__name__ for c in exercised - set(MORTALITY_CHECKS))}."
+    )
+
+
+#: A Python identifier for one of the checks above, as a parameter file's
+#: prose might name it.
+_NAMES_A_CHECK = re.compile(r"_check_[a-z0-9_]+")
+
+
+def _mortality_files() -> list[Path]:
+    """The template and every live ``mortality.yaml``, which may name a check."""
+    live = [
+        directory / "mortality.yaml"
+        for directory in sorted(DEFAULT_PARAMS_ROOT.iterdir())
+        if directory.is_dir() and directory.name.isdigit()
+    ]
+    return [MORTALITY_TEMPLATE, *(path for path in live if path.exists())]
+
+
+def test_every_check_a_mortality_file_names_by_identifier_exists() -> None:
+    """No parameter file cites a check that has been renamed out from under it.
+
+    The boxed warning in the template and in each live file names the check
+    that may be assumed of the rows, by its Python identifier. CLAUDE.md
+    forbids an agent from editing anything under ``params/``, so a rename of
+    that check leaves a stale citation that the person who did the renaming
+    cannot fix — a quieter version of the flat contradiction issue 27 was
+    written to remove. This fails in the test module instead, where the rename
+    happened and where an agent may act.
+    """
+    known = {check.__name__ for check in MORTALITY_CHECKS}
+    cited: set[str] = set()
+    for path in _mortality_files():
+        named = set(_NAMES_A_CHECK.findall(path.read_text(encoding="utf-8")))
+        cited |= named
+        assert named <= known, (
+            f"{path} names {sorted(named - known)}, which is not in "
+            f"MORTALITY_CHECKS. Either the check was renamed and the comment "
+            f"was left behind, or the comment is describing something that does "
+            f"not exist. The fix belongs in this module: params/ is the human's."
+        )
+    assert cited, (
+        "No mortality file names a check by identifier, so this test asserted "
+        "nothing. The boxed warning is what it exists to keep honest — if that "
+        "wording changed, this test needs to change with it or be deleted."
     )
 
 
