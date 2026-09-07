@@ -82,13 +82,20 @@ optimistic on estate and on the sufficiency of savings. Lives in
 **L45. One national life table for every province.** In reality mortality
 differs by province, and Statistics Canada publishes a separate table for each
 one in 13-10-0114-01. We load a single Canada-wide table and apply it to every
-household regardless of where they live. Direction: a province whose all-cause
-mortality is heavier than the national average has its longevity overstated,
-therefore conservative on estate and on the sufficiency of savings, the
-opposite way round from L8; a province lighter than the average gets the
-reverse and compounds L8. Which of the two applies to Alberta, the only
-province modelled today, has not been established against the source and this
-entry does not assert it. Lives in
+household regardless of where they live. For Alberta, the only province
+modelled (L1), the national table is the lighter of the two: 13-10-0114-01
+gives e(65) as 20.85 for Canada against 20.70 for Alberta, both sexes,
+2022/2024. We therefore credit an Albertan with roughly two extra months at 65
+and overstate longevity. Direction: conservative on estate and on the
+sufficiency of savings — the opposite way round from L8, which this partly
+offsets rather than compounds. Retirement ages are what the comparison turns
+on, not e(0), which carries working-age mortality the model never reaches.
+
+The gap is accepted deliberately rather than pending. Closing it means
+transcribing a table per jurisdiction by hand, and two months of life
+expectancy is not where the error in a household projection lives: age at death
+in the family and smoking status would each move it further than geography
+does, and the model takes neither as an input. Lives in
 `params/2026/mortality.yaml`, whose `GEOGRAPHY` comment records the choice.
 
 **L9. Monthly hazard.** The table gives annual death probabilities. We assume
