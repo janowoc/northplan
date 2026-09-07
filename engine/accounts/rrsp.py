@@ -36,7 +36,7 @@ def room_accrued(prior_year_earned_income: ArrayLike, params: ParamSet) -> NDArr
             and not this month's.
         params: The ``rrif`` parameter set — RRSP and RRIF share one file —
             supplying ``rrsp.room.accrual_rate`` and
-            ``rrsp.room.annual_dollar_limit``.
+            ``rrsp.room.dollar_limit_annual``.
 
     Returns:
         Room accrued for the year, ``(n_paths,)``.

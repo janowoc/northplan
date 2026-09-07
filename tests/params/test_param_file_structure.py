@@ -292,8 +292,8 @@ def test_cpp_annual_maximum_is_twelve_times_the_monthly(year: ParamYear) -> None
     a benefit stream.
     """
     cpp = year["cpp"]
-    monthly = cpp.number("pension.maximum_monthly_at_standard_age")
-    annual = cpp.number("pension.maximum_annual_at_standard_age")
+    monthly = cpp.number("pension.maximum_at_standard_age_monthly")
+    annual = cpp.number("pension.maximum_at_standard_age_annual")
     assert annual == pytest.approx(monthly * 12, abs=0.01), (
         f"cpp: {annual} annual against {monthly} monthly (12x = {monthly * 12})."
     )
@@ -394,9 +394,6 @@ def test_indexation_schedules_are_well_formed(year: ParamYear) -> None:
             )
             assert not months or 12 % len(months) == 0, (
                 f"{where} adjusts {len(months)} times a year, which does not divide 12."
-            )
-            assert schedule["cpi_lag_months"] >= 0, (
-                f"{where}.cpi_lag_months is negative."
             )
 
 

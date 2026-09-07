@@ -108,8 +108,8 @@ def refusal_threshold(has_spouse: ArrayLike, params: ParamSet) -> NDArray[np.flo
     Raises:
         MissingParameterError: If either threshold is absent.
     """
-    single = params.number("gis.refusal_thresholds.single_testable_income_annual")
-    couple = params.number("gis.refusal_thresholds.couple_combined_testable_income_annual")
+    single = params.number("gis.band_thresholds.single_testable_income_annual")
+    couple = params.number("gis.band_thresholds.couple_combined_testable_income_annual")
     return np.where(np.asarray(has_spouse, dtype=bool), couple, single).astype(np.float64)
 
 

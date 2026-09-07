@@ -35,7 +35,7 @@ def room_accrued(age: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
     Args:
         age: Age in whole years at the end of the year, ``(n_paths,)``.
         params: The ``tfsa`` parameter set, supplying
-            ``room.eligibility_age_years`` and ``room.annual_amount``.
+            ``room.eligibility_age_years`` and ``room.amount_annual``.
 
     Returns:
         Room accrued for the year, ``(n_paths,)``.
