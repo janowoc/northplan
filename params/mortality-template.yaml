@@ -211,7 +211,7 @@ q_x:
     107: 0.11111             # PLACEHOLDER
     108: 0.11111             # PLACEHOLDER
     109: 0.11111             # PLACEHOLDER
-    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
+    110: 1.0                 # set by the terminal-age convention (L10), and the source agrees — not a placeholder
   m:
     0:   0.22222             # PLACEHOLDER
     1:   0.22222             # PLACEHOLDER
@@ -323,4 +323,4 @@ q_x:
     107: 0.22222             # PLACEHOLDER
     108: 0.22222             # PLACEHOLDER
     109: 0.22222             # PLACEHOLDER
-    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
+    110: 1.0                 # set by the terminal-age convention (L10), and the source agrees — not a placeholder

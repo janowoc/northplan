@@ -167,7 +167,7 @@ q_x:
     107: 0.46694
     108: 0.48638
     109: 0.50458
-    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
+    110: 1.0                 # set by the terminal-age convention (L10), and the source agrees — not a placeholder
   m:
     0:   0.00496
     1:   0.00031
@@ -279,4 +279,4 @@ q_x:
     107: 0.50636
     108: 0.52281
     109: 0.53801
-    110: 1.0                 # certain death at the terminal age, by construction — not a placeholder
+    110: 1.0                 # set by the terminal-age convention (L10), and the source agrees — not a placeholder

@@ -522,7 +522,7 @@ MARKER: Final[str] = "PLACE" + "HOLDER"
 #: than unverified, byte-identical in both sex tables so a text test can key on
 #: it.
 TERMINAL_ROW_COMMENT: Final[str] = (
-    "# certain death at the terminal age, by construction — not a placeholder"
+    "# set by the terminal-age convention (L10), and the source agrees — not a placeholder"
 )
 
 #: A line that assigns a number to a key, in a parameter file's raw text.
