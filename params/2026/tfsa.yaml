@@ -10,6 +10,7 @@
 #     specific enough — a line number on a form, a subsection of an Act.
 #     These comments ARE the audit record; there is no separate ledger.
 #   - Say the period in the key name.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions, never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
@@ -28,7 +29,7 @@
 
 room:
   eligibility_age_years: 18          # age at END of year from which room accrues
-  annual_amount: 7000                # room granted each January
+  amount_annual: 7000                # room granted each January
 
 # --- Recontribution of withdrawals -----------------------------------------
 # Withdrawn amounts are added back to room, but only at the start of the
@@ -47,6 +48,3 @@ recontribution:
 # NOT MODELLED YET: a plan that deliberately over-contributes is not a plan
 # the optimizer should be searching. Recorded here so that a future implementer
 # finds the key rather than inventing one.
-
-over_contribution:
-  penalty_rate_per_month: 0.01       # of the excess, per month it remains

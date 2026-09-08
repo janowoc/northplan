@@ -10,6 +10,7 @@
 #     specific enough — a line number on a form, a subsection of an Act.
 #     These comments ARE the audit record; there is no separate ledger.
 #   - Say the period in the key name.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions, never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
@@ -24,7 +25,7 @@
 # --- Contributions ----------------------------------------------------------
 
 contributions:
-  lifetime_maximum: 50000
+  maximum_lifetime: 50000
 
 # --- Grant ------------------------------------------------------------------
 # Bounded four ways, and engine/accounts/resp.py::grant_on_contribution applies
@@ -34,11 +35,13 @@ contributions:
 # threatens — enforced per month, twelve monthly contributions each collect a
 # full year's grant.
 
+# 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/registered-education-savings-plans-resps/canada-education-savings-programs-cesp/canada-education-savings-grant-cesg.html
 grant:
   match_rate: 0.20                  # grant per dollar contributed
-  annual_room: 500                  # grant room accrued per beneficiary per year
-  annual_maximum: 1000              # max grant per beneficiary per CALENDAR YEAR, including room carried forward
-  lifetime_maximum: 7200            # max grant per beneficiary, all years —
+  room_annual: 500                  # grant room accrued per beneficiary per year
+  maximum_annual: 1000              # max grant per beneficiary per CALENDAR YEAR, including room carried forward
+  cessation_age_years: 17           # age at which the grant stops accruing, and the annual room is no longer added
+  maximum_lifetime: 7200            # max grant per beneficiary, all years —
                                     # covers the basic and enhanced tiers
                                     # COMBINED, which is why resp.py carries a
                                     # single lifetime_grant_paid rather than
@@ -55,14 +58,14 @@ grant:
   #   match_rates                    a percentage, stepped by family income
   #   eligible_contribution_annual   a dollar window the percentage applies to
   #
-  # THERE IS DELIBERATELY NO annual_maximum HERE, unlike the basic grant above.
+  # THERE IS DELIBERATELY NO maximum_annual HERE, unlike the basic grant above.
   # The enhanced tier has no carry-forward: the window is this year's first
   # eligible_contribution_annual dollars and nothing accumulates, so the cap is
   # exactly match_rate * eligible_contribution_annual and a separate key would
   # be a second source of truth for one fact.
   #
   # The basic grant above is the opposite case and that is why it has the key:
-  # annual_maximum (1000) is NOT match_rate * annual_room (0.20 * 500 = 100),
+  # maximum_annual (1000) is NOT match_rate * room_annual (0.20 * 500 = 100),
   # precisely because unused basic room carries forward. Do not read the two
   # blocks as parallel.
   #
@@ -96,24 +99,13 @@ grant:
     # than a key; revisit if a subscriber outside the household is ever
     # modelled.
 
-# --- Educational Assistance Payments ---------------------------------------
-# An EAP is the grant and accumulated income coming out; it is taxable in the
-# STUDENT's hands, not the subscriber's. Contributions come out separately and
-# tax-free. The split is determined by the plan's composition, not chosen.
+# --- Accumulated Income Payments ---------------------------------------
 
-eap:
-  # The cap on EAP withdrawals during an initial window after enrolment begins.
-  #
-  # THE SOURCE STATES THIS WINDOW IN WEEKS. It is recorded here in months,
-  # fractionally, because engine/accounts/resp.py::withdraw compares it against
-  # months_since_enrolment. Convert when you enter the value and show the
-  # arithmetic in the source comment, e.g.
-  #
-  #     initial_window_months: 2.9897   # 13 weeks * 7 / 365.25 * 12
-  #
-  # Do not round to a whole month: 13 weeks is not 3 months, and rounding up
-  # extends a statutory cap by a fortnight in the student's favour.
+# The AIP is when there is no longer a student and the plan is paid out.
+# The grant portion is clawed back. The contribution is withdrawn tax-free.
+# The growth portion is taxable to the subscriber, and the AIP penalty is a
+# further 20% on top of that.
 
-# 2026-09-02 https://www.canada.ca/en/services/benefits/education/education-savings/paying-education.html
-  initial_window_months: 2.989794452  # ((13 * 7) / 365.2425) * 12)
-  initial_window_cap: 8000            # maximum EAP payable within that window
+# 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/registered-education-savings-plans-resps/payments-resp.html#aip
+aip:
+  penalty_rate: 0.20                   # 20% penalty on the growth portion of the RESP

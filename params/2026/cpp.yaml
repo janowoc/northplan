@@ -12,6 +12,7 @@
 #   - Say the period in the key name. CPP is published as a MONTHLY maximum and
 #     an ANNUAL maximum; write whichever the source publishes and let the engine
 #     convert once. Never convert here.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
@@ -32,7 +33,6 @@ indexation:
 # 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/receive-benefits/consumer-price-index.html
   retirement_pension:
     adjustment_months: [1]          # CPP, as opposed to OAS, adjusts annually
-    cpi_lag_months: 8               # defined for January using previous November - October CPI
 
 # --- Start age --------------------------------------------------------------
 
@@ -55,8 +55,8 @@ start_adjustment:
 
 # 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html
 pension:
-  maximum_monthly_at_standard_age: 1507.65
-  maximum_annual_at_standard_age: 18091.80      # used in consistency tests, never by the step
+  maximum_at_standard_age_monthly: 1507.65
+  maximum_at_standard_age_annual: 18091.80      # used in consistency tests, never by the step
 
 # --- Contributions ----------------------------------------------------------
 # Read by nothing today. engine/benefits/cpp.py takes contributory_history as a
@@ -72,11 +72,19 @@ pension:
 contributions:
   first_tier:
     basic_exemption_annual: 3500
+    base_rate: 0.0495
     ceiling_annual: 74600            # 2026 maximum pensionable earnings — YMPE
     employee_rate: 0.0595
   second_tier:
     ceiling_annual: 85000            # 2026 additional maximum pensionable earnings — YAMPE
     employee_rate: 0.04              # 2026 additional contribution rate
+
+# CPP for survivor
+# 2026-09-06 https://www.canada.ca/en/services/benefits/publicpensions/cpp/cpp-survivor-pension.html
+# 2026-09-06 https://www.canada.ca/en/services/benefits/publicpensions/cpp/payment-amounts.html
+survivor:
+  share_at_65_plus: 0.60
+  combined_maximum_monthly: 1531.56
 
 # --- Not here: drop-out rules ----------------------------------------------
 # DECIDED: the pension is modelled as a fraction of the maximum, supplied by

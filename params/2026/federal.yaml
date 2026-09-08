@@ -11,6 +11,7 @@
 #     audit record — there is no separate ledger to keep in step with it.
 #   - Say the period in the key name. Never convert between periods here; write
 #     the amount as published and let the engine convert once.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions (0.15), never percentages (15) or basis points.
 #   - Dollar amounts are the nominal amounts as published for the tax year. The
 #     engine works in real dollars and does the conversion; do not pre-deflate.
@@ -20,7 +21,9 @@
 # tfsa.yaml, and resp.yaml.
 #
 # Read by: engine/tax/federal.py, engine/core/timeline.py (is_filing_month),
-#          engine/accounts/taxable.py (investment_income), engine/tax/provincial.py (non_refundable_credits)
+#          engine/accounts/taxable.py (investment_income), engine/tax/provincial.py (non_refundable_credits),
+#          engine/tax/combined.py (pension_splitting)
+#          ei: issue 16 will add employment income - no module yet
 
 # --- Calendar rules ---------------------------------------------------------
 # Statutory, and parameters like any other: engine/core/timeline.py reads them
@@ -36,10 +39,8 @@ indexation:
   # one entry; split it if that ever stops being true.
   brackets_and_credits:
     adjustment_months: [1]           # 1 = annual
-    cpi_lag_months: 9                # defined for January using previous October - September CPI
-  pension_income_amount:
+  unindexed:
     adjustment_months: []   # never adjusted; $2000 is fixed in the Act
-    cpi_lag_months: 0
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1. Edges are the upper bound of
@@ -90,10 +91,14 @@ credits:
 # never per month.
 
 # 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
-# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
 contribution_credit:
   cpp_maximum_annual: 3519.45
   ei_maximum_annual: 1123.07
+
+# 2026-09-04 https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
+ei:
+  premium_rate: 0.0163
+  maximum_insurable_earnings_annual: 68900
 
 # --- Investment income treatment -------------------------------------------
 # Read by engine/accounts/taxable.py::taxable_income_from_distributions.
@@ -110,6 +115,20 @@ investment_income:
   # both ways in secondary sources and the two differ by a factor of ~3.6.
   # NOT READ BY ANY ENGINE FUNCTION TODAY: taxable.py applies the gross-up and
   # the inclusion rate, but no module applies the dividend tax credit yet, and
-  # there is no provincial counterpart in ab.yaml. Whoever wires it up owns
+  # there is a provincial counterpart in ab.yaml. Whoever wires it up owns
   # fixing the base at the call site.
-  eligible_dividend_credit_rate: 0.54545454       # s.121(b)(iv) => (6/11)
+  eligible_dividend_credit_rate_of_gross_up: 0.54545454       # s.121(b)(iv) => (6/11), truncated
+
+# Pension income
+
+# DB pension at any age;
+# RRIF and LIF withdrawals from the year the transferor is 65 at year end;
+# never CPP, OAS, or RRSP lump sums.
+
+# 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/pension-income-splitting.html
+pension_splitting:
+  maximum_transfer_share: 0.50
+
+# 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/registered-retirement-income-fund-rrif/receiving-income-a-rrif.html
+eligible_pension_income:
+  rrif_minimum_age_years: 65

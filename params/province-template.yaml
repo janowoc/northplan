@@ -27,10 +27,12 @@
 #     specific enough — a line number on a form, a subsection of an Act.
 #     These comments ARE the audit record; there is no separate ledger.
 #   - Say the period in the key name.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum)
+# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum),
+#          engine/accounts/taxable.py (investment_income).
 #
 # THIS FILE IS THE TEMPLATE FOR EVERY PROVINCE. engine/tax/provincial.py takes
 # a province's parameter set rather than hard-coding one, so adding a province
@@ -49,7 +51,6 @@
 indexation:
   brackets_and_credits:
     adjustment_months: [1]           # PLACEHOLDER — 1 entry = annual
-    cpi_lag_months: 11               # PLACEHOLDER
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1, same as the federal file.
@@ -71,6 +72,16 @@ credits:
     amount_annual: 2222                           # PLACEHOLDER
     reduction_threshold_annual: 33333             # PLACEHOLDER
     reduction_rate: 0.11                          # PLACEHOLDER
+
+# --- Investment income treatment -------------------------------------------
+# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# These are provincial income-tax rules, which is why they stay in this file
+# rather than moving to an account file — the taxable account is not a
+# registered program.
+
+investment_income:
+  eligible_dividend_gross_up_rate: 0.111111              # PLACEHOLDER
+  eligible_dividend_credit_rate_of_gross_up: 0.111111    # PLACEHOLDER
 
 # --- LIF maximum withdrawal -------------------------------------------------
 # Read by engine/accounts/lira.py::maximum_withdrawal.

@@ -12,6 +12,7 @@
 #   - Say the period in the key name. OAS and GIS maxima are published MONTHLY;
 #     the recovery tax threshold is published ANNUALLY. Write each as published
 #     and let the engine convert once. Never convert here.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
@@ -43,10 +44,8 @@ benefit_year:
 indexation:
   oas_pension:
     adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
-    cpi_lag_months: 4                 # 3-month CPI window, measured from its MIDPOINT to the effective date
   gis:
     adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
-    cpi_lag_months: 4                 # 3-month CPI window, measured from its MIDPOINT to the effective date
 
 # --- Start age and deferral -------------------------------------------------
 # OAS may be deferred but never taken early: the factor is 1.0 at
@@ -92,8 +91,8 @@ gis:
   # Not a GIS calculation. A tripwire: if projected testable income falls
   # below these, GIS would materially change the answer and this engine
   # cannot say how. Set BELOW the published cutoffs on purpose — being
-  # conservative here only widens the refusal band.
-  refusal_thresholds:
+  # conservative here only widens the reporting band.
+  band_thresholds:
     single_testable_income_annual: 22800
     couple_combined_testable_income_annual: 42144
 

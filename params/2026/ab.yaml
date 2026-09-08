@@ -10,10 +10,12 @@
 #     specific enough — a line number on a form, a subsection of an Act.
 #     These comments ARE the audit record; there is no separate ledger.
 #   - Say the period in the key name.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum)
+# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum),
+#          engine/accounts/taxable.py (investment_income).
 #
 # Provincial credit amounts and the rate they are valued at are NOT derivable
 # from the federal ones. Source them separately even where they look familiar.
@@ -26,7 +28,6 @@
 indexation:
   brackets_and_credits:
     adjustment_months: [1]  # credits are adjusted annually
-    cpi_lag_months: 9       # defined for January using previous October - September CPI
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1, same as the federal file.
@@ -51,6 +52,17 @@ credits:
     amount_annual: 6345                           # Line 17
     reduction_threshold_annual: 47234             # Line 3 of Worksheet AB428
     reduction_rate: 0.15                          # Line 5 of Worksheet AB428
+
+# --- Investment income treatment -------------------------------------------
+# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# These are provincial income-tax rules, which is why they stay in this file
+# rather than moving to an account file — the taxable account is not a
+# registered program.
+
+# 2026-09-06 https://www.canlii.org/en/ab/laws/stat/rsa-2000-c-a-30/latest/rsa-2000-c-a-30.html
+investment_income:
+  eligible_dividend_gross_up_rate: 0.38
+  eligible_dividend_credit_rate_of_gross_up: 0.294805       # 21(c)(ii) => 227/770, truncated
 
 # --- LIF maximum withdrawal -------------------------------------------------
 # Read by engine/accounts/lira.py::maximum_withdrawal.

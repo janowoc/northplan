@@ -11,6 +11,7 @@
 #     These comments ARE the audit record; there is no separate ledger.
 #   - Rates and factors are bare fractions (0.0528), never percentages.
 #   - Say the period in the key name.
+#   - Dollar amounts end in _annual, _monthly, _lifetime, or _each.
 #
 # One file, because they are one program at two stages of life: the same money,
 # accumulating under `rrsp:` and decumulating under `rrif:`, with the
@@ -34,7 +35,7 @@ conversion_age_years: 71             # RRSP must be a RRIF by 31 December of the
 rrsp:
   room:
     accrual_rate: 0.18               # fraction of prior-year earned income
-    annual_dollar_limit: 33810       # cap on a single year's accrual
+    dollar_limit_annual: 33810       # cap on a single year's accrual
 
 # Withholding on withdrawals is explicitly modelled: tax is remitted in the
 # month of the withdrawal, while the liability is assessed at the December
@@ -46,7 +47,7 @@ rrsp:
 # 2026-09-03 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/rrsps-related-plans/making-withdrawals/tax-rates-on-withdrawals.html
 # These rates apply outside of Quebec.
 withholding:
-  edges: [5000, 15000]              # withdrawal amount band edges
+  edges_each: [5000, 15000]              # withdrawal amount band edges
   rates: [0.10, 0.20, 0.30]
 
 # --- Decumulation: RRIF -----------------------------------------------------
