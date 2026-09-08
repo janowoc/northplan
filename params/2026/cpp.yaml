@@ -25,14 +25,37 @@
 # say so in the source comment: e.g. `standard_start_age_months: 780  # 65y * 12`.
 
 # --- Indexation -------------------------------------------------------------
-# Keyed by the name engine.core.indexation.schedule(name, params) is called
-# with. CPP is adjusted once a year; the LENGTH of adjustment_months is what
-# the engine uses, not which months they are.
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
 
 indexation:
+# Benefits are indexed to CPI, while contribution ceilings are indexed to Wage Measure.
 # 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/cpp/receive-benefits/consumer-price-index.html
-  retirement_pension:
-    adjustment_months: [1]          # CPP, as opposed to OAS, adjusts annually
+# 2026-09-06 https://laws-lois.justice.gc.ca/eng/acts/c-8/page-5.html 18(1)(c)
+  # benefits and contribution_ceilings both come out annual and are still two entries;
+  # see the note above.
+  # CPP, as opposed to OAS, adjusts annually.
+  benefits:
+    adjustment_months: [1]
+    applies_to:
+      - pension.maximum_at_standard_age_monthly
+      - pension.maximum_at_standard_age_annual
+      - survivor.combined_maximum_monthly
+  contribution_ceilings:
+    adjustment_months: [1]
+    applies_to:
+      - contributions.first_tier.ceiling_annual
+      - contributions.second_tier.ceiling_annual
+  unindexed:
+    adjustment_months: []   # never adjusted; $3500 is fixed
+    applies_to:
+      - contributions.first_tier.basic_exemption_annual
 
 # --- Start age --------------------------------------------------------------
 

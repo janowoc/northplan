@@ -44,13 +44,27 @@
 # from the federal ones. Source them separately even where they look familiar.
 
 # --- Indexation -------------------------------------------------------------
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
+
 # Provincial indexation is its own rule and may differ from the federal one —
-# a province can pause indexation for a year independently of Ottawa. Keyed by
-# the name engine.core.indexation.schedule(name, params) is called with.
+# a province can pause indexation for a year independently of Ottawa.
 
 indexation:
   brackets_and_credits:
     adjustment_months: [1]           # PLACEHOLDER — 1 entry = annual
+    applies_to:
+      - brackets.edges_annual                         # PLACEHOLDER
+      - credits.basic_personal_amount_annual          # PLACEHOLDER
+      - credits.pension_income_amount_annual          # PLACEHOLDER
+      - credits.age_amount.amount_annual              # PLACEHOLDER
+      - credits.age_amount.reduction_threshold_annual # PLACEHOLDER
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1, same as the federal file.

@@ -33,19 +33,33 @@ benefit_year:
   income_year_offset: -1             # added to the benefit year to get the income year; negative means earlier
 
 # --- Indexation -------------------------------------------------------------
-# Keyed by the name engine.core.indexation.schedule(name, params) is called
-# with. OAS and GIS follow the same schedule but get separate entries so that
-# a divergence is expressible without a code change. The LENGTH of
-# adjustment_months is what the engine uses, not which months they are.
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
 
-# Note: OAS, unlike CPP, is indexed to the CPI with a three-month lag.
 # OAS is guaranteed to never decrease - this should be modeled in the engine, not here.
 
 indexation:
-  oas_pension:
+  # pension and gis run on the same quarterly cadence today and are still two entries;
+  # see the note above
+  pension:
     adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
+    applies_to:
+      - pension.age_bands.*.maximum_monthly
+  recovery_tax_threshold:
+    adjustment_months: [1]  # 1 entry = annual
+    applies_to:
+      - recovery_tax.threshold_annual
   gis:
     adjustment_months: [1, 4, 7, 10]  # 4 entries = quarterly
+    applies_to:
+      - gis.band_thresholds.single_testable_income_annual
+      - gis.band_thresholds.couple_combined_testable_income_annual
 
 # --- Start age and deferral -------------------------------------------------
 # OAS may be deferred but never taken early: the factor is 1.0 at

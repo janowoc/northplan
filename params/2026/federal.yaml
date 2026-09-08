@@ -33,14 +33,35 @@
 # The engine does not model installments; it assumes a balance owing is paid in full in the filing month.
 filing_month: 4                      # month a balance owing for the PRIOR tax year comes due
 
+# --- Indexation -------------------------------------------------------------
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
+
+# Verified pension income amount absent from 117.1 (2), which enumerates which amounts are indexed.
+# 2026-09-06 https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-117.1.html
 indexation:
-  # Keyed by the name engine.core.indexation.schedule(name, params) is called
-  # with. Brackets and credits are indexed on the same schedule, so they share
+  # Brackets and credits are indexed on the same schedule, so they share
   # one entry; split it if that ever stops being true.
   brackets_and_credits:
     adjustment_months: [1]           # 1 = annual
+    applies_to:
+      - brackets.edges_annual
+      - credits.basic_personal_amount_annual
+      - credits.age_amount.amount_annual
+      - credits.age_amount.reduction_threshold_annual
+      - contribution_credit.cpp_maximum_annual
+      - contribution_credit.ei_maximum_annual
+      - ei.maximum_insurable_earnings_annual
   unindexed:
-    adjustment_months: []   # never adjusted; $2000 is fixed in the Act
+    adjustment_months: []   # never adjusted; $2000 is fixed in the Act (unlike for Alberta)
+    applies_to:
+      - credits.pension_income_amount_annual
 
 # --- Rate brackets ----------------------------------------------------------
 # INVARIANT: len(rates) == len(edges_annual) + 1. Edges are the upper bound of

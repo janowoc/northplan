@@ -19,6 +19,26 @@
 #
 # Read by: engine/accounts/rrsp.py, engine/accounts/rrif.py
 
+# --- Indexation -------------------------------------------------------------
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
+
+indexation:
+  rrsp_limit:
+    adjustment_months: [1]          # adjusts annually
+    applies_to:
+      - rrsp.room.dollar_limit_annual
+  unindexed:
+    adjustment_months: []   # never adjusted; $5000/15000 is fixed
+    applies_to:
+      - withholding.edges_each
+
 # --- Conversion -------------------------------------------------------------
 # The join between the two halves of this file.
 
@@ -31,7 +51,6 @@ conversion_age_years: 71             # RRSP must be a RRIF by 31 December of the
 # --- Accumulation: RRSP -----------------------------------------------------
 
 # 2026-09-03 https://www.canada.ca/en/revenue-agency/services/tax/registered-plans-administrators/pspa/mp-rrsp-dpsp-tfsa-limits-ympe.html
-
 rrsp:
   room:
     accrual_rate: 0.18               # fraction of prior-year earned income
@@ -44,8 +63,8 @@ rrsp:
 # INVARIANT: len(rates) == len(edges) + 1, as in federal.yaml's brackets.
 # The same rates apply to RRIF withdrawals above the minimum.
 
-# 2026-09-03 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/rrsps-related-plans/making-withdrawals/tax-rates-on-withdrawals.html
 # These rates apply outside of Quebec.
+# 2026-09-03 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/rrsps-related-plans/making-withdrawals/tax-rates-on-withdrawals.html
 withholding:
   edges_each: [5000, 15000]              # withdrawal amount band edges
   rates: [0.10, 0.20, 0.30]

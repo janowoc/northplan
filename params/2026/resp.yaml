@@ -22,6 +22,30 @@
 #
 # Read by: engine/accounts/resp.py
 
+# --- Indexation -------------------------------------------------------------
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
+
+indexation:
+  enhanced_income_edges:
+    adjustment_months: [1]          # adjusts annually
+    applies_to:
+      - grant.enhanced.income_edges_annual
+  unindexed:
+    adjustment_months: []   # never adjusted; most RESP limits are fixed
+    applies_to:
+      - contributions.maximum_lifetime
+      - grant.room_annual
+      - grant.maximum_annual
+      - grant.maximum_lifetime
+      - grant.enhanced.eligible_contribution_annual
+
 # --- Contributions ----------------------------------------------------------
 
 contributions:

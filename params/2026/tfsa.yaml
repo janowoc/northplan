@@ -21,6 +21,22 @@
 #
 # Read by: engine/accounts/tfsa.py
 
+# --- Indexation -------------------------------------------------------------
+# One entry per adjustment RULE, not per amount: applies_to lists every path
+# that moves on it. The LENGTH of adjustment_months is what the engine uses,
+# not which months they are; an empty list means the amount is fixed in
+# nominal terms and erodes without bound. Two entries may carry the same
+# adjustment_months: that is two rules that coincide this year, not one rule
+# written twice, and keeping them apart is what lets one of them change
+# without a code change. Keyed by the name
+# engine.core.indexation.schedule(name, params) is called with.
+
+indexation:
+  contribution_room:
+    adjustment_months: [1]          # adjusts annually
+    applies_to:
+      - room.amount_annual
+
 # --- Contribution room ------------------------------------------------------
 # Granted in full on 1 January, not accrued monthly: a person may contribute
 # the whole year's room in January.
