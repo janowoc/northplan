@@ -514,6 +514,15 @@ def test_province_files_are_not_federal_programs(year: ParamYear) -> None:
 #: at the ``params/`` root, where ``load_year`` cannot reach it.
 MORTALITY_TEMPLATE: Final[Path] = DEFAULT_PARAMS_ROOT / "mortality-template.yaml"
 
+#: The template a real ``params/YYYY/PROVINCE.yaml`` is copied from, at the same
+#: root and out of ``load_year``'s reach for the same reason.
+PROVINCE_TEMPLATE: Final[Path] = DEFAULT_PARAMS_ROOT / "province-template.yaml"
+
+#: Every scaffolding template under ``params/``. Both headers make the same
+#: promise — that a human can count the work left with ``grep -c`` — and the
+#: marker tests at the end of this module hold both to it.
+TEMPLATES: Final[tuple[Path, ...]] = (MORTALITY_TEMPLATE, PROVINCE_TEMPLATE)
+
 #: Scaffolding marker left on every unverified line of a draft parameter file.
 #: Spelled by concatenation so that this file does not itself trip the scan.
 MARKER: Final[str] = "PLACE" + "HOLDER"
@@ -525,8 +534,21 @@ TERMINAL_ROW_COMMENT: Final[str] = (
     "# set by the terminal-age convention (L10), and the source agrees — not a placeholder"
 )
 
-#: A line that assigns a number to a key, in a parameter file's raw text.
-_ASSIGNS_A_NUMBER = re.compile(r"^\s*\w+:\s*[-+.0-9]")
+#: Per template, the trailing comment that marks a numeric line as true by
+#: construction rather than unverified. A template absent from this mapping has
+#: no exempt line at all, which is the stricter and the commoner case. Keying
+#: the exemption to the file is what stops the mortality template's two terminal
+#: rows from excusing an unmarked line in some other file.
+_TEMPLATE_EXEMPT_COMMENT: Final[Mapping[Path, str]] = {
+    MORTALITY_TEMPLATE: TERMINAL_ROW_COMMENT,
+}
+
+#: A line that assigns a number, or a list of numbers, to a key in a parameter
+#: file's raw text. The bracket is load-bearing rather than tidy: the province
+#: template writes ``adjustment_months``, ``edges_annual`` and ``rates`` as
+#: lists, and a pattern that stopped at scalars would walk past all three
+#: without reading them — passing while never noticing their markers go missing.
+_ASSIGNS_A_NUMBER = re.compile(r"^\s*\w+:\s*[-+.0-9\[]")
 
 #: A line that opens one of the two sex tables.
 _OPENS_A_SEX_TABLE = re.compile(r"^\s*([fm]):\s*$")
@@ -1207,29 +1229,165 @@ def test_every_check_a_mortality_file_names_by_identifier_exists() -> None:
     )
 
 
-def test_every_unverified_line_of_the_template_carries_the_marker() -> None:
-    """Every number in the template is marked, except the two that are not guesses.
+def _check_every_unverified_line_carries_the_marker(template: Path, lines: list[str]) -> None:
+    """The promise both templates make, asserted over supplied lines.
 
-    ``grep -c PLACEHOLDER``, less the header banner, is the count of work
-    remaining. The banner qualifier is not a quibble: three lines of the header
-    prose contain the word while describing the convention, so the raw grep
-    count never falls below three while the banner is present, and a human
-    copying this file for issue 5 deletes the banner along with the last marker.
-    The property this test asserts is the one the count depends on — that no
-    line assigning a number escaped the marker when the file was written. The
-    two terminal rows are the sole exception: they are 1.0 by construction
-    rather than by transcription, so they carry a fixed comment instead and
-    must NOT carry the marker.
+    ``grep -c PLACE`` + ``HOLDER``, less the header banner, is the count of work
+    remaining in a template, and both headers say so outright. The banner
+    qualifier is not a quibble: a few lines of header prose contain the word
+    while describing the convention, so the raw grep count never falls below
+    that while the banner is present, and a human copying the file deletes the
+    banner along with the last marker. The property the count depends on is the
+    one asserted here — that no line assigning a number escaped the marker when
+    the file was written.
+
+    An *unmarked* placeholder is worse than a marked one. It is a plausible fake
+    that reads as a verified value, and it shortens the list of work a human
+    believes is left. ``test_no_repository_param_file_contains_a_placeholder_marker``
+    in ``test_loader.py`` guards the other end of the same workflow, refusing a
+    marker inside a year directory; this is that guard's bookend.
 
     Lines are parsed rather than counted. A hard-coded total would have to be
-    revised every time a sentence is added to the header, and the first person
-    to hit that would revise the number rather than the file.
+    revised every time a sentence is added to a header, and the first person to
+    hit that would revise the number rather than the file.
+
+    Takes the lines instead of reading them so the breakage tests below can hand
+    it a mutated copy. A check that only ever runs against a file it opens
+    itself cannot be shown to fail, and one that cannot be shown to fail is not
+    yet known to assert anything.
     """
-    lines = MORTALITY_TEMPLATE.read_text(encoding="utf-8").splitlines()
-
     assignments = [line for line in lines if _ASSIGNS_A_NUMBER.match(line)]
-    assert assignments, f"{MORTALITY_TEMPLATE} assigns no numbers at all."
+    assert assignments, (
+        f"{template.name} assigns no numbers at all, so this check asserted "
+        f"nothing about it."
+    )
+    exempt_comment = _TEMPLATE_EXEMPT_COMMENT.get(template)
+    unmarked = [
+        line
+        for line in assignments
+        if MARKER not in line
+        and not (exempt_comment is not None and line.rstrip().endswith(exempt_comment))
+    ]
+    assert not unmarked, (
+        f"Numeric lines in {template.name} with no marker, which grep would "
+        f"count as finished work:\n" + "\n".join(unmarked)
+    )
 
+
+@pytest.mark.parametrize("template", TEMPLATES, ids=lambda path: path.stem)
+def test_every_unverified_line_of_a_template_carries_the_marker(template: Path) -> None:
+    """Every number in every template is marked, bar the ones that are not guesses.
+
+    Issue 6 added an ``investment_income`` block to the province template with
+    two repdigit values and no markers, and the grep count read two short of the
+    truth until a human caught it by eye. The mortality template had this test;
+    the province template made the same promise with nothing holding it.
+    """
+    _check_every_unverified_line_carries_the_marker(
+        template, template.read_text(encoding="utf-8").splitlines()
+    )
+
+
+def test_a_list_valued_assignment_counts_as_an_assignment() -> None:
+    """The pattern sees a list, and the province template has lists for it to see.
+
+    Pinned separately because nothing else can pin it. Every other test here
+    derives the lines it examines from ``_ASSIGNS_A_NUMBER`` itself, so
+    narrowing the pattern back to scalars would not redden any of them — the
+    lines it stopped matching would simply drop out of what they iterate, and
+    the suite would stay green while three marked lines of the province template
+    went unread. That is the same silence issue 28 was opened about, one level
+    up, so the pattern's reach is asserted against fixed strings and against the
+    real file rather than through another test's iteration.
+
+    The negative cases matter as much. ``has_maximum: true`` is a marked
+    placeholder that this pattern deliberately does NOT cover, and a comment
+    mentioning a number is not an assignment.
+    """
+    assert _ASSIGNS_A_NUMBER.match("  edges_annual: [11111, 22222]")
+    assert _ASSIGNS_A_NUMBER.match("  adjustment_months: [1]")
+    assert _ASSIGNS_A_NUMBER.match("  reduction_rate: 0.11")
+    assert _ASSIGNS_A_NUMBER.match("terminal_age_years: 110")
+    assert not _ASSIGNS_A_NUMBER.match("  has_maximum: true")
+    assert not _ASSIGNS_A_NUMBER.match("# the rate is 0.11 in the source")
+
+    lists = [
+        line
+        for line in PROVINCE_TEMPLATE.read_text(encoding="utf-8").splitlines()
+        if _ASSIGNS_A_NUMBER.match(line) and line.split(":", 1)[1].lstrip().startswith("[")
+    ]
+    assert lists, (
+        f"{PROVINCE_TEMPLATE.name} has no list-valued assignment that "
+        f"_ASSIGNS_A_NUMBER matches, so the marker tests cover only its scalars "
+        f"and the pattern's bracket is carrying nothing."
+    )
+
+
+@pytest.mark.parametrize("template", TEMPLATES, ids=lambda path: path.stem)
+def test_removing_any_one_marker_from_a_template_is_caught(template: Path) -> None:
+    """Deleting a marker from any marked line reddens the check, one line at a time.
+
+    Every line is broken in turn rather than a representative one, because the
+    reason this test exists is a line the previous pattern could not see. A
+    spot check would have picked a scalar and passed.
+
+    The mutation deletes the word and leaves the rest of the comment, which is
+    the realistic slip: someone replaces a placeholder value and tidies away the
+    marker while keeping the note beside it.
+    """
+    lines = template.read_text(encoding="utf-8").splitlines()
+    marked = [
+        index
+        for index, line in enumerate(lines)
+        if _ASSIGNS_A_NUMBER.match(line) and MARKER in line
+    ]
+    assert marked, (
+        f"{template.name} has no marked numeric line, so this test broke nothing."
+    )
+    for index in marked:
+        broken = list(lines)
+        broken[index] = broken[index].replace(MARKER, "")
+        with pytest.raises(AssertionError) as caught:
+            _check_every_unverified_line_carries_the_marker(template, broken)
+        assert broken[index] in str(caught.value), (
+            f"Unmarking line {index + 1} of {template.name} failed the check, but "
+            f"the message does not name that line: {caught.value}"
+        )
+
+
+@pytest.mark.parametrize("template", TEMPLATES, ids=lambda path: path.stem)
+def test_a_template_holding_no_number_is_caught(template: Path) -> None:
+    """The vacuity guard fires rather than passing an empty file.
+
+    Without it a template whose values were all deleted, or whose layout drifted
+    past ``_ASSIGNS_A_NUMBER``, would satisfy "no unmarked line" by having no
+    lines — the check going quiet exactly when the file stopped being a
+    template.
+    """
+    prose = [
+        line
+        for line in template.read_text(encoding="utf-8").splitlines()
+        if not _ASSIGNS_A_NUMBER.match(line)
+    ]
+    with pytest.raises(AssertionError, match="assigns no numbers at all"):
+        _check_every_unverified_line_carries_the_marker(template, prose)
+
+
+def _check_the_terminal_rows_are_exempt_not_unmarked(lines: list[str]) -> None:
+    """The mortality template's two exempt rows are exempt for the stated reason.
+
+    ``_TEMPLATE_EXEMPT_COMMENT`` excuses these rows from
+    :func:`_check_every_unverified_line_carries_the_marker`, which means the
+    exemption is the one place an unmarked number is allowed to live. It has to
+    be spent on exactly the two rows it was written for: 1.0 at the terminal
+    age, set by the terminal-age convention rather than transcribed, and
+    therefore carrying ``TERMINAL_ROW_COMMENT`` and never the marker. A row that
+    held both would be claiming to be settled and unverified at once.
+
+    Takes the lines for the same reason the marker check does — so it can be
+    handed a broken copy and shown to fail.
+    """
+    assignments = [line for line in lines if _ASSIGNS_A_NUMBER.match(line)]
     terminal_rows = [line for line in assignments if line.rstrip().endswith(TERMINAL_ROW_COMMENT)]
     assert len(terminal_rows) == 2, (
         f"Expected exactly two rows carrying {TERMINAL_ROW_COMMENT!r}, one per "
@@ -1243,12 +1401,67 @@ def test_every_unverified_line_of_the_template_carries_the_marker() -> None:
         value = line.split(":", 1)[1].split("#", 1)[0].strip()
         assert value == "1.0", f"A terminal row holds {value!r}, not 1.0: {line!r}"
 
-    unmarked = [line for line in assignments if MARKER not in line]
-    assert unmarked == terminal_rows, (
-        f"Numeric lines in {MORTALITY_TEMPLATE.name} with no marker, which "
-        f"grep would count as finished work: "
-        f"{[line for line in unmarked if line not in terminal_rows]}"
+
+#: How to break each assertion in the exemption check above, and the fragment of
+#: the message that names the assertion the breakage must reach. A breakage that
+#: reddened a neighbouring assertion would look like a passing test.
+_EXEMPT_ROW_BREAKAGES: Final[tuple[tuple[str, Callable[[str], str], str], ...]] = (
+    (
+        # In front of the comment, not after it: the exemption keys on the line
+        # ENDING in TERMINAL_ROW_COMMENT, so a marker appended to the tail stops
+        # the row being recognised as terminal at all and trips the count
+        # assertion instead of this one. Ahead of it is also the realistic slip
+        # — the marker left in place when the convention comment was added.
+        "a terminal row also carries the marker",
+        lambda line: line.replace(TERMINAL_ROW_COMMENT, f"# {MARKER} {TERMINAL_ROW_COMMENT}"),
+        "must not be marked",
+    ),
+    (
+        "a terminal row holds something other than 1.0",
+        lambda line: line.replace("1.0", "0.9", 1),
+        "not 1.0",
+    ),
+    (
+        "the exempt comment is dropped from a terminal row",
+        lambda line: line.replace(TERMINAL_ROW_COMMENT, "").rstrip(),
+        "one per sex, found 1",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("description", "mutate", "expected"), _EXEMPT_ROW_BREAKAGES, ids=lambda value: value
+)
+def test_breaking_a_terminal_row_is_caught(
+    description: str, mutate: Callable[[str], str], expected: str
+) -> None:
+    """Each assertion guarding the exemption fires, and fires from its own line.
+
+    Without this the exemption is the one unexercised path in the marker
+    machinery, and it is the path that lets a number through unmarked.
+    """
+    lines = MORTALITY_TEMPLATE.read_text(encoding="utf-8").splitlines()
+    first = next(
+        index
+        for index, line in enumerate(lines)
+        if line.rstrip().endswith(TERMINAL_ROW_COMMENT)
     )
+    broken = list(lines)
+    broken[first] = mutate(broken[first])
+    assert broken != lines, f"The mutation for {description!r} changed nothing."
+    with pytest.raises(AssertionError, match=re.escape(expected)):
+        _check_the_terminal_rows_are_exempt_not_unmarked(broken)
+
+
+def test_the_mortality_template_writes_every_age_and_exempts_its_terminal_rows() -> None:
+    """The exemption is spent on the two rows it was written for, and no age is missing.
+
+    The row count is the second half. The template writes out every age so that
+    the human replaces numbers rather than typing keys — a missing age is the
+    kind of gap that survives a careful fill-in unnoticed.
+    """
+    lines = MORTALITY_TEMPLATE.read_text(encoding="utf-8").splitlines()
+    _check_the_terminal_rows_are_exempt_not_unmarked(lines)
 
     rows_per_sex: dict[str, int] = {}
     sex: str | None = None
