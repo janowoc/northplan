@@ -543,12 +543,20 @@ _TEMPLATE_EXEMPT_COMMENT: Final[Mapping[Path, str]] = {
     MORTALITY_TEMPLATE: TERMINAL_ROW_COMMENT,
 }
 
-#: A line that assigns a number, or a list of numbers, to a key in a parameter
-#: file's raw text. The bracket is load-bearing rather than tidy: the province
-#: template writes ``adjustment_months``, ``edges_annual`` and ``rates`` as
-#: lists, and a pattern that stopped at scalars would walk past all three
-#: without reading them — passing while never noticing their markers go missing.
-_ASSIGNS_A_NUMBER = re.compile(r"^\s*\w+:\s*[-+.0-9\[]")
+#: A line that assigns a value — of any kind — to a key in a parameter file's
+#: raw text. Deliberately not "a number": what a template promises is that every
+#: UNVERIFIED line carries the marker, and unverified is a property of the fact,
+#: not of its type. ``has_maximum: true`` is as unverified for a new province as
+#: any rate beside it, and a jurisdiction with no LIF ceiling is a real state
+#: the template exists to make expressible. Lists are covered for the same
+#: reason: the province template writes ``adjustment_months``, ``edges_annual``
+#: and ``rates`` as lists, and a scalars-only pattern walked past all three.
+#:
+#: The two exclusions are what stop it matching structure. A key with nothing
+#: after the colon opens a block rather than stating anything (``q_x:``, ``f:``),
+#: and a key whose value is a comment is that same block key with a note
+#: attached (``lif:  # ...``). Neither is a fact anyone could verify.
+_ASSIGNS_A_VALUE = re.compile(r"^\s*\w+:\s+(?!#)\S")
 
 #: A line that opens one of the two sex tables.
 _OPENS_A_SEX_TABLE = re.compile(r"^\s*([fm]):\s*$")
@@ -1256,9 +1264,9 @@ def _check_every_unverified_line_carries_the_marker(template: Path, lines: list[
     itself cannot be shown to fail, and one that cannot be shown to fail is not
     yet known to assert anything.
     """
-    assignments = [line for line in lines if _ASSIGNS_A_NUMBER.match(line)]
+    assignments = [line for line in lines if _ASSIGNS_A_VALUE.match(line)]
     assert assignments, (
-        f"{template.name} assigns no numbers at all, so this check asserted "
+        f"{template.name} assigns no values at all, so this check asserted "
         f"nothing about it."
     )
     exempt_comment = _TEMPLATE_EXEMPT_COMMENT.get(template)
@@ -1269,8 +1277,8 @@ def _check_every_unverified_line_carries_the_marker(template: Path, lines: list[
         and not (exempt_comment is not None and line.rstrip().endswith(exempt_comment))
     ]
     assert not unmarked, (
-        f"Numeric lines in {template.name} with no marker, which grep would "
-        f"count as finished work:\n" + "\n".join(unmarked)
+        f"Lines in {template.name} assigning a value with no marker, which grep "
+        f"would count as finished work:\n" + "\n".join(unmarked)
     )
 
 
@@ -1288,38 +1296,54 @@ def test_every_unverified_line_of_a_template_carries_the_marker(template: Path) 
     )
 
 
-def test_a_list_valued_assignment_counts_as_an_assignment() -> None:
-    """The pattern sees a list, and the province template has lists for it to see.
+def test_the_pattern_sees_every_kind_of_value_a_template_writes() -> None:
+    """The pattern reaches every value a template states, and no block key.
 
     Pinned separately because nothing else can pin it. Every other test here
-    derives the lines it examines from ``_ASSIGNS_A_NUMBER`` itself, so
-    narrowing the pattern back to scalars would not redden any of them — the
-    lines it stopped matching would simply drop out of what they iterate, and
-    the suite would stay green while three marked lines of the province template
-    went unread. That is the same silence issue 28 was opened about, one level
-    up, so the pattern's reach is asserted against fixed strings and against the
-    real file rather than through another test's iteration.
+    derives the lines it examines from ``_ASSIGNS_A_VALUE`` itself, so narrowing
+    the pattern would not redden any of them — the lines it stopped matching
+    would drop out of what they iterate, and the suite would stay green while
+    those lines went unread. That is the same silence issue 28 was opened about,
+    one level up, so the pattern's reach is asserted against fixed strings and
+    against the real file rather than through another test's iteration.
 
-    The negative cases matter as much. ``has_maximum: true`` is a marked
-    placeholder that this pattern deliberately does NOT cover, and a comment
-    mentioning a number is not an assignment.
+    Booleans are in scope, which is the second half of that issue. A template
+    promises that every UNVERIFIED line carries the marker, and
+    ``has_maximum: true`` is exactly as unverified for a new province as the
+    rates above it — more dangerous, if anything, because ``false`` is a real
+    state (a jurisdiction with no LIF ceiling) rather than a missing value, so
+    nothing downstream would raise on a placeholder left standing.
+
+    The negatives are block keys. ``q_x:`` and ``f:`` state nothing, and
+    ``lif:  # note`` is the same key with a comment attached. There is no fact
+    on those lines for a human to check against a source, so requiring a marker
+    on them would make the count mean something other than work remaining.
     """
-    assert _ASSIGNS_A_NUMBER.match("  edges_annual: [11111, 22222]")
-    assert _ASSIGNS_A_NUMBER.match("  adjustment_months: [1]")
-    assert _ASSIGNS_A_NUMBER.match("  reduction_rate: 0.11")
-    assert _ASSIGNS_A_NUMBER.match("terminal_age_years: 110")
-    assert not _ASSIGNS_A_NUMBER.match("  has_maximum: true")
-    assert not _ASSIGNS_A_NUMBER.match("# the rate is 0.11 in the source")
+    for line in (
+        "  edges_annual: [11111, 22222]",
+        "  adjustment_months: [1]",
+        "  reduction_rate: 0.11",
+        "terminal_age_years: 110",
+        "  has_maximum: true",
+        "  maximum_is_greater_of_factor_and_prior_year_return: false",
+    ):
+        assert _ASSIGNS_A_VALUE.match(line), f"{line!r} states a value and was not seen."
 
-    lists = [
-        line
+    for line in ("q_x:", "  f:", "lif:  # not every jurisdiction has one", "# rate: 0.11"):
+        assert not _ASSIGNS_A_VALUE.match(line), f"{line!r} states no value and was seen."
+
+    values = [
+        line.split(":", 1)[1].strip()
         for line in PROVINCE_TEMPLATE.read_text(encoding="utf-8").splitlines()
-        if _ASSIGNS_A_NUMBER.match(line) and line.split(":", 1)[1].lstrip().startswith("[")
+        if _ASSIGNS_A_VALUE.match(line)
     ]
-    assert lists, (
-        f"{PROVINCE_TEMPLATE.name} has no list-valued assignment that "
-        f"_ASSIGNS_A_NUMBER matches, so the marker tests cover only its scalars "
-        f"and the pattern's bracket is carrying nothing."
+    assert any(value.startswith("[") for value in values), (
+        f"{PROVINCE_TEMPLATE.name} has no list-valued assignment the pattern "
+        f"matches, so the marker tests cover only its scalars."
+    )
+    assert any(value.startswith(("true", "false")) for value in values), (
+        f"{PROVINCE_TEMPLATE.name} has no boolean assignment the pattern "
+        f"matches, so the marker tests cover only its numbers."
     )
 
 
@@ -1339,10 +1363,10 @@ def test_removing_any_one_marker_from_a_template_is_caught(template: Path) -> No
     marked = [
         index
         for index, line in enumerate(lines)
-        if _ASSIGNS_A_NUMBER.match(line) and MARKER in line
+        if _ASSIGNS_A_VALUE.match(line) and MARKER in line
     ]
     assert marked, (
-        f"{template.name} has no marked numeric line, so this test broke nothing."
+        f"{template.name} has no marked line, so this test broke nothing."
     )
     for index in marked:
         broken = list(lines)
@@ -1356,20 +1380,20 @@ def test_removing_any_one_marker_from_a_template_is_caught(template: Path) -> No
 
 
 @pytest.mark.parametrize("template", TEMPLATES, ids=lambda path: path.stem)
-def test_a_template_holding_no_number_is_caught(template: Path) -> None:
+def test_a_template_holding_no_value_is_caught(template: Path) -> None:
     """The vacuity guard fires rather than passing an empty file.
 
     Without it a template whose values were all deleted, or whose layout drifted
-    past ``_ASSIGNS_A_NUMBER``, would satisfy "no unmarked line" by having no
+    past ``_ASSIGNS_A_VALUE``, would satisfy "no unmarked line" by having no
     lines — the check going quiet exactly when the file stopped being a
     template.
     """
     prose = [
         line
         for line in template.read_text(encoding="utf-8").splitlines()
-        if not _ASSIGNS_A_NUMBER.match(line)
+        if not _ASSIGNS_A_VALUE.match(line)
     ]
-    with pytest.raises(AssertionError, match="assigns no numbers at all"):
+    with pytest.raises(AssertionError, match="assigns no values at all"):
         _check_every_unverified_line_carries_the_marker(template, prose)
 
 
@@ -1387,7 +1411,7 @@ def _check_the_terminal_rows_are_exempt_not_unmarked(lines: list[str]) -> None:
     Takes the lines for the same reason the marker check does — so it can be
     handed a broken copy and shown to fail.
     """
-    assignments = [line for line in lines if _ASSIGNS_A_NUMBER.match(line)]
+    assignments = [line for line in lines if _ASSIGNS_A_VALUE.match(line)]
     terminal_rows = [line for line in assignments if line.rstrip().endswith(TERMINAL_ROW_COMMENT)]
     assert len(terminal_rows) == 2, (
         f"Expected exactly two rows carrying {TERMINAL_ROW_COMMENT!r}, one per "
