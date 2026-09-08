@@ -14,8 +14,10 @@ balance owing coming due in the filing month — happen as phases invoked by
 and must not become one.
 
 ``timeline`` owns month and age arithmetic. ``indexation`` owns the real-terms
-decay that periodic, lagged indexation produces once the timestep is shorter
-than the indexation period. ``state`` is what passes between months.
+decay that periodic indexation produces once the timestep is shorter than the
+indexation period, and the real-terms parameter view that is the only route
+from a dollar in ``params/`` to the engine. ``state`` is what passes between
+months.
 
 All amounts are real dollars. All arrays are shape ``(n_paths,)``.
 """

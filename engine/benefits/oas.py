@@ -22,13 +22,12 @@ withholding applied after it, within one calendar year. On an annual step that
 distinction collapsed; here it does not, and a benefit period that changes
 mid-calendar-year is the normal case, not an edge one.
 
-OAS is adjusted quarterly, and the adjustment lags the inflation it is
-compensating for, so in real dollars OAS is worth slightly less than its
-published amount — by a constant, every month.
-``engine.core.indexation.real_factor`` supplies that constant and the step
+OAS is adjusted quarterly, so in real dollars OAS averages slightly less than
+its published amount — by a constant, every month.
+``engine.core.indexation.erosion_factor`` supplies that constant and the step
 applies it. The amounts here are the published ones, before it. The
-quarter-to-quarter oscillation around that constant is not modelled; see
-``engine/core/indexation.py`` for why.
+quarter-to-quarter oscillation around that constant is not modelled, and
+neither is the CPI lag; see ``engine/core/indexation.py`` for why.
 """
 
 from __future__ import annotations

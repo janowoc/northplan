@@ -28,17 +28,16 @@ works out for itself.
 
 **Indexation costs a constant, and the constant is not one.** OAS and GIS are
 adjusted quarterly; CPP is adjusted annually. Between adjustments the amount is
-fixed in nominal terms, and each adjustment is computed from a CPI window that
-closed some months earlier, so an indexed benefit sits permanently a little
-below its published real value. The functions here return the published
-amount; ``engine.core.indexation.real_factor`` gives the constant it is
+fixed in nominal terms, so across the cycle an indexed benefit averages a
+little below its published real value. The functions here return the published
+amount; ``engine.core.indexation.erosion_factor`` gives the constant it is
 multiplied by, and the step applies it.
 
-That factor does not vary by month — it is computed once per benefit per
+That factor does not vary by month — it is computed once per schedule per
 scenario. The within-cycle oscillation is not modelled, on purpose: it is
 bounded, it averages to nothing, and it is smaller than the error in the
-inflation assumption. The level is what is kept, because the level is permanent
-and always flatters the plan.
+inflation assumption. Neither is the CPI lag (L5). The level is what is kept,
+because the level is permanent and always flatters the plan.
 
 Two applications of that factor, or none, are both bugs, and only one of them
 is visible.

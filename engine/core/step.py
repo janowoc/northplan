@@ -53,8 +53,8 @@ def advance_month(
        month of employment, one month of DB pension with its explicit and
        growing real decay, one month of CPP, one month of gross OAS and GIS.
        Benefit amounts are the published monthly amounts times the constant
-       factor from ``engine.core.indexation.real_factor``, which accounts for
-       an indexed benefit sitting permanently below its published real value.
+       factor from ``engine.core.indexation.erosion_factor``, which accounts
+       for an indexed benefit averaging below its published real value.
        That factor is the same every month and is computed once per scenario,
        so this step reads it rather than recomputing it.
     5. Tax withheld at source on that income is remitted and added to

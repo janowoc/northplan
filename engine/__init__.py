@@ -46,17 +46,21 @@ dollars, expressed in the base year of the scenario. Consequences:
   real terms from one indexation date to the next. They are loaded once per tax
   year and reused. Do not index them forward; that would double-count
   inflation.
-- **Indexation is periodic and lagged, and that costs a constant.** A benefit
-  is fixed in nominal terms between adjustment dates, and each adjustment is
-  computed from a CPI window that closed some months earlier, so an indexed
-  benefit sits permanently a little below its published real value. That
-  shortfall is a *constant*: ``engine.core.indexation`` computes it once per
-  benefit per scenario and it is applied unchanged every month. The oscillation
-  around it is deliberately not modelled — it is bounded, mean-zero, and
-  smaller than the uncertainty in the inflation assumption it depends on. What
-  is modelled is the level, because the level is permanent and always
-  optimistic. The adjustment frequency and the lag are statutory rules and come
-  from ``params/``; the inflation rate they act on is a scenario input.
+- **Indexation is periodic, and that costs a constant.** An amount is fixed in
+  nominal terms between adjustment dates, so across the cycle it averages a
+  little below its published real value. That shortfall is a *constant*:
+  ``engine.core.indexation.erosion_factor`` computes it once per schedule per
+  scenario and it is applied unchanged every month. The oscillation around it
+  is deliberately not modelled — it is bounded, mean-zero, and smaller than the
+  uncertainty in the inflation assumption it depends on. Neither is the CPI lag
+  (L5). What is modelled is the level, because the level is permanent and
+  always optimistic. The adjustment frequency is a statutory rule and comes
+  from ``params/``; the inflation rate it acts on is a scenario input.
+- **A dollar amount reaches the engine through ``RealParamSet``, never through
+  ``ParamSet``.** Which amounts sit on which schedule is declared in each
+  parameter file's ``indexation`` block, and the real-terms view refuses to
+  hand a routed amount to the undeflated accessors. Deflating at a call site,
+  or twice, is not a thing that can be done by accident.
 - Non-indexed amounts decay fastest of all, and must decay explicitly. A DB
   pension with no indexation loses real value every month, and the code that
   models it must apply that decay by hand and say so in a comment. Silence

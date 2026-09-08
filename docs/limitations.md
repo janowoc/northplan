@@ -62,6 +62,15 @@ declared in each parameter file's `indexation` block. Lives in
 around the erosion mean (bounded, mean zero), and the rounding of the TFSA
 limit to five-hundred-dollar steps (treated as annually indexed).
 
+Nor is the CPI lag. In reality an adjustment is computed from a price window
+that closed some months before it takes effect, so the step back up restores an
+earlier window's inflation rather than the months just past and an indexed
+amount never fully catches up; we model the adjustment as if it restored the
+cycle just ended. Every indexed bracket, credit, and benefit is therefore a
+little too high in real terms, which understates tax and overstates income —
+the direction that flatters the plan, and the same direction as the oscillation
+term above.
+
 **L6. Inflation is a constant scenario assumption.** It is used only for the
 erosion factor and for the decay of unindexed amounts. Returns are real. There
 is no stochastic inflation.

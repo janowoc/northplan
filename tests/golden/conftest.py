@@ -727,13 +727,18 @@ def resolve_params(spec: Mapping[str, Any]) -> ParamSet:
 def resolve_real_params(spec: Mapping[str, Any]) -> NoReturn:
     """Hook for the deflated real-terms parameter view.
 
-    That view does not exist yet — it is roadmap issue 8's job, implemented
-    against ``engine.core.indexation``. A case that needs ``real_params`` must
-    wait for that issue; this raises rather than inventing one.
+    The view itself now exists — roadmap issue 8 built
+    ``engine.core.indexation.RealParamSet`` — but it is not resolvable from a
+    case yet, because it needs the scenario's inflation rate and a case's
+    ``params`` spec names only a year and a file. An inflation rate is a
+    scenario assumption, not a parameter, so inventing one here would put an
+    unstated assumption inside every golden expectation. Deciding how a case
+    states it belongs with the scenario schema, not here.
     """
     raise NotImplementedError(
-        "real_params is not resolvable yet: the deflated real-terms parameter "
-        "view is roadmap issue 8, to be implemented in engine.core.indexation. "
+        "real_params is not resolvable yet: engine.core.indexation supplies the "
+        "deflated view (roadmap issue 8), but a case has no way to state the "
+        "scenario inflation rate it needs, and this will not assume one. "
         f"Requested spec: {spec!r}."
     )
 

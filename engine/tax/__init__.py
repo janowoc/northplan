@@ -26,9 +26,12 @@ makes each of them possible:
   the cash leaves in the following year's filing month, less whatever was
   withheld along the way. That timing lives in the step, not here.
 - Brackets and credits are indexed once a year, in January. A tax year has one
-  set of them, which is why a ``ParamYear`` is the right granularity and why
-  the indexation decay in ``engine.core.indexation`` applies to benefits paid
-  monthly rather than to anything in this package.
+  set of them, which is why a ``ParamYear`` is the right granularity. This
+  package is **not** exempt from the indexation decay: a bracket edge fixed in
+  nominal terms for twelve months averages below its January real value exactly
+  as a benefit does, and the annual schedule is the widest cycle there is, so
+  the erosion is larger here than for anything paid quarterly. The amounts
+  arrive already deflated, through ``engine.core.indexation.RealParamSet``.
 
 All dollar amounts in and out are real dollars (see ``engine/__init__.py``).
 All parameters come from ``params/`` via ``engine.params.loader``; there is

@@ -8,11 +8,10 @@ maximum retirement pension, the per-month early and late start adjustment
 factors, and the indexation schedule. None of these are ever inlined.
 
 CPP is paid monthly and adjusted once a year. Between adjustments it is fixed
-in nominal terms, and the adjustment lags the inflation it is compensating for,
-so in real dollars CPP is worth a little less than its published amount — by a
-constant, every month, for the life of the plan. The step applies that constant
-via ``engine.core.indexation.real_factor``. The amounts here are the published
-ones, before it.
+in nominal terms, so in real dollars CPP averages a little less than its
+published amount — by a constant, every month, for the life of the plan. The
+step applies that constant via ``engine.core.indexation.erosion_factor``. The
+amounts here are the published ones, before it.
 """
 
 from __future__ import annotations

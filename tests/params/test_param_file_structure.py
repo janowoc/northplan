@@ -46,6 +46,7 @@ from typing import Any, Final
 import pytest
 import yaml
 
+from engine.core.indexation import WILDCARD
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamSet, ParamYear, load_year
 
 #: Everything in a year directory that is NOT a province or pension
@@ -59,6 +60,13 @@ FEDERAL_SETS = frozenset({"cpp", "federal", "mortality", "oas", "resp", "rrif", 
 
 #: Every parameter set holding a progressive rate table, and the path to it.
 BRACKET_TABLES = "brackets.edges_annual", "brackets.rates"
+
+#: The suffixes a parameter file header promises every dollar amount ends in.
+#: One constant, read by both the routing check and the positivity check below,
+#: because the two drifting apart is how ``_each`` came to be routed by every
+#: live file while the tests still only knew about three suffixes. A fifth
+#: suffix is added here and nowhere else.
+AMOUNT_SUFFIXES: Final[tuple[str, ...]] = ("_annual", "_monthly", "_lifetime", "_each")
 
 #: Age-keyed factor tables: (set predicate, table path, terminal age path).
 AGE_TABLES = (
@@ -377,14 +385,21 @@ def test_indexation_schedules_are_well_formed(year: ParamYear) -> None:
     """Adjustment months are real, distinct, and divide the year evenly.
 
     ``engine.core.indexation.schedule`` returns the *count* of these months and
-    ``real_factor`` requires it to divide twelve. An empty list is valid and
+    ``erosion_factor`` requires it to divide twelve. An empty list is valid and
     means the amount is never adjusted — a different rule from the key being
-    absent, and routed to ``unindexed_real_factor`` instead.
+    absent, and routed to ``unindexed_factor`` instead.
     """
     for name in year.names():
         schedules = year[name].get("indexation") if year[name].has("indexation") else {}
         for schedule_name, schedule in schedules.items():
             where = f"{name}.indexation.{schedule_name}"
+            for key in ("adjustment_months", "applies_to"):
+                assert isinstance(schedule.get(key), tuple), (
+                    f"{where}.{key} is {schedule.get(key)!r}, not a list. A schedule "
+                    f"declares both a cadence and the paths it moves; an empty "
+                    f"applies_to is written [] and a key with nothing after the colon "
+                    f"parses as null."
+                )
             months = schedule["adjustment_months"]
             assert all(isinstance(month, int) and 1 <= month <= 12 for month in months), (
                 f"{where}.adjustment_months holds a non-month: {months}."
@@ -395,6 +410,120 @@ def test_indexation_schedules_are_well_formed(year: ParamYear) -> None:
             assert not months or 12 % len(months) == 0, (
                 f"{where} adjusts {len(months)} times a year, which does not divide 12."
             )
+
+
+def _routable(path: str) -> str:
+    """The ``applies_to`` entry that would route the leaf at ``path``.
+
+    ``_leaves`` numbers sequence elements, so a routing entry never matches a
+    leaf path as written. Two shapes have to collapse back onto their entries,
+    and they collapse differently:
+
+    - A list of scalars is routed as a whole: ``brackets.edges_annual.0``
+      belongs to ``brackets.edges_annual``, so trailing indices drop.
+    - A list of mappings is routed element-wise through a wildcard:
+      ``pension.age_bands.0.maximum_monthly`` belongs to
+      ``pension.age_bands.*.maximum_monthly``, so an interior index becomes
+      ``*``.
+
+    Doing this from the leaves rather than resolving each entry against the
+    tree is what makes one set serve both directions below: an entry that names
+    nothing is an entry outside this set, and an amount nothing names is a
+    member of this set that no entry claims.
+    """
+    segments = [WILDCARD if segment.isdigit() else segment for segment in path.split(".")]
+    while segments and segments[-1] == WILDCARD:
+        segments.pop()
+    return ".".join(segments)
+
+
+def _routing(params: ParamSet) -> dict[str, list[str]]:
+    """Every ``applies_to`` entry in a file, mapped to the schedules claiming it."""
+    if not params.has("indexation"):
+        return {}
+    claims: dict[str, list[str]] = {}
+    for schedule_name, schedule in params.get("indexation").items():
+        # A malformed applies_to is the well-formedness test's failure to
+        # report, not this helper's to crash on. Skipping it here still leaves
+        # its amounts unrouted, so the coverage check below goes red too.
+        for path in schedule.get("applies_to") or ():
+            claims.setdefault(path, []).append(schedule_name)
+    return claims
+
+
+def test_every_indexation_entry_names_a_path_that_exists(year: ParamYear) -> None:
+    """An ``applies_to`` entry that names nothing routes nothing, silently.
+
+    The failure this catches is a typo, and a typo here is invisible in two
+    directions at once: the misspelled entry matches no amount, and the amount
+    it meant to name is left on no schedule. ``grant.enhaced.income_edges_annual``
+    is not hypothetical — it shipped in a draft of issue 7 and this is the check
+    that would have caught it.
+    """
+    checked = 0
+    for name in year.names():
+        params = year[name]
+        routable = {_routable(path) for path, _ in _leaves(params.values)}
+        for path, schedules in _routing(params).items():
+            checked += 1
+            assert path in routable, (
+                f"{name}.indexation.{schedules[0]}.applies_to names {path!r}, which is "
+                f"not a path in {name}.yaml. It routes nothing, and whatever it meant "
+                f"to name is on no schedule."
+            )
+    assert checked, "No applies_to entries were checked; this test asserted nothing."
+
+
+def test_no_amount_is_routed_by_two_schedules(year: ParamYear) -> None:
+    """One amount, one rule.
+
+    Two schedules claiming a path is not a harmless duplicate: they may carry
+    different ``adjustment_months``, and then the amount's real value depends on
+    which entry the reader happens to find first.
+    """
+    for name in year.names():
+        for path, schedules in _routing(year[name]).items():
+            assert len(schedules) == 1, (
+                f"{name}.yaml routes {path!r} on {len(schedules)} schedules "
+                f"({', '.join(sorted(schedules))}). An amount sits on exactly one."
+            )
+
+
+def test_every_dollar_amount_is_on_a_schedule(year: ParamYear) -> None:
+    """Completeness, keyed off the suffix rule every file header states.
+
+    The suffix is the completeness check because it is the only property that
+    separates a dollar amount from every other number in these files by
+    inspection alone. Rates are bare fractions, ages are years, months are
+    months; none of them erode. An amount does, and the file header promises
+    that an amount says its period in its key — so the set of keys ending in
+    :data:`AMOUNT_SUFFIXES` is exactly the set that must be routed, and any
+    member of it that no schedule claims is an amount the engine cannot state
+    in real dollars.
+
+    The alternative — a hand-kept list of amounts per file — would be a second
+    copy of the routing lists, and the copy that goes stale is always the one
+    in the test.
+    """
+    checked = 0
+    for name in year.names():
+        params = year[name]
+        routed = set(_routing(params))
+        unrouted = sorted(
+            {
+                _routable(path)
+                for path, _ in _leaves(params.values)
+                if not path.startswith("indexation.")
+                and _stem(path).endswith(AMOUNT_SUFFIXES)
+            }
+            - routed
+        )
+        checked += len(routed)
+        assert not unrouted, (
+            f"{name}.yaml holds dollar amounts on no indexation schedule, so the "
+            f"engine cannot state them in real dollars:\n  " + "\n  ".join(unrouted)
+        )
+    assert checked, "No routing entries were found at all; this test asserted nothing."
 
 
 # --- Units ------------------------------------------------------------------
@@ -439,11 +568,14 @@ def test_period_suffixed_amounts_are_positive(year: ParamYear) -> None:
 
     Catches a sign slip and a value that never got filled in. Offsets and lags
     may legitimately be negative or zero and do not carry these suffixes.
+
+    Reads :data:`AMOUNT_SUFFIXES`, the same list the routing check reads, so
+    that a new suffix is guarded here the moment it is routed there.
     """
     for name in year.names():
         for path, value in _leaves(year[name].values):
             leaf = _stem(path)
-            if leaf.endswith(("_annual", "_monthly")):
+            if leaf.endswith(AMOUNT_SUFFIXES):
                 assert isinstance(value, (int, float)), f"{name}.{path} is not numeric."
                 assert value > 0, f"{name}.{path} is {value}, not a positive amount."
 
