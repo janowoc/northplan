@@ -42,6 +42,7 @@ issues hold the specifications.
 | 25 | Derive golden tolerance from a declared rounding | agent | 3 | no numeric tolerance field remains |
 | 26 | Copyright and licence headers on every source file | agent | — | every source file carries an SPDX header; ruff and a test enforce it |
 | 27 | Shape check for mortality tables: fall to a trough, then rise | agent | 4, 5 | a transposed q(x) fails; the boxed warning in both files is narrowed |
+| 28 | Extend the placeholder-marker check to the province template | agent | — | an unmarked number in either template fails |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -61,6 +62,13 @@ automated guard on a hand transcription of 222 numbers, so it belongs before
 the engine reads the table in 12 rather than after. Like 26 it carries a narrow
 authorisation under `params/`: rewriting one boxed comment in the template and
 in `params/2026/mortality.yaml`, and nothing else.
+
+Issue 28 came out of reviewing issue 6, which added a block to the province
+template with two unmarked placeholder numbers. The marker count is what tells
+a human how much of a template is left to fill, so an uncounted placeholder is
+the failure the workflow exists to prevent. The equivalent test already exists
+for the mortality template; this generalizes it. It touches no file under
+`params/` and needs no authorisation there.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
