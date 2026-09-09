@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The example scenario. Every later issue runs against this file.
+#
+# THE HOUSEHOLD IS FICTIONAL. The names, dates, balances, salary and school
+# fees below were made up to exercise the schema, not taken from anyone's
+# finances. A real household's figures belong in a `*.local.yaml` file, which
+# is gitignored.
+#
+# Conventions:
+#   - Every dollar amount is a REAL dollar of January 2026, the start year.
+#     Do not inflate a future salary or a future school fee; the engine works
+#     in this January's purchasing power throughout and converts once, at
+#     display.
+#   - Rates and shares are bare fractions (0.02), never percentages (2).
+#   - Nothing here is a tax rule. Brackets, credits, benefit formulas, the
+#     RRIF factor and the contribution ceilings all live under params/2026/
+#     and are never restated in a scenario.
+#   - Nothing here is checked against a statutory limit. A start age outside
+#     the legal window, or contribution room larger than any year allows, is
+#     the engine's business, and it reads those bounds from params/.
+#
+# Read by: engine/scenario/load.py, and every test that needs a valid scenario.
+
+name: example-household
+start_year: 2026            # inputs are January-2026 dollars; params/2026 serves the run
+n_paths: 10000
+seed: 42                    # common random numbers: the same draws for every policy
+
+household:
+  province: ab              # province of RESIDENCE, for income tax
+
+  persons:
+    - id: a
+      birth_year: 1966
+      birth_month: 3
+      sex: f                                     # f | m, selects the life table
+      employment:
+        - {from_year: 2026, to_year: 2031, annual: 95000}   # both years inclusive
+      cpp: {contributory_history: 0.85}          # or {in_pay_monthly: 1200}; exactly one
+      db_pensions:
+        - name: employer
+          start_year: 2031
+          start_month: 4
+          annual: 30000
+          indexation: none                       # the string "none", not YAML null
+          bridge_annual: 0
+          bridge_to_age_years: 65
+          survivor_share: 0.6
+      accounts:
+        cash:    {balance: 20000}
+        rrsp:    {balance: 400000, room: 25000}
+        rrif:    {balance: 0}
+        tfsa:    {balance: 90000, room: 7000}
+        taxable: {balance: 150000, acb: 110000}
+        lira:    {balance: 80000, jurisdiction: ab}   # jurisdiction of REGISTRATION
+
+  beneficiaries:
+    - id: child1
+      birth_year: 2015
+      birth_month: 9
+      # Every RESP figure is per beneficiary. Nothing here aggregates across
+      # children.
+      resp: {subscriber: a, contributions: 24000, grants: 4800, income: 1200, grant_room_carried: 0}
+      education: {start_year: 2033, start_month: 9, months: 48, annual_cost: 20000}
+
+spending:
+  # Bands run until the next one begins; the last runs to the second death.
+  schedule:
+    - {from_year: 2026, annual: 80000}
+    - {from_year: 2032, annual: 65000}
+  survivor_share: 0.75      # of household spending, from the month after the first death
+
+assumptions:
+  inflation: 0.02           # constant for the run; returns below are real
+
+  # The yields are the TAX CHARACTER of the return, not additions to it: price
+  # change is real_mean less the three yields.
+  asset_classes:
+    equity: {real_mean: 0.05, vol: 0.16, interest_yield: 0.00, dividend_yield: 0.020, distributed_gains_yield: 0.005}
+    bonds:  {real_mean: 0.01, vol: 0.05, interest_yield: 0.03, dividend_yield: 0.000, distributed_gains_yield: 0.000}
+
+  # ROW ORDER IS THE ORDER asset_classes IS WRITTEN IN, above: equity, bonds.
+  # Nothing in this matrix names a class, so reordering that block reinterprets
+  # every off-diagonal entry without changing a number here.
+  correlation: [[1.0, 0.1], [0.1, 1.0]]
+
+  # `default` is required and is what any account without its own entry holds.
+  allocations:
+    default: {equity: 0.6, bonds: 0.4}
+    resp:    {equity: 0.3, bonds: 0.7}
+
+policies:
+  - name: taxable-first
+    contribution:
+      weights: {rrsp: 0.5, tfsa: 0.3, taxable: 0.2, resp: 0.0}
+      spill_order: [tfsa, rrsp, taxable]         # where a contribution goes when there is no room
+    withdrawal:
+      order: [taxable, rrif, rrsp, lif, tfsa]
+      taxable_ceiling_bracket: 1                 # index into the federal bracket table, from 0
+      fill_pension_credit: true
+    elections:
+      cpp_start_age_years: {a: 65}
+      oas_start_age_years: {a: 65}
+      rrif_conversion: {age_years: 65, fraction: 0.05}
+
+# Optional. Each key is a dotted path into a policy naming one number, and each
+# value is the list to try. Every key must resolve on every policy above.
+grid:
+  elections.cpp_start_age_years.a: [60, 65, 70]

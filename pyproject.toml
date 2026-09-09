@@ -36,6 +36,7 @@ build-backend = "setuptools.build_meta"
 packages = [
     "engine",
     "engine.params",
+    "engine.scenario",
     "engine.tax",
     "engine.benefits",
     "engine.accounts",

@@ -732,8 +732,12 @@ def resolve_real_params(spec: Mapping[str, Any]) -> NoReturn:
     case yet, because it needs the scenario's inflation rate and a case's
     ``params`` spec names only a year and a file. An inflation rate is a
     scenario assumption, not a parameter, so inventing one here would put an
-    unstated assumption inside every golden expectation. Deciding how a case
-    states it belongs with the scenario schema, not here.
+    unstated assumption inside every golden expectation.
+
+    Issue 10's scenario schema does not settle it either: a scenario states an
+    inflation rate for a *run*, and a golden case is not a run. What is left is
+    for a case to name the rate in its own spec, which changes the case format
+    — and the case format is the human's, not the harness's.
     """
     raise NotImplementedError(
         "real_params is not resolvable yet: engine.core.indexation supplies the "
