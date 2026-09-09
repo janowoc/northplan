@@ -14,7 +14,7 @@ under. Someone resident in Alberta may hold an Ontario-registered LIF: they
 draw it under Ontario's table and file Alberta income tax. Every function here
 that takes a parameter set takes the *registration* jurisdiction's, reached
 through ``ParamYear.jurisdiction`` and named by
-``engine.core.state.LockedInTerms.registration_jurisdiction`` — never through
+``engine.core.state.LockedInState.jurisdiction`` — never through
 ``ParamYear.province(household.province)``. The two coincide for a household
 that never moved, which is why the wrong one is easy to ship.
 
@@ -107,7 +107,7 @@ def maximum_withdrawal(
         age_at_start_of_year: Age in whole years on 1 January.
         params: The parameter set of the jurisdiction the account is
             **registered** in — from ``ParamYear.jurisdiction`` keyed by
-            ``LockedInTerms.registration_jurisdiction``. Not the household's
+            ``LockedInState.jurisdiction``. Not the household's
             province of residence, and not the set that
             ``engine.tax.provincial`` was handed for the same household.
 

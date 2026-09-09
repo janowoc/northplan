@@ -473,6 +473,37 @@ class Person(_Base):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_bridges_do_not_end_before_they_start(self) -> Self:
+        """A bridge that ends before its pension starts would never pay a cent.
+
+        Lives on ``Person`` rather than on ``DbPension`` because the bridge's
+        end date is an *age* — it needs this person's ``birth_year`` and
+        ``birth_month`` to become a date at all, and ``DbPension`` has
+        neither. The comparison is calendar dates, ``(year, month)`` tuples
+        compared lexicographically, not engine month-index arithmetic: a
+        scenario is a document with no opinion on what a Monte Carlo run's
+        month zero is, and this check does not need one either.
+        """
+        for pension in self.db_pensions:
+            if pension.bridge_annual <= 0.0:
+                continue
+            # bridge_to_age_years is required whenever bridge_annual > 0
+            # (_check_bridge_ends, above), so this is never None here.
+            assert pension.bridge_to_age_years is not None
+            bridge_ends = (self.birth_year + pension.bridge_to_age_years, self.birth_month)
+            pension_starts = (pension.start_year, pension.start_month)
+            if bridge_ends < pension_starts:
+                raise ValueError(
+                    f"db_pensions[{pension.name!r}]: person {self.id!r} turns "
+                    f"{pension.bridge_to_age_years} in "
+                    f"{bridge_ends[0]}-{bridge_ends[1]:02d}, ending the bridge "
+                    "before the pension itself starts in "
+                    f"{pension_starts[0]}-{pension_starts[1]:02d}; the bridge "
+                    "would never pay a cent."
+                )
+        return self
+
 
 class Resp(_Base):
     """The RESP standing to one beneficiary, split into its three buckets.

@@ -236,6 +236,14 @@ REJECTIONS = [
         deletes("household.persons.0.db_pensions.0.bridge_to_age_years"),
     ),
     rejected(
+        # The example person's own figures trip this the moment the bridge
+        # is non-zero: born 1966-03 with bridge_to_age_years 65 ends the
+        # bridge in 2031-03, and the pension itself starts 2031-04.
+        "bridge-ends-before-the-pension-starts",
+        "bridge",
+        sets("household.persons.0.db_pensions.0.bridge_annual", 8000),
+    ),
+    rejected(
         "two-pensions-with-one-name",
         "db_pensions",
         sets(

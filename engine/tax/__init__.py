@@ -19,7 +19,7 @@ Three consequences worth stating, because the monthly loop around this package
 makes each of them possible:
 
 - The income these functions receive is the year-to-date total accumulated over
-  twelve monthly steps, from ``TaxLedger.ytd_income``. Passing a single month's
+  twelve monthly steps, from an ``IncomeLedger``. Passing a single month's
   income to a progressive bracket function produces a number roughly a twelfth
   the size at a much lower marginal rate — plausible, and wrong.
 - Tax assessed is not tax paid. What these functions return is an assessment;

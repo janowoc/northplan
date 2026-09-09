@@ -116,12 +116,14 @@ investment_income:
 # So this block belongs in a province file — it is genuinely provincial law —
 # but it is reached by a different route from the tax parameters above it:
 #
-#   income tax   ParamYear.province(household.province)
-#   LIF maximum  ParamYear.jurisdiction(terms.registration_jurisdiction)
+#   income tax   ParamYear.province(HouseholdState.province)
+#   LIF maximum  ParamYear.jurisdiction(LockedInState.jurisdiction)
 #
-# engine/core/state.py::LockedInTerms carries the registration jurisdiction per
-# ACCOUNT, because one person can hold two locked-in accounts from two
-# employers in two jurisdictions and they do not merge.
+# engine/core/state.py::LockedInState carries the registration jurisdiction,
+# and PersonState.locked_in holds ONE of them per person. A person with two
+# locked-in accounts from two employers in two jurisdictions is not modelled:
+# the accounts do not merge in reality, and the model has a single slot for
+# them. See docs/limitations.md L47.
 #
 # For a household that never moved the two lookups return this same file, which
 # is why reading the LIF table out of the residence province is right until it

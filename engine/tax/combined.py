@@ -18,12 +18,12 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from engine.core.state import HouseholdIncome, PersonIncome
+from engine.core.state import IncomeLedger
 from engine.params.loader import ParamYear
 
 
 def person_tax(
-    person_income: PersonIncome,
+    person_income: IncomeLedger,
     province: str,
     params: ParamYear,
 ) -> NDArray[np.float64]:
@@ -42,7 +42,7 @@ def person_tax(
 
 
 def household_tax(
-    household_income: HouseholdIncome,
+    household_income: tuple[IncomeLedger, ...],
     province: str,
     params: ParamYear,
 ) -> NDArray[np.float64]:
@@ -65,7 +65,7 @@ def household_tax(
 
 
 def optimal_pension_split(
-    household_income: HouseholdIncome,
+    household_income: tuple[IncomeLedger, ...],
     province: str,
     params: ParamYear,
 ) -> NDArray[np.float64]:

@@ -1,0 +1,428 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+"""Scenario -> opening :class:`~engine.core.state.HouseholdState`.
+
+The one place a :class:`~engine.scenario.schema.Scenario` — a document, in
+scalar Python values, real dollars of January of its start year — is turned
+into the array-valued state the monthly loop steps forward. Everything here
+is a mapping, not a decision: no balance is projected, no benefit is
+computed, no bracket is consulted. What the scenario states is what the
+opening state holds, broadcast to every path.
+
+This is the only scenario-to-engine boundary: ``engine.core.step
+.advance_month`` takes no scenario, only the state this module produces. A
+scenario input that is not carried onto some field here is not merely
+unused this issue — it is unreachable by any later one, so every field the
+scenario states is carried, even one no phase reads yet.
+
+The opening position is always 1 January of ``scenario.start_year``:
+``year=start_year``, ``month=1``, ``month_index=0``.
+
+Two things a scenario cannot answer without help are worked out here rather
+than invented:
+
+- **Which policy.** A scenario may carry several; the elections that decide
+  a CPP or OAS start age differ between them, so :func:`build_initial_state`
+  either takes one explicitly or requires there to be exactly one to fall
+  back on.
+- **Month arithmetic.** A pension's start date, a bridge's end age, an
+  RESP's enrolment date, and an employment band's start and end are all
+  given as a calendar year and month, and the state they land in wants a
+  signed month offset from the run's opening. :func:`_month_offset` is that
+  arithmetic. It is a permanent part of this module, not a stand-in for
+  ``engine.core.timeline.month_index``: that function indexes the first
+  axis of the random draws, which has no negative rows, so it rejects a
+  negative result; this one places a calendar date relative to the run's
+  opening, and that date may precede it — a pension already in payment, a
+  bridge that already ended, a subscriber already partway through a
+  programme, an employment band begun years earlier. See ``state.py``'s
+  module docstring for the negative-month-index convention every caller of
+  this function's result inherits.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import NDArray
+
+from engine.core.state import (
+    DEATH_NOT_DRAWN,
+    BeneficiaryState,
+    BenefitState,
+    CashState,
+    Elections,
+    EmploymentBand,
+    HouseholdState,
+    IncomeLedger,
+    LockedInState,
+    PensionState,
+    PersonState,
+    RespState,
+    RrifState,
+    RrspState,
+    SpendingLevel,
+    TaxableState,
+    TfsaState,
+    select_spending_level,
+)
+from engine.scenario import Beneficiary, DbPension, Employment, Person, PolicySpec, Scenario
+
+__all__ = ["build_initial_state"]
+
+
+def _month_offset(base_year: int, year: int, month: int) -> int:
+    """Signed month offset from January of ``base_year`` to ``(year, month)``.
+
+    Not ``engine.core.timeline.month_index`` in miniature — see the module
+    docstring for why the two are permanently different functions. A
+    negative result here is an ordinary answer, not a signal to reject: it
+    places a calendar date that precedes the run's opening, which several
+    scenario inputs legitimately do (a pension already in pay, a bridge that
+    already ended, an employment band begun years ago, a student already
+    partway through a programme).
+
+    Args:
+        base_year: The simulation's first calendar year.
+        year: Calendar year to locate.
+        month: Month within that year, ``1..12``.
+
+    Returns:
+        Signed month offset, zero in January of ``base_year``, negative for
+        a date before it.
+
+    Raises:
+        ValueError: If ``month`` is outside ``1..12``.
+    """
+    if not 1 <= month <= 12:
+        raise ValueError(f"month must be in 1..12, got {month!r}.")
+    return (year - base_year) * 12 + (month - 1)
+
+
+def build_initial_state(
+    scenario: Scenario,
+    n_paths: int,
+    policy: PolicySpec | None = None,
+) -> HouseholdState:
+    """Build the opening :class:`~engine.core.state.HouseholdState` for a scenario.
+
+    Every balance, room, and ledger field is broadcast from the scenario's
+    scalar to ``(n_paths,)``. Every year-to-date and ``withdrawn_*`` field
+    opens at zero: the run has not accrued anything yet. Nothing here reads
+    ``params/`` and nothing here computes a benefit amount — those happen
+    once the monthly loop starts.
+
+    Args:
+        scenario: The validated scenario to build from.
+        n_paths: Monte Carlo paths every array opens with. Must be at least
+            one: a zero-length array builds without complaint and then fails
+            much later as a NumPy empty-reduction warning, far from this
+            call and turned into a hard error by this repository's
+            ``filterwarnings = ["error"]``.
+        policy: Which of the scenario's policies to take elections from. If
+            ``None`` and the scenario has exactly one policy, that one is
+            used. If ``None`` and there are several, this raises: the CPP
+            and OAS start ages, the RRIF conversion, and the pension-credit
+            fill differ between policies, and choosing the first silently
+            would build the opening state for the wrong plan.
+
+    Returns:
+        The state as of 1 January of ``scenario.start_year``.
+
+    Raises:
+        ValueError: If ``n_paths`` is less than one, or if ``policy`` is
+            ``None`` and the scenario does not have exactly one policy to
+            fall back on. A bridge that would end before its pension starts
+            is rejected earlier, by the schema
+            (``engine.scenario.schema.Person``), so it never reaches here.
+    """
+    if n_paths < 1:
+        raise ValueError(f"n_paths must be at least 1, got {n_paths!r}.")
+
+    chosen = _select_policy(scenario, policy)
+    start_year = scenario.start_year
+
+    persons = tuple(
+        _build_person(person, n_paths, start_year, chosen)
+        for person in scenario.household.persons
+    )
+    beneficiaries = tuple(
+        _build_beneficiary(beneficiary, n_paths, start_year, scenario.household.persons)
+        for beneficiary in scenario.household.beneficiaries
+    )
+
+    elections = Elections(
+        cpp_start_age_months=tuple(
+            _cpp_start_age_months(person, chosen) for person in scenario.household.persons
+        ),
+        oas_start_age_months=tuple(
+            chosen.elections.oas_start_age_years[person.id] * 12
+            for person in scenario.household.persons
+        ),
+        rrif_conversion_age_years=chosen.elections.rrif_conversion.age_years,
+        rrif_conversion_fraction=chosen.elections.rrif_conversion.fraction,
+        fill_pension_credit=chosen.withdrawal.fill_pension_credit,
+    )
+
+    spending_schedule = _build_spending_schedule(scenario)
+
+    return HouseholdState(
+        year=start_year,
+        month=1,
+        month_index=0,
+        n_paths=n_paths,
+        province=scenario.household.province,
+        persons=persons,
+        beneficiaries=beneficiaries,
+        elections=elections,
+        spending_schedule=spending_schedule,
+        # select_spending_level is also what HouseholdState.__post_init__
+        # uses to check spending_monthly stays in step with year; using it
+        # here too, rather than a second copy of the selection rule, is what
+        # makes that check exact rather than approximate.
+        spending_monthly=select_spending_level(spending_schedule, start_year),
+        spending_survivor_share=scenario.spending.survivor_share,
+        spending_achieved_ytd=_zeros(n_paths),
+        depleted=np.zeros(n_paths, dtype=np.bool_),
+        estate_after_tax=np.full(n_paths, np.nan, dtype=np.float64),
+        history=(),
+    )
+
+
+def _select_policy(scenario: Scenario, policy: PolicySpec | None) -> PolicySpec:
+    """Return ``policy``, or the scenario's only one, or raise."""
+    if policy is not None:
+        return policy
+    if len(scenario.policies) == 1:
+        return scenario.policies[0]
+    names = ", ".join(repr(p.name) for p in scenario.policies)
+    raise ValueError(
+        f"scenario {scenario.name!r} has {len(scenario.policies)} policies "
+        f"({names}); pass policy= to say which one the opening state's "
+        "elections come from."
+    )
+
+
+def _cpp_start_age_months(person: Person, policy: PolicySpec) -> int | None:
+    """The election feeding both :class:`BenefitState.start_age_months` and ``Elections``.
+
+    ``None`` when the person's CPP is already in pay: there is no start age
+    left to elect for them, only the amount already flowing.
+    """
+    if person.cpp.in_pay_monthly is not None:
+        return None
+    return policy.elections.cpp_start_age_years[person.id] * 12
+
+
+def _zeros(n_paths: int) -> NDArray[np.float64]:
+    return np.zeros(n_paths, dtype=np.float64)
+
+
+def _broadcast(value: float, n_paths: int) -> NDArray[np.float64]:
+    return np.full(n_paths, value, dtype=np.float64)
+
+
+def _build_person(
+    person: Person,
+    n_paths: int,
+    start_year: int,
+    policy: PolicySpec,
+) -> PersonState:
+    accounts = person.accounts
+    lira = accounts.lira
+
+    cpp_start_months = _cpp_start_age_months(person, policy)
+    cpp_in_pay = (
+        None
+        if person.cpp.in_pay_monthly is None
+        else _broadcast(person.cpp.in_pay_monthly, n_paths)
+    )
+
+    employment = tuple(
+        _build_employment_band(band, n_paths, start_year) for band in person.employment
+    )
+    pensions = tuple(
+        _build_pension(pension, n_paths, start_year, person) for pension in person.db_pensions
+    )
+
+    return PersonState(
+        person_id=person.id,
+        sex=person.sex,
+        birth_year=person.birth_year,
+        birth_month=person.birth_month,
+        alive=np.ones(n_paths, dtype=np.bool_),
+        death_month_index=np.full(n_paths, DEATH_NOT_DRAWN, dtype=np.int64),
+        cash=CashState(balance=_broadcast(accounts.cash.balance, n_paths)),
+        rrsp=RrspState(
+            balance=_broadcast(accounts.rrsp.balance, n_paths),
+            room=_broadcast(accounts.rrsp.room, n_paths),
+            contributed_ytd=_zeros(n_paths),
+            converted_fraction_applied=False,
+        ),
+        rrif=RrifState(
+            balance=_broadcast(accounts.rrif.balance, n_paths),
+            annual_minimum=_zeros(n_paths),
+            withdrawn_ytd=_zeros(n_paths),
+            # None when nothing has been opened yet. Otherwise the year
+            # before the run: the true opening year is not knowable from a
+            # scenario, and start_year would wrongly exempt this year's
+            # minimum. See engine.core.state.RrifState.opened_year.
+            opened_year=None if accounts.rrif.balance == 0.0 else start_year - 1,
+        ),
+        locked_in=LockedInState(
+            balance=_broadcast(lira.balance, n_paths),
+            is_lif=False,
+            jurisdiction=lira.jurisdiction or "",
+            annual_minimum=_zeros(n_paths),
+            annual_maximum=_zeros(n_paths),
+            withdrawn_ytd=_zeros(n_paths),
+        ),
+        tfsa=TfsaState(
+            balance=_broadcast(accounts.tfsa.balance, n_paths),
+            room=_broadcast(accounts.tfsa.room, n_paths),
+            withdrawn_this_year=_zeros(n_paths),
+        ),
+        taxable=TaxableState(
+            balance=_broadcast(accounts.taxable.balance, n_paths),
+            acb=_broadcast(accounts.taxable.acb, n_paths),
+        ),
+        cpp=BenefitState(
+            start_age_months=cpp_start_months,
+            in_pay_monthly=cpp_in_pay,
+            contributory_history=person.cpp.contributory_history,
+            monthly_amount=_zeros(n_paths),
+        ),
+        oas=BenefitState(
+            start_age_months=policy.elections.oas_start_age_years[person.id] * 12,
+            in_pay_monthly=None,
+            contributory_history=None,
+            monthly_amount=_zeros(n_paths),
+        ),
+        employment=employment,
+        pensions=pensions,
+        income=_empty_income_ledger(n_paths),
+        balance_owing=_zeros(n_paths),
+        # Zero: a scenario carries no income history from before the run.
+        # limitations.md L46.
+        prior_year_net_income=_zeros(n_paths),
+    )
+
+
+def _build_employment_band(band: Employment, n_paths: int, start_year: int) -> EmploymentBand:
+    return EmploymentBand(
+        from_month_index=_month_offset(start_year, band.from_year, 1),
+        to_month_index=_month_offset(start_year, band.to_year, 12),
+        monthly_amount=_broadcast(band.annual / 12.0, n_paths),
+    )
+
+
+def _build_pension(
+    pension: DbPension,
+    n_paths: int,
+    start_year: int,
+    person: Person,
+) -> PensionState:
+    start_month_index = _month_offset(start_year, pension.start_year, pension.start_month)
+
+    bridge_end_month_index = None
+    if pension.bridge_annual > 0.0:
+        # bridge_to_age_years is required whenever bridge_annual > 0 (schema
+        # validator), so this is safe. The age-to-month-index conversion is
+        # the same arithmetic engine.core.timeline will own once issue 12
+        # lands; anticipated here only for this one field. That the bridge
+        # does not end before the pension starts is guaranteed by
+        # engine.scenario.schema.Person, so it is not re-checked here.
+        target_year = person.birth_year + pension.bridge_to_age_years
+        bridge_end_month_index = _month_offset(start_year, target_year, person.birth_month)
+
+    return PensionState(
+        name=pension.name,
+        monthly_amount=_broadcast(pension.annual / 12.0, n_paths),
+        start_month_index=start_month_index,
+        indexed=pension.indexation == "full",
+        bridge_monthly=_broadcast(pension.bridge_annual / 12.0, n_paths),
+        bridge_end_month_index=bridge_end_month_index,
+        survivor_share=pension.survivor_share,
+    )
+
+
+def _empty_income_ledger(n_paths: int) -> IncomeLedger:
+    return IncomeLedger(
+        employment=_zeros(n_paths),
+        cpp=_zeros(n_paths),
+        oas=_zeros(n_paths),
+        db_pension=_zeros(n_paths),
+        rrsp_withdrawals=_zeros(n_paths),
+        rrif_lif_withdrawals=_zeros(n_paths),
+        interest=_zeros(n_paths),
+        eligible_dividends=_zeros(n_paths),
+        capital_gains=_zeros(n_paths),
+        resp_accumulated_income=_zeros(n_paths),
+        rrsp_deductions=_zeros(n_paths),
+        cpp_base_contributions=_zeros(n_paths),
+        cpp_enhanced_contributions=_zeros(n_paths),
+        ei_premiums=_zeros(n_paths),
+        remitted=_zeros(n_paths),
+    )
+
+
+def _build_beneficiary(
+    beneficiary: Beneficiary,
+    n_paths: int,
+    start_year: int,
+    persons: tuple[Person, ...],
+) -> BeneficiaryState:
+    subscriber_index = next(
+        (
+            index
+            for index, person in enumerate(persons)
+            if person.id == beneficiary.resp.subscriber
+        ),
+        None,
+    )
+    if subscriber_index is None:
+        # The schema guarantees a subscriber names a person in the
+        # household (Household._check_subscribers_exist), so this is a
+        # guard against that invariant breaking, not a lookup expected to
+        # fail in practice.
+        raise ValueError(
+            f"beneficiary {beneficiary.id!r}: subscriber "
+            f"{beneficiary.resp.subscriber!r} is not a person in this "
+            "household."
+        )
+
+    resp = beneficiary.resp
+    education = beneficiary.education
+
+    return BeneficiaryState(
+        beneficiary_id=beneficiary.id,
+        birth_year=beneficiary.birth_year,
+        birth_month=beneficiary.birth_month,
+        resp=RespState(
+            contributions=_broadcast(resp.contributions, n_paths),
+            grants=_broadcast(resp.grants, n_paths),
+            income=_broadcast(resp.income, n_paths),
+            # What has been put in to date *is* the lifetime figure at the
+            # opening of a run; nothing has been withdrawn yet to make the
+            # two diverge.
+            contributions_lifetime=_broadcast(resp.contributions, n_paths),
+            grants_lifetime=_broadcast(resp.grants, n_paths),
+            grant_room=_broadcast(resp.grant_room_carried, n_paths),
+            grant_received_ytd=_zeros(n_paths),
+            contributed_ytd=_zeros(n_paths),
+            subscriber_index=subscriber_index,
+            education_start_month_index=_month_offset(
+                start_year, education.start_year, education.start_month
+            ),
+            education_months=education.months,
+            education_monthly_cost=education.annual_cost / 12.0,
+            wound_up=np.zeros(n_paths, dtype=np.bool_),
+        ),
+    )
+
+
+def _build_spending_schedule(scenario: Scenario) -> tuple[SpendingLevel, ...]:
+    return tuple(
+        SpendingLevel(from_year=band.from_year, monthly_level=band.annual / 12.0)
+        for band in scenario.spending.schedule
+    )

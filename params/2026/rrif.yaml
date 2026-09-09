@@ -58,7 +58,8 @@ rrsp:
 
 # Withholding on withdrawals is explicitly modelled: tax is remitted in the
 # month of the withdrawal, while the liability is assessed at the December
-# close and settled in federal.yaml's filing_month. TaxLedger carries the gap.
+# close and settled in federal.yaml's filing_month. IncomeLedger.remitted and
+# PersonState.balance_owing carry the gap.
 # Rates are banded by the size of the individual withdrawal.
 # INVARIANT: len(rates) == len(edges) + 1, as in federal.yaml's brackets.
 # The same rates apply to RRIF withdrawals above the minimum.

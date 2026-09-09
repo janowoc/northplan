@@ -94,7 +94,7 @@ def recovery_tax_monthly(
         income_year_net_income: Net income from the calendar year that governs
             the benefit period this month falls in — from
             ``engine.core.timeline.benefit_year_income_year``, and stored in
-            ``TaxLedger.prior_year_net_income``. Passing the current year's
+            ``PersonState.prior_year_net_income``. Passing the current year's
             income here is a correctness bug, not an approximation. So is
             passing the income year that governed the *previous* benefit
             period, which is what happens if the mid-year changeover is

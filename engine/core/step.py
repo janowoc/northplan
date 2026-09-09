@@ -109,7 +109,7 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        across the months.
     5. The LIF *maximum* for the year is fixed the same way, and read from the
        parameter set of the jurisdiction each locked-in account is registered
-       in — ``params.jurisdiction(terms.registration_jurisdiction)``, not
+       in — ``params.jurisdiction(LockedInState.jurisdiction)``, not
        ``params.province(household.province)``. Where
        ``engine.accounts.lira.has_maximum`` is false the jurisdiction imposes
        no ceiling and none is stored; that is a rule, not a missing table.

@@ -5,8 +5,8 @@
 
 Annual, and called once per simulated year from the year-end close in
 ``engine/core/step.py``. Every income argument below is a **full calendar
-year's** figure, accumulated over twelve monthly steps in
-``engine.core.state.TaxLedger.ytd_income``. Handing one of these a single
+year's** figure, accumulated over twelve monthly steps in an
+``engine.core.state.IncomeLedger``. Handing one of these a single
 month's income yields a small number at a low marginal rate and no error.
 
 Parameters come from ``params/{year}/federal.yaml``. Nothing numeric lives in
@@ -57,7 +57,7 @@ def net_income(
     apart matters — conflating them understates the clawback.
 
     The result outlives the year that produced it. It is stored in
-    ``TaxLedger.prior_year_net_income`` and read back one or two years later,
+    ``PersonState.prior_year_net_income`` and read back one or two years later,
     when the benefit period it governs comes around; see
     ``engine.core.timeline.benefit_year_income_year``.
 

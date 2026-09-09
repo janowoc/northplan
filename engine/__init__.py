@@ -27,7 +27,8 @@ than a second loop:
   steps.
 - The resulting balance is *paid* in the filing month of the following year,
   which is later than the year it relates to. Cash and accrual differ, and
-  ``engine.core.state.TaxLedger`` is where that difference is carried.
+  ``engine.core.state.IncomeLedger`` and ``PersonState.balance_owing`` are
+  where that difference is carried.
 - RRIF and LIF minimums and maximums are annual quantities fixed in January
   and satisfied across the months that follow.
 - Contribution room is granted in January.

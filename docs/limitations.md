@@ -41,7 +41,7 @@ in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 pensions.** A LIF is governed by the jurisdiction its pension was registered
 in. We carry that jurisdiction per account and stop the run for any
 jurisdiction without a parameter file, which today means every one except
-Alberta. Lives in `engine/core/state.py::LockedInTerms`,
+Alberta. Lives in `engine/core/state.py::LockedInState`,
 `engine/params/loader.py::ParamYear.jurisdiction`.
 
 ## Timeline and dollars
@@ -50,6 +50,14 @@ Alberta. Lives in `engine/core/state.py::LockedInTerms`,
 tax year is partly complete. We start every simulation on 1 January of the
 scenario's start year with balances as at that date, and model no income
 earned earlier in that year. Lives in `engine/scenario/`.
+
+**L46. Opening `prior_year_net_income`.** In reality the OAS recovery tax,
+and anything else assessed on an earlier year's net income, is computed from
+a real figure carried forward from before the plan was drawn up. A scenario
+carries no income history from before the run, so for the benefit months
+whose governing income year precedes the run we compute the recovery tax from
+zero instead. Direction: optimistic — it understates the recovery tax at the
+start of the run. Lives in `engine/core/build.py`.
 
 **L5. Real dollars are January dollars of the start year.** All amounts in a
 scenario are stated in the purchasing power of January of the start year, and
@@ -214,6 +222,22 @@ factor result and the prior year's investment return. We apply the factor
 result only. Direction: conservative, the ceiling is never higher than the
 rule allows. Not modelled: the one-time unlocking transfer, small-balance and
 hardship unlocking. Lives in `engine/accounts/lira.py`.
+
+**L47. One locked-in account per person.** In reality a person may hold
+several LIRAs or LIFs, from several employers, registered in different
+jurisdictions, and they do not merge: each is drawn under the maximum table of
+the jurisdiction its own originating pension was registered in. We model one
+per person, carrying one jurisdiction. Direction: neutral for a household whose
+locked-in money is all from one jurisdiction, which is the common case; where
+it is not, the ceiling on the whole balance comes from whichever jurisdiction
+the scenario names, and the error runs in either direction depending on which
+table is the looser. Lives in `engine/scenario/schema.py::Accounts.lira`,
+`engine/core/state.py::LockedInState`, read by `engine/accounts/lira.py`.
+
+The narrowing arrived with the scenario schema rather than with the account
+code, which is why it is recorded here rather than as a gap in `lira.py`: a
+second account cannot be *stated* in a scenario, so no code below could act on
+one.
 
 **L28. TFSA.** Over-contribution is impossible by construction, so the penalty
 is not modelled. Not modelled: room accrued before the start year is a scenario
