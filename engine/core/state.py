@@ -504,10 +504,13 @@ class PensionState:
         bridge_end_month_index: The *last* month the bridge is paid,
             inclusive, or ``None`` when there is no bridge at all. May be
             negative, per the module's month-index convention, when the
-            bridge already ended before the run opened. The builder rejects
-            a bridge whose end falls before ``start_month_index``: that
-            bridge would never pay a cent, which is a scenario error to
-            report rather than state to build silently.
+            bridge already ended before the run opened. A bridge whose end
+            falls before the pension starts would never pay a cent, and is
+            refused by ``engine.scenario.schema.Person``, so this field is
+            never built for one — refused at ``load_scenario``, not here,
+            because it is a statement about a well-formed scenario rather
+            than about a state. A bridge ending in the *same* month the
+            pension starts is legal and pays for that one month.
         survivor_share: Fraction of the pension the survivor continues to
             receive after the member's death, ``[0, 1]``. Not per-path: a
             product term fixed by the pension's own rules, not something
@@ -952,6 +955,12 @@ class HouseholdState:
             ``spending_schedule`` directly rather than setting this field
             out of step with ``year``. Not per-path: a schedule input, not a
             simulated quantity.
+
+            **Recomputed by the year roll**, which is step 12 of
+            ``engine.core.step.advance_month`` and not ``open_year``: the
+            year changes as December's state is built, one call before
+            January's phases run, so a December step that rolled ``year``
+            without this could not construct its own return value.
         spending_survivor_share: Fraction of ``spending_monthly`` the
             survivor continues from the month after the first death.
         spending_achieved_ytd: What the household has actually spent so far

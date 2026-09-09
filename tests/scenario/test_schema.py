@@ -514,6 +514,17 @@ REJECTIONS = [
 
 ACCEPTANCES = [
     accepted(
+        # The boundary of the rule the rejection above tests. The person
+        # reaches 65 in 2031-03; starting the pension in that same month
+        # makes a one-month bridge, which is legal. Written as its own case
+        # because the rejection alone cannot tell `<` from `<=` — the
+        # example's own figures are strictly before, so both comparisons
+        # reject it and a widened rule would go unnoticed.
+        "a-bridge-ending-the-month-the-pension-starts",
+        sets("household.persons.0.db_pensions.0.bridge_annual", 8000),
+        sets("household.persons.0.db_pensions.0.start_month", 3),
+    ),
+    accepted(
         "a-taxable-holding-standing-at-a-loss",
         sets("household.persons.0.accounts.taxable.acb", 200000),
     ),

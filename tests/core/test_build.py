@@ -230,6 +230,38 @@ class TestAlreadyInProgress:
         assert band.from_month_index < 0
         assert band.to_month_index < 0
 
+    def test_a_bridge_that_pays_has_its_end_computed_from_the_birth_date(
+        self, scenario
+    ) -> None:
+        """The only birth-date arithmetic in the builder, and the only test that runs it.
+
+        Every other scenario here carries ``bridge_annual: 0``, so
+        ``bridge_end_month_index`` is ``None`` and ``_build_pension``'s age
+        branch executes nowhere — an error in the age-to-index conversion
+        would ship unnoticed. The example person reaches 65 in 2031-03, so
+        starting the pension in that same month is a legal one-month bridge;
+        ``tests/scenario/test_schema.py`` carries the matching acceptance
+        case proving a real YAML file can say this.
+        """
+        person_a = scenario.household.persons[0]
+        bridged = person_a.db_pensions[0].model_copy(
+            update={"bridge_annual": 8000.0, "start_month": 3}
+        )
+        new_person = person_a.model_copy(update={"db_pensions": (bridged,)})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        pension = build_initial_state(new_scenario, n_paths=N_PATHS).persons[0].pensions[0]
+
+        # Born 1966-03, bridging to 65: the bridge's last month is 2031-03.
+        assert pension.bridge_end_month_index == _month_offset(2026, 2031, 3)
+        assert pension.bridge_end_month_index == 62
+        assert pension.start_month_index == pension.bridge_end_month_index, (
+            "A bridge ending the month the pension starts is the boundary the "
+            "schema accepts; it pays for exactly that one month."
+        )
+        assert pension.bridge_monthly[0] == pytest.approx(8000.0 / 12.0)
+
     def test_pension_already_in_payment(self, scenario) -> None:
         person_a = scenario.household.persons[0]
         earlier_pension = person_a.db_pensions[0].model_copy(

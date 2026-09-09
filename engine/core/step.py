@@ -73,7 +73,12 @@ def advance_month(
        balance — compounding within the year is the point of stepping monthly.
     10. This month's income is added to the year-to-date ledger.
     11. If this is December, run :func:`close_year`.
-    12. The month advances, rolling the year over after December.
+    12. The month advances, rolling the year over after December. The roll
+        recomputes ``spending_monthly`` from ``spending_schedule`` for the
+        new year: ``HouseholdState`` refuses a state whose two disagree, so
+        this is not optional and it cannot be deferred to ``open_year`` —
+        the new year's state is constructed here, one call before January's
+        phases run.
 
     Args:
         state: Opening state for ``state.year``/``state.month``.
