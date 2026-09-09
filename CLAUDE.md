@@ -68,6 +68,25 @@
 - Do not refactor code outside the module you were asked to change.
 - Do not add dependencies without asking.
 
+## Doing the work on an issue
+- When I ask for work on an issue, the default is that you dispatch the
+  `implementer` agent to write it and then the `verifier` agent to review it.
+  Do it yourself only when I say so. The patches come out better this way: the
+  main thread stays free to hold the design and to argue with the review,
+  instead of also being the hand that types.
+- This is a standing authorisation that overrides the general instruction not
+  to reach for subagents. It covers these two agents, on issue work, and
+  nothing else.
+- Resolve the design gaps BEFORE dispatching. The implementer does not design
+  and must not improvise: an issue that leaves a field list, a sentinel, a
+  signature, or a default open is a decision for the two of us, and the
+  implementer receives it already made, in writing. Report those decisions to
+  me as a numbered list.
+- The verifier runs after the implementer has finished, never alongside it. A
+  review of a half-written tree reports the race rather than the code.
+- Neither agent commits and neither closes an issue. You commit after the
+  review, once I have seen it.
+
 ## Issues
 - You may read and comment on GitHub issues via `gh`.
 - You may NEVER close an issue. Only the human closes issues, after
