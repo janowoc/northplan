@@ -63,14 +63,24 @@ Review in this order, and grep aggressively rather than trusting a read:
    - Real vs nominal dollars. Percent vs basis points vs a bare fraction.
    - Calendar year vs benefit year vs income year vs tax year. Age in years vs
      months; age at start of year vs end of year vs the current month.
-   - **Indexation applied twice, or not at all.** Benefit functions return
-     published amounts; `engine.core.indexation.real_factor` is the constant
-     they are multiplied by, applied once, by the step. Applying it inside a
-     benefit function *and* in the step double-counts it; omitting it entirely
-     overstates every indexed benefit slightly and forever. The factor does not
-     depend on the month — anything that recomputes it per month, or threads an
-     adjustment calendar through the loop, has reintroduced a model that was
-     deliberately removed.
+   - **Indexation applied twice, not at all, or from the wrong side.** A
+     dollar amount reaches the engine through
+     `engine.core.indexation.RealParamSet`, whose `amount`/`amounts` already
+     apply the deflation. Its undeflated accessors — `number`, `numbers`,
+     `get`, `sequence`, `has` — refuse a path that any schedule routes, so a
+     call site that multiplies by a factor of its own is either double-counting
+     or has gone around the guarantee. Flag any hand-applied factor on a figure
+     that came from `RealParamSet`.
+   - `erosion_factor(inflation_rate, adjustments_per_year)` is the constant for
+     an amount that IS indexed; `unindexed_factor(inflation_rate, month_index)`
+     is for one fixed in nominal terms by statute. Note the asymmetry: the
+     first does not depend on the month and the second must. A per-month
+     recomputation of the erosion factor, or an adjustment calendar threaded
+     through the loop, has reintroduced a model that was deliberately removed;
+     an unindexed amount that does NOT vary with `month_index` has silently
+     stopped decaying, which overstates it without limit.
+   - There is no `real_factor`. Issue 8 deleted it along with its `lag_months`
+     argument; a reference to either is stale.
 4. **Ordering errors in the loop, within a month and across month
    boundaries.** The order within a month is fixed in `advance_month`'s
    docstring; the January, December, and filing-month phases are fixed in
