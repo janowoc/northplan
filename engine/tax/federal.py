@@ -50,7 +50,11 @@ def net_income(
     gross_income: ArrayLike,
     deductions: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Net income (line 23600), the base for income-tested benefits.
+    """Net income (line 23400), the base for income-tested amounts.
+
+    Line 23400 is net income *before* adjustments; line 23600 subtracts the
+    social benefits repayment from it. This engine computes only the first and
+    tests everything against it (L49).
 
     Distinct from :func:`taxable_income`, which subtracts further amounts. The
     OAS repayment is assessed on net income, so keeping the two apart matters —

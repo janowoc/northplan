@@ -149,6 +149,23 @@ deductions. We take RRSP contributions and the enhanced CPP contribution as
 the only deductions, so the two coincide, and net income for the OAS
 repayment and the age amount includes OAS itself as the rules require.
 
+**L49. One net income figure, not two.** In reality the OAS repayment is tested
+against line 23400, net income *before* adjustments, while the age amount and
+the RESP enhanced-grant rate use line 23600, which subtracts line 23500 — the
+social benefits repayment: EI benefits repaid, the OAS repayment itself, and
+net federal supplements. We compute one figure per person per year, total
+income less deductions, and test everything against it. That figure is line
+23400: nothing is ever subtracted back out of it. Of the three components of
+line 23500 only the OAS repayment can be non-zero in this engine — EI is
+carried as premiums paid and never as benefits received (L39), and net federal
+supplements are GIS and the Allowances, which are not modelled (L2) — so the
+two lines differ by the repayment alone, and only for a person who owes one.
+Direction: pessimistic for that person, whose age amount and enhanced-grant
+rate are tested against an income higher than the statutory one by the amount
+of the repayment. Taking line 23600 as the single figure instead would be the
+worse error, since the repayment would then reduce the base it is computed
+from. Lives in `engine/tax/federal.py`.
+
 **L15. Pension income splitting.** Modelled to the federal rule: DB pension
 income at any age, RRIF and LIF income from the year the transferor is 65 at
 year end, up to the statutory share, elected once at the December close to
