@@ -33,7 +33,7 @@ issues hold the specifications.
 | 16 | Benefits and income: CPP, OAS, DB pension, employment, GIS metric | agent | 6, 8, 11, 14 | structural tests pass; refusal gone |
 | 17 | Golden benefit cases from published tables | human | 3, 16 | cases pass or bugs filed |
 | 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11 | every annual limit year-to-date aware |
-| 19 | The month step and the loop to second death | agent | 12, 13, 14, 16, 18 | cash identity holds every month |
+| 19 | The month step and the loop to second death | agent | 12, 13, 14, 16, 18, 29 | cash identity holds every month |
 | 20 | Contribution and withdrawal policies, elections, grid | agent | 19 | bracket filled once per year; no clairvoyance |
 | 21 | Spreadsheet verification of the deterministic path | human | 20 | snapshot authorised |
 | 22 | Objectives, search, and the RESP oracle test | agent | 20 | oracle test passes |
@@ -43,6 +43,7 @@ issues hold the specifications.
 | 26 | Copyright and licence headers on every source file | agent | — | every source file carries an SPDX header; ruff and a test enforce it |
 | 27 | Shape check for mortality tables: fall to a trough, then rise | agent | 4, 5 | a transposed q(x) fails; the boxed warning in both files is narrowed |
 | 28 | Extend the placeholder-marker check to the province template | agent | — | an unmarked number in either template fails |
+| 29 | `Assumptions` to covariance, and attainability checked at load | agent | 10, 13 | an unrealisable correlation is refused at load, naming the classes |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -69,6 +70,20 @@ a human how much of a template is left to fill, so an uncounted placeholder is
 the failure the workflow exists to prevent. The equivalent test already exists
 for the mortality template; this generalizes it. It touches no file under
 `params/` and needs no authorisation there.
+
+Issue 29 came out of reviewing issue 13. The moment matching that turns annual
+assumptions into a monthly distribution can take a correlation matrix that is
+perfectly valid — symmetric, unit diagonal, non-negative eigenvalues — and
+produce one no lognormal realises; two classes at 5% volatility with a
+correlation of -1 are enough. `engine/mc/returns.py` refuses those inputs, but
+only at draw time, so the error lands a long way from the scenario file that
+caused it. Moving the check to load needs something that builds a covariance
+matrix out of `Assumptions`, and nothing does. It sits before 19 rather than
+after because 19 would otherwise build that piece inline, and it carries a
+layering decision — where the shared algebra lives, so that `engine/scenario/`
+need not import `engine/mc/` — that does not belong inside the month step.
+Both ends of the interface are already fixed, by 10 and by 13, so the builder
+is a segment between two pinned endpoints rather than a speculative design.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
