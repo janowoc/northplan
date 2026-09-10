@@ -16,16 +16,24 @@
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/benefits/oas.py, engine/benefits/gis.py
+# Read by: engine/benefits/oas.py, engine/benefits/gis.py,
+#          engine/tax/combined.py (recovery_tax) — issue 14 adds oas_repayment, no module yet
 #
 # Ages are in MONTHS — the deferral increment is per month, and the age band
 # step-up happens in the month the threshold is reached.
 
 # --- Benefit year -----------------------------------------------------------
-# The single most error-prone rule in this domain. A benefit period beginning
-# in start_month of year Y is assessed against net income from year
-# Y + income_year_offset. That assignment holds for the twelve months from
-# start_month of Y, so it CHANGES PARTWAY THROUGH a calendar year.
+# Read by no module today. The OAS repayment does NOT use this block: it is a
+# line on the current year's return, assessed once at the December close on
+# that year's net income — which includes the OAS received in the same year —
+# and capped at that OAS (L23). OAS is paid gross every month.
+#
+# The block is here for a future GIS implementation, which genuinely is
+# assessed over a July-to-June benefit period against an earlier year's
+# income: a period beginning in start_month of year Y is assessed against net
+# income from year Y + income_year_offset, so the governing income year
+# changes partway through a calendar year. Until GIS is modelled (L2) these
+# keys are recorded and unread.
 
 benefit_year:
   start_month: 7                     # month the benefit year begins (July)
@@ -87,8 +95,10 @@ pension:
       maximum_monthly: 827.17
 
 # --- Recovery tax (clawback) ------------------------------------------------
-# Threshold and rate are ANNUAL quantities. engine/benefits/oas.py converts to
-# a monthly withholding once, in recovery_tax_monthly. Do not pre-divide.
+# Threshold and rate are ANNUAL quantities, read at the December close by
+# engine/tax/combined.py::oas_repayment. Do not pre-divide: the repayment is
+# assessed once on the year's net income and is never withheld from a monthly
+# payment (L16, L23).
 # 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html
 
 recovery_tax:
@@ -97,14 +107,16 @@ recovery_tax:
 
 # --- GIS --------------------------------------------------------------------
 # Read by engine/benefits/gis.py. Non-taxable, and reduced against a different
-# income base than the recovery tax uses.
+# income base than the recovery tax uses — the testable basis is combined
+# across a couple and is not net income.
 
 gis:
   modelled: false
-  # Not a GIS calculation. A tripwire: if projected testable income falls
-  # below these, GIS would materially change the answer and this engine
-  # cannot say how. Set BELOW the published cutoffs on purpose — being
-  # conservative here only widens the reporting band.
+  # Not a GIS calculation. These bound the reporting band: the engine reports
+  # the fraction of path-years in which a living pensioner's projected
+  # testable income sits inside them, so a plan leaning on unmodelled GIS is
+  # visible rather than silent (L2). Set BELOW the published cutoffs on
+  # purpose — erring low widens the band, which is the safe direction.
   band_thresholds:
     single_testable_income_annual: 22800
     couple_combined_testable_income_annual: 42144

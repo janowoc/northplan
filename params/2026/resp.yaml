@@ -112,8 +112,10 @@ grant:
 
     # Which calendar year's family income governs the rate. Added to the
     # current year, so -1 means "last year's income". Statutory, and read
-    # rather than assumed for the same reason the OAS recovery tax reaches back:
-    # guessing the current year overstates the grant for a household whose income is rising.
+    # rather than assumed: guessing the current year overstates the grant for
+    # a household whose income is rising and understates it for one drawing
+    # down. The reach-back is the RESP's own rule — the OAS repayment does not
+    # reach back, it is assessed on the current year (L23).
     income_year_offset: -1
 
     # Whose income counts. The rate is set by FAMILY income, not the
