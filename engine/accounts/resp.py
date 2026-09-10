@@ -83,11 +83,13 @@ def enhanced_grant_rate(
             Which year governs is a statutory rule, not this function's guess:
             the offset is in ``params`` under
             ``grant.enhanced.income_year_offset`` and is applied by the caller,
-            the way the OAS recovery tax reaches back through
-            ``engine.core.timeline.benefit_year_income_year``. Passing the
-            current year's income when the rule says otherwise overstates the
-            grant for a household whose income is rising, and understates it
-            for one drawing down.
+            the way the OAS recovery tax reaches back through the benefit-year
+            rule in ``params/<year>/oas.yaml`` —
+            ``benefit_year.start_month`` and
+            ``benefit_year.income_year_offset`` — applied by
+            ``engine/benefits/oas.py``. Passing the current year's income when
+            the rule says otherwise overstates the grant for a household whose
+            income is rising, and understates it for one drawing down.
         params: The ``resp`` parameter set.
 
     Returns:

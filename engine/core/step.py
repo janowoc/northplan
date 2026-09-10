@@ -148,8 +148,9 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
     3. Tax is assessed on the full year's accumulated income — one assessment,
        on twelve months of accrued income, using this year's brackets. The OAS
        recovery tax within it is computed against the net income of the year
-       :func:`engine.core.timeline.benefit_year_income_year` names, not this
-       year's.
+       named by the benefit-year rule in ``params/<year>/oas.yaml`` —
+       ``benefit_year.start_month`` and ``benefit_year.income_year_offset`` —
+       applied by ``engine/benefits/oas.py``, not this year's.
     4. Pension income splitting is elected for the year, jointly across the
        household. It is a year-end election and cannot be made monthly.
     5. The assessment less ``remitted_ytd`` becomes ``balance_owing``, payable

@@ -58,8 +58,10 @@ def net_income(
 
     The result outlives the year that produced it. It is stored in
     ``PersonState.prior_year_net_income`` and read back one or two years later,
-    when the benefit period it governs comes around; see
-    ``engine.core.timeline.benefit_year_income_year``.
+    when the benefit period it governs comes around; see the benefit-year rule
+    in ``params/<year>/oas.yaml`` — ``benefit_year.start_month`` and
+    ``benefit_year.income_year_offset`` — applied by
+    ``engine/benefits/oas.py``.
 
     Args:
         gross_income: All income sources for the full calendar year, summed,

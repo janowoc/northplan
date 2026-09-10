@@ -16,8 +16,8 @@ and must not become one.
 ``timeline`` owns month and age arithmetic. ``indexation`` owns the real-terms
 decay that periodic indexation produces once the timestep is shorter than the
 indexation period, and the real-terms parameter view that is the only route
-from a dollar in ``params/`` to the engine. ``state`` is what passes between
-months.
+from a dollar in ``params/`` to the engine. ``mortality`` owns the survival
+curve and the per-path death draw. ``state`` is what passes between months.
 
 All amounts are real dollars. All arrays are shape ``(n_paths,)``.
 """

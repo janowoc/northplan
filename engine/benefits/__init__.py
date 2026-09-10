@@ -22,9 +22,10 @@ is now wrong by a factor of twelve.
 recovery tax and GIS are assessed over a benefit period running from a
 statutory month of year Y to the month before it in year Y+1, against net
 income from an *earlier* calendar year. A function that takes a year documents
-which year it means, and the mapping between them is
-``engine.core.timeline.benefit_year_income_year`` — not something a caller
-works out for itself.
+which year it means, and the mapping between them is the benefit-year rule in
+``params/<year>/oas.yaml`` — ``benefit_year.start_month`` and
+``benefit_year.income_year_offset`` — applied by ``engine/benefits/oas.py``,
+not something a caller works out for itself.
 
 **Indexation costs a constant, and the constant is not one.** OAS and GIS are
 adjusted quarterly; CPP is adjusted annually. Between adjustments the amount is

@@ -10,9 +10,10 @@ recovery tax for a benefit period beginning in a statutory month of year Y is
 assessed on net income from calendar year Y-1.** Assessing it against the
 current year's income overstates the clawback for someone whose income is
 rising and understates it for someone drawing down. Every function here takes
-the income year explicitly for that reason, and
-``engine.core.timeline.benefit_year_income_year`` is what works out which year
-that is for a given month.
+the income year explicitly for that reason, and the benefit-year rule in
+``params/<year>/oas.yaml`` — ``benefit_year.start_month`` and
+``benefit_year.income_year_offset`` — applied by this module is what works
+out which year that is for a given month.
 
 The monthly timestep makes the benefit period visible rather than notional. The
 recovery tax is withheld from each monthly payment across the period, and the
@@ -92,13 +93,14 @@ def recovery_tax_monthly(
 
     Args:
         income_year_net_income: Net income from the calendar year that governs
-            the benefit period this month falls in — from
-            ``engine.core.timeline.benefit_year_income_year``, and stored in
-            ``PersonState.prior_year_net_income``. Passing the current year's
-            income here is a correctness bug, not an approximation. So is
-            passing the income year that governed the *previous* benefit
-            period, which is what happens if the mid-year changeover is
-            missed.
+            the benefit period this month falls in — from the benefit-year
+            rule in ``params/<year>/oas.yaml`` — ``benefit_year.start_month``
+            and ``benefit_year.income_year_offset`` — applied by this module,
+            and stored in ``PersonState.prior_year_net_income``. Passing the
+            current year's income here is a correctness bug, not an
+            approximation. So is passing the income year that governed the
+            *previous* benefit period, which is what happens if the mid-year
+            changeover is missed.
         gross_oas_monthly: Output of :func:`gross_pension_monthly`; the
             recovery tax cannot exceed it.
         params: The ``oas`` parameter set, supplying the annual threshold and

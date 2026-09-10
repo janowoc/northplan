@@ -327,10 +327,12 @@ def _build_pension(
     bridge_end_month_index = None
     if pension.bridge_annual > 0.0:
         # bridge_to_age_years is required whenever bridge_annual > 0 (schema
-        # validator), so this is safe. The age-to-month-index conversion is
-        # the same arithmetic engine.core.timeline will own once issue 12
-        # lands; anticipated here only for this one field. That the bridge
-        # does not end before the pension starts is guaranteed by
+        # validator), so this is safe. The age-to-month-index conversion stays
+        # here rather than moving to engine.core.timeline: _month_offset is
+        # deliberately a different, permanent function from
+        # engine.core.timeline.month_index, and this is one more caller of it,
+        # not a reason to grow a second helper. That the bridge does not end
+        # before the pension starts is guaranteed by
         # engine.scenario.schema.Person, so it is not re-checked here.
         target_year = person.birth_year + pension.bridge_to_age_years
         bridge_end_month_index = _month_offset(start_year, target_year, person.birth_month)

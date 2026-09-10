@@ -1049,6 +1049,48 @@ class Scenario(_Base):
         return self
 
     @model_validator(mode="after")
+    def _check_no_one_is_born_after_the_run_opens(self) -> Self:
+        """A birth date after the run opens is refused, not silently mishandled.
+
+        The run opens on 1 January of ``start_year`` — month index 0 — and
+        every age the engine derives assumes the birth already happened by
+        then. ``engine.core.timeline.age_in_months`` promises a non-negative
+        result but does not enforce it: a person born in March of
+        ``start_year``, say, would be -2 months old at month index 0, and the
+        failure would arrive many steps downstream as a missing life-table row
+        rather than as a rejected scenario. Refusing it here, where the whole
+        document is validated, is where a malformed *scenario* belongs; see
+        ``docs/limitations.md`` L48.
+
+        The boundary is 1 January itself: a birth in January of ``start_year``
+        is already legal (age zero months at month index 0), so the admissible
+        condition is ``(birth_year, birth_month) <= (start_year, 1)``.
+
+        A mid-run birth is a case we would plausibly want later — an RESP
+        beneficiary a scenario states as "born in 2030" — so this is a
+        deliberate narrowing, recorded as L48, not an oversight left for later.
+        """
+        boundary = (self.start_year, 1)
+        for person in self.household.persons:
+            if (person.birth_year, person.birth_month) > boundary:
+                raise ValueError(
+                    f"household.persons: {person.id!r} is born "
+                    f"{person.birth_year}-{person.birth_month:02d}, after the "
+                    f"run opens on 1 January {self.start_year}. A birth after "
+                    "the run opens is not modelled (docs/limitations.md L48)."
+                )
+        for beneficiary in self.household.beneficiaries:
+            if (beneficiary.birth_year, beneficiary.birth_month) > boundary:
+                raise ValueError(
+                    f"household.beneficiaries: {beneficiary.id!r} is born "
+                    f"{beneficiary.birth_year}-{beneficiary.birth_month:02d}, "
+                    f"after the run opens on 1 January {self.start_year}. A "
+                    "birth after the run opens is not modelled "
+                    "(docs/limitations.md L48)."
+                )
+        return self
+
+    @model_validator(mode="after")
     def _check_policy_names_unique(self) -> Self:
         names = [policy.name for policy in self.policies]
         duplicated = sorted({name for name in names if names.count(name) > 1})

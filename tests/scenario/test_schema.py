@@ -169,6 +169,18 @@ REJECTIONS = [
         "province",
         sets("household.province", "alberta"),
     ),
+    rejected(
+        "a-person-born-after-the-run-opens",
+        "household.persons",
+        sets("household.persons.0.birth_year", 2026),
+        sets("household.persons.0.birth_month", 3),
+    ),
+    rejected(
+        "a-beneficiary-born-after-the-run-opens",
+        "household.beneficiaries",
+        sets("household.beneficiaries.0.birth_year", 2026),
+        sets("household.beneficiaries.0.birth_month", 3),
+    ),
     # --- CPP entitlement ----------------------------------------------------
     rejected(
         "cpp-given-both-ways",
@@ -583,6 +595,17 @@ ACCEPTANCES = [
     accepted(
         "a-single-life-pension",
         sets("household.persons.0.db_pensions.0.survivor_share", 0.0),
+    ),
+    accepted(
+        # The boundary of the rule the two rejections above test. A birth on
+        # 1 January of start_year is age zero months at month index 0, which
+        # is legal, and the rejection cases alone cannot tell `<=` from `<`:
+        # their birth month (March) is already past the boundary, so a
+        # narrower rule that rejected January too would go unnoticed without
+        # this case.
+        "a-person-born-in-january-of-the-start-year",
+        sets("household.persons.0.birth_year", 2026),
+        sets("household.persons.0.birth_month", 1),
     ),
 ]
 

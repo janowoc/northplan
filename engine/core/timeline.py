@@ -48,25 +48,50 @@ def month_index(year: int, month: int, base_year: int) -> int:
         ValueError: If ``month`` is outside ``1..12``, or the result is
             negative.
     """
-    raise NotImplementedError
+    if not 1 <= month <= MONTHS_PER_YEAR:
+        raise ValueError(f"month must be in 1..{MONTHS_PER_YEAR}, got {month!r}.")
+    index = (year - base_year) * MONTHS_PER_YEAR + (month - 1)
+    if index < 0:
+        raise ValueError(
+            f"month_index would be negative for year={year!r}, month={month!r}, "
+            f"base_year={base_year!r}: got {index!r}. month_index has no negative "
+            f"rows; a date before the run's opening belongs to "
+            f"engine.core.build._month_offset instead."
+        )
+    return index
 
 
 def year_month(index: int, base_year: int) -> tuple[int, int]:
-    """Inverse of :func:`month_index`.
+    """Calendar date ``index`` months after January of ``base_year``.
+
+    Defined on every integer ``index``, not only the non-negative ones
+    :func:`month_index` produces: it is the inverse of :func:`month_index`
+    only on that non-negative half, where ``month_index`` has no negative
+    rows to be the inverse of. A negative ``index`` is deliberately still
+    answered rather than rejected, because it is the ordinary convention
+    ``engine/core/state.py`` documents for a month index that predates the
+    run — a pension already in payment, a bridge that already ended, an
+    employment band begun years earlier — and those states need a way back
+    to a calendar date as much as an ordinary one does.
 
     Args:
-        index: Zero-based month index.
+        index: Month index, zero in January of ``base_year``. May be
+            negative.
         base_year: The simulation's first calendar year.
 
     Returns:
         ``(year, month)`` with ``month`` in ``1..12``.
     """
-    raise NotImplementedError
+    year = base_year + index // MONTHS_PER_YEAR
+    month = index % MONTHS_PER_YEAR + 1
+    return year, month
 
 
 def next_month(year: int, month: int) -> tuple[int, int]:
     """The month after ``(year, month)``, rolling the year over at December."""
-    raise NotImplementedError
+    if month == MONTHS_PER_YEAR:
+        return year + 1, 1
+    return year, month + 1
 
 
 def age_in_months(
@@ -91,7 +116,7 @@ def age_in_months(
     Returns:
         Age in whole months, non-negative.
     """
-    raise NotImplementedError
+    return (year - birth_year) * MONTHS_PER_YEAR + (month - birth_month)
 
 
 def age_in_years(
@@ -108,7 +133,7 @@ def age_in_years(
     two have their own helpers below precisely so a call site has to say which
     it means.
     """
-    raise NotImplementedError
+    return age_in_months(birth_year, birth_month, year, month) // MONTHS_PER_YEAR
 
 
 def age_at_start_of_year(birth_year: int, birth_month: int, year: int) -> int:
@@ -118,7 +143,7 @@ def age_at_start_of_year(birth_year: int, birth_month: int, year: int) -> int:
     calendar year, which is why the factor can be resolved once in January and
     reused for the eleven months that follow.
     """
-    raise NotImplementedError
+    return age_in_years(birth_year, birth_month, year, 1)
 
 
 def age_at_end_of_year(birth_year: int, birth_month: int, year: int) -> int:
@@ -127,17 +152,17 @@ def age_at_end_of_year(birth_year: int, birth_month: int, year: int) -> int:
     The age several non-refundable credits are tested against, and the age that
     determines the year an RRSP must be converted to a RRIF.
     """
-    raise NotImplementedError
+    return age_in_years(birth_year, birth_month, year, MONTHS_PER_YEAR)
 
 
 def is_year_end(month: int) -> bool:
     """Whether this month closes the tax year, triggering the annual assessment."""
-    raise NotImplementedError
+    return month == MONTHS_PER_YEAR
 
 
 def is_year_start(month: int) -> bool:
     """Whether this month opens the tax year, granting room and fixing minimums."""
-    raise NotImplementedError
+    return month == 1
 
 
 def is_filing_month(month: int, params: ParamSet) -> bool:
@@ -153,27 +178,4 @@ def is_filing_month(month: int, params: ParamSet) -> bool:
     Returns:
         True in the month the prior year's balance is settled.
     """
-    raise NotImplementedError
-
-
-def benefit_year_income_year(year: int, month: int, params: ParamSet) -> int:
-    """The calendar year whose net income governs benefits paid in this month.
-
-    The OAS recovery tax and GIS are assessed over a benefit period that does
-    not align with the calendar year, against income from a year that is not
-    the current one. For a benefit period beginning in July of year Y, the
-    income year is Y-1, and that assignment holds for the months from July of Y
-    through June of Y+1. Getting this off by one year is the single most common
-    error in this domain, which is why no caller is allowed to work it out for
-    itself.
-
-    Args:
-        year: Current calendar year.
-        month: Current month, ``1..12``.
-        params: The ``oas`` parameter set, supplying the month the benefit year
-            starts and the income-year offset.
-
-    Returns:
-        The calendar year to take net income from.
-    """
-    raise NotImplementedError
+    return month == int(params.number("filing_month"))

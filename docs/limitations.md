@@ -318,6 +318,16 @@ charitable bequests, graduated-rate estates.
 cannot be restored to zero. A locked-in balance capped by the LIF maximum may
 remain in a depleted path.
 
+**L48. No birth after the run opens.** In reality a household can plan for a
+child not yet born — an RESP beneficiary a scenario states as "assume a child
+born in 2030" is the case we would plausibly want. We refuse any person or
+beneficiary whose birth date falls after 1 January of `start_year`: every age
+the engine derives assumes the birth already happened by the run's opening,
+and a birth after it would be a negative age with no meaning to give it.
+Direction: neither optimistic nor conservative — a refused scenario produces
+no wrong number at all, so the cost is expressiveness, not accuracy. Lives in
+`engine/scenario/schema.py::Scenario._check_no_one_is_born_after_the_run_opens`.
+
 ## Policies and search
 
 **L44. Policies.** The first version offers one contribution rule (fixed
