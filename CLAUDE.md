@@ -86,6 +86,11 @@
   review of a half-written tree reports the race rather than the code.
 - Neither agent commits and neither closes an issue. You commit after the
   review, once I have seen it.
+- Name the issue in the commit message: a `Refs #12` line of its own, after
+  the body and before the attribution lines. `Refs`, never `Closes`, `Fixes`,
+  or `Resolves` — those close the issue when the commit reaches the default
+  branch, and closing an issue is mine alone. A commit that serves two issues
+  names both.
 
 ## Issues
 - You may read and comment on GitHub issues via `gh`.
