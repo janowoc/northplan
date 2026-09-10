@@ -92,6 +92,8 @@
   signature, or a default open is a decision for the two of us, and the
   implementer receives it already made, in writing. Report those decisions to
   me as a numbered list.
+- The brief carries the issue's comment content the agent needs. A subagent
+  reads what you hand it, not the issue.
 - The verifier runs after the implementer has finished, never alongside it. A
   review of a half-written tree reports the race rather than the code.
 - Neither agent commits and neither closes an issue. You commit after the
@@ -104,5 +106,10 @@
 
 ## Issues
 - You may read and comment on GitHub issues via `gh`.
+- Read an issue's comments, not just its description:
+  `gh issue view <n> --comments`. Plain `gh issue view` prints the body and a
+  `comments: <count>` header line, never the comment bodies. Amendments and
+  decisions from review land in comments, so an issue read without them is the
+  issue as it stood before the review that changed it.
 - You may NEVER close an issue. Only the human closes issues, after
   verifying the output.
