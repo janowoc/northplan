@@ -63,6 +63,16 @@
   parameters. Year to date is knowable; the year's total is not.
 - `engine/` never imports `api`, `fastapi`, `cli`, `starlette`, or `uvicorn`.
 
+## Docstrings
+- A docstring states the contract: what the function takes and in what
+  units, what it returns, what it raises, the shape convention, and the one
+  non-obvious decision a caller must know to use it correctly. A module
+  docstring says what the module owns and its invariants.
+- The rationale, the alternatives rejected, and the review history go in the
+  commit message, not the docstring. A reader who wants the argument runs
+  `git log -p`. As a rule of thumb a function docstring fits in twenty-five
+  lines and a module docstring in forty.
+
 ## Scope of a change
 - One logical change per commit. Conventional commit messages.
 - Do not refactor code outside the module you were asked to change.

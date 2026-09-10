@@ -32,18 +32,25 @@ issues hold the specifications.
 | 15 | Golden tax cases from an external calculator | human | 3, 14 | cases pass or bugs filed |
 | 16 | Benefits and income: CPP, OAS, DB pension, employment, GIS metric | agent | 6, 8, 11, 14 | structural tests pass; refusal gone |
 | 17 | Golden benefit cases from published tables | human | 3, 16 | cases pass or bugs filed |
-| 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11 | every annual limit year-to-date aware |
-| 19 | The month step and the loop to second death | agent | 12, 13, 14, 16, 18, 29 | cash identity holds every month |
-| 20 | Contribution and withdrawal policies, elections, grid | agent | 19 | bracket filled once per year; no clairvoyance |
-| 21 | Spreadsheet verification of the deterministic path | human | 20 | snapshot authorised |
-| 22 | Objectives, search, and the RESP oracle test | agent | 20 | oracle test passes |
+| 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11, 29, 32, 33 | every annual limit year-to-date aware |
+| 19 | The month body and the run loop (month step, part one) | agent | 12, 13, 14, 16, 18, 29, 33, 34 | cash identity holds every month |
+| 20 | Contribution and withdrawal policies, elections, grid | agent | 19, 36 | bracket filled once per year; no clairvoyance |
+| 21 | Spreadsheet verification of the deterministic path | human | 20, 36 | snapshot authorised |
+| 22 | Objectives, search, and the RESP oracle test | agent | 20, 36 | oracle test passes |
 | 23 | Command line | agent | 22 | example runs end to end; `ARG001` ignore removed |
 | 24 | API and web page | agent | 23 | chart renders for the example |
 | 25 | Derive golden tolerance from a declared rounding | agent | 3 | no numeric tolerance field remains |
 | 26 | Copyright and licence headers on every source file | agent | — | every source file carries an SPDX header; ruff and a test enforce it |
 | 27 | Shape check for mortality tables: fall to a trough, then rise | agent | 4, 5 | a transposed q(x) fails; the boxed warning in both files is narrowed |
 | 28 | Extend the placeholder-marker check to the province template | agent | — | an unmarked number in either template fails |
-| 29 | `Assumptions` to covariance, and attainability checked at load | agent | 10, 13 | an unrealisable correlation is refused at load, naming the classes |
+| 29 | `Assumptions` to covariance, attainability at load, and `MarketInputs` | agent | 10, 13, 33 | an unrealisable correlation is refused at load, naming the classes; the step reads weights and yields from one object |
+| 30 | Purge the prior-year OAS assessment from docstrings, the verifier prompt, and L46 | agent | — | no docstring or prompt describes a prior-year repayment |
+| 31 | oas.yaml comments: benefit-year block, recovery tax, and the GIS band | human | — | comment lines only; the file parses unchanged |
+| 32 | `annual_amount` on the real-terms view; golden cases reach it at a stated inflation | agent | 8 | annual amounts decay to January then erode; a case states its rate |
+| 33 | Scenario and state amendments: household cash, prior-year income, OAS in pay, LIRA/LIF split | agent | 11, 30, 32 | example loads with the new fields; no per-person cash remains |
+| 34 | Trim existing docstrings to the contract | agent | 29, 33 | no docstring exceeds the CLAUDE.md rule of thumb; no code changes |
+| 35 | The December close and the filing-month settlement (month step, part two) | agent | 19 | tax for Y leaves in April of Y+1, net of what was remitted |
+| 36 | Death, the terminal return, and the result object (month step, part three) | agent | 35 | estate after tax finite after the second death, NaN before |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -84,6 +91,22 @@ layering decision — where the shared algebra lives, so that `engine/scenario/`
 need not import `engine/mc/` — that does not belong inside the month step.
 Both ends of the interface are already fixed, by 10 and by 13, so the builder
 is a segment between two pinned endpoints rather than a speculative design.
+
+Midpoint review, 2026-09-10. Issues 1 to 13 and 25 to 28 were reviewed
+together before the tax engine started. Seven issues came out of it, and six
+open issues carry an amendments section dated the same day. The order from
+here is 30, 32, 33, 29, 34, then 14 onward, with 31 for the human at any time.
+30 removes the prior-year OAS assessment that issue 12's docstring rewrite
+re-entrenched, and must land before anyone reads those files to implement 14
+or 16. 32 and 33 settle four shapes the engine issues would otherwise each
+decide alone: how an annual unindexed amount is read, one household cash
+balance, a required prior-year income, OAS in pay, and locked-in accounts
+split like RRSP and RRIF. 29 follows 33 because the account kinds it resolves
+weights for are 33's, and precedes 18 because 18 reads yields and weights
+from the object it builds. 34 goes last before 14 because it touches every
+engine file and wants no concurrent work. Issue 19 was split into three: the
+month body and the loop, then the December close and settlement (35), then
+death and the result object (36); 20, 21 and 22 now wait on 36.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
