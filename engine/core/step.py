@@ -147,17 +147,17 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        becomes a RRIF, effective for next January's minimum.
     3. Tax is assessed on the full year's accumulated income — one assessment,
        on twelve months of accrued income, using this year's brackets. The OAS
-       recovery tax within it is computed against the net income of the year
-       named by the benefit-year rule in ``params/<year>/oas.yaml`` —
-       ``benefit_year.start_month`` and ``benefit_year.income_year_offset`` —
-       applied by ``engine/benefits/oas.py``, not this year's.
+       repayment is a line within it, computed on *this* year's net income,
+       which includes this year's OAS, and capped at the OAS received this
+       year.
     4. Pension income splitting is elected for the year, jointly across the
        household. It is a year-end election and cannot be made monthly.
     5. The assessment less ``remitted_ytd`` becomes ``balance_owing``, payable
        in next year's filing month. A negative balance is a refund and is
        received in that same month, not immediately.
-    6. This year's net income is stored in ``prior_year_net_income`` for the
-       benefit years that will be assessed against it.
+    6. This year's net income is stored in ``prior_year_net_income``, which
+       next year's RESP enhanced-grant rate reads. The OAS repayment does not:
+       it is assessed on the current year, in item 3.
     7. The year is appended to ``history``.
 
     Args:

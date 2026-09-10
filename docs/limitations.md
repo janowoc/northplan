@@ -51,13 +51,16 @@ tax year is partly complete. We start every simulation on 1 January of the
 scenario's start year with balances as at that date, and model no income
 earned earlier in that year. Lives in `engine/scenario/`.
 
-**L46. Opening `prior_year_net_income`.** In reality the OAS recovery tax,
-and anything else assessed on an earlier year's net income, is computed from
-a real figure carried forward from before the plan was drawn up. A scenario
-carries no income history from before the run, so for the benefit months
-whose governing income year precedes the run we compute the recovery tax from
-zero instead. Direction: optimistic — it understates the recovery tax at the
-start of the run. Lives in `engine/core/build.py`.
+**L46. Opening `prior_year_net_income`.** In reality anything assessed on an
+earlier year's net income is computed from a real figure carried forward from
+before the plan was drawn up. A scenario carries no income history from before
+the run, so the field opens at zero. Its one consumer is the RESP
+enhanced-grant rate; the OAS repayment is assessed on the current year and does
+not read it, and the GIS band indicator uses a different income basis.
+Direction: optimistic — a lower family income buys a higher match rate, so the
+enhanced grant is overstated in the first year of the run. Lives in
+`engine/core/build.py`. Issue 33 replaces this entry when the opening value
+becomes a scenario input.
 
 **L5. Real dollars are January dollars of the start year.** All amounts in a
 scenario are stated in the purchasing power of January of the start year, and

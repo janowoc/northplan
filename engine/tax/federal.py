@@ -52,16 +52,17 @@ def net_income(
 ) -> NDArray[np.float64]:
     """Net income (line 23600), the base for income-tested benefits.
 
-    Distinct from :func:`taxable_income`, which subtracts further amounts.
-    OAS recovery tax and GIS are assessed on net income, so keeping the two
-    apart matters — conflating them understates the clawback.
+    Distinct from :func:`taxable_income`, which subtracts further amounts. The
+    OAS repayment is assessed on net income, so keeping the two apart matters —
+    conflating them understates the repayment. The GIS band indicator does not
+    read this figure at all; it works from the GIS testable basis, which is a
+    different one (``engine/benefits/gis.py``).
 
-    The result outlives the year that produced it. It is stored in
-    ``PersonState.prior_year_net_income`` and read back one or two years later,
-    when the benefit period it governs comes around; see the benefit-year rule
-    in ``params/<year>/oas.yaml`` — ``benefit_year.start_month`` and
-    ``benefit_year.income_year_offset`` — applied by
-    ``engine/benefits/oas.py``.
+    The result outlives the year that produced it: it is stored in
+    ``PersonState.prior_year_net_income``, which the RESP enhanced-grant rate
+    (``grant.enhanced.income_year_offset``) reads the following year. The OAS
+    repayment is assessed on the current year's figure and does not read it
+    back.
 
     Args:
         gross_income: All income sources for the full calendar year, summed,

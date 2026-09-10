@@ -61,8 +61,12 @@ Review in this order, and grep aggressively rather than trusting a read:
      understates growth and misstates dispersion by a factor of the square
      root of twelve.
    - Real vs nominal dollars. Percent vs basis points vs a bare fraction.
-   - Calendar year vs benefit year vs income year vs tax year. Age in years vs
-     months; age at start of year vs end of year vs the current month.
+   - The year an amount is assessed against: the current calendar year, the
+     prior year `grant.enhanced.income_year_offset` reaches back to for the
+     RESP, or the benefit period `engine/benefits/gis.py` is documented
+     against. Also the income *basis* — net income and the GIS testable basis
+     are different figures. Age in years vs months; age at start of year vs
+     end of year vs the current month.
    - **Indexation applied twice, not at all, or from the wrong side.** A
      dollar amount reaches the engine through
      `engine.core.indexation.RealParamSet`, whose `amount`/`amounts` already
@@ -88,10 +92,10 @@ Review in this order, and grep aggressively rather than trusting a read:
    - Whether the RRIF minimum is computed in January on the 1 January opening
      balance, before growth — not recomputed mid-year on a balance that has
      since grown, and not taken in full every month.
-   - Whether the OAS clawback is assessed against the correct *income* year
-     for the benefit period the month falls in, including across the mid-year
-     benefit-year changeover, where the income year changes within one
-     calendar year.
+   - Whether the OAS repayment is assessed once, at the December close, on the
+     current year's net income including OAS, capped at OAS received that
+     year, and settled with the balance owing; any monthly withholding of it,
+     or any use of a prior year's income for it, is a finding.
    - Whether contributions, growth, withdrawals, benefits, and the year-to-date
      accrual happen in the intended sequence within the month, and whether
      growth uses this month's return applied once.

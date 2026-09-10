@@ -18,14 +18,13 @@ boundary, never twice. On the previous annual timestep the default ran the
 other way; anything that still multiplies a benefit by twelve inside the step
 is now wrong by a factor of twelve.
 
-**Benefit year is not calendar year, and neither is the income year.** The OAS
-recovery tax and GIS are assessed over a benefit period running from a
-statutory month of year Y to the month before it in year Y+1, against net
-income from an *earlier* calendar year. A function that takes a year documents
-which year it means, and the mapping between them is the benefit-year rule in
-``params/<year>/oas.yaml`` — ``benefit_year.start_month`` and
-``benefit_year.income_year_offset`` — applied by ``engine/benefits/oas.py``,
-not something a caller works out for itself.
+**The OAS repayment is assessed on the calendar year.** It is a line on the
+return: computed once at the December close on that year's net income,
+including the OAS received in the same year, and capped at it. OAS is paid
+gross monthly. The benefit-year block in ``params/<year>/oas.yaml`` —
+``benefit_year.start_month`` and ``benefit_year.income_year_offset`` — is read
+by no module here; it belongs to a future GIS implementation, which is assessed
+over a benefit period rather than a calendar year.
 
 **Indexation costs a constant, and the constant is not one.** OAS and GIS are
 adjusted quarterly; CPP is adjusted annually. Between adjustments the amount is

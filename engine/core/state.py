@@ -540,17 +540,18 @@ class IncomeLedger:
     total, which is not knowable until December.
 
     Kept as components rather than one total because the tax treatment
-    differs: only some of it is eligible for pension income splitting, only
-    some counts toward the OAS recovery tax, dividends and capital gains
-    enter taxable income at their own inclusion rates, and CPP and EI
-    premiums feed a tax credit rather than income at all.
+    differs: only some of it is eligible for pension income splitting,
+    dividends and capital gains enter taxable income at their own inclusion
+    rates, and CPP and EI premiums feed a tax credit rather than income at
+    all.
 
     Every field is real dollars, ``(n_paths,)``.
 
     Attributes:
         employment: Salary and wages.
         cpp: CPP retirement pension received.
-        oas: Gross OAS received, before the recovery tax withheld from it.
+        oas: OAS received, gross. The repayment is a line on the December
+            assessment, not a deduction from the monthly payment.
         db_pension: Defined-benefit pension income, including any bridge.
         rrsp_withdrawals: Withdrawals from an RRSP that has not converted.
         rrif_lif_withdrawals: Withdrawals from a RRIF or a LIF.
@@ -632,11 +633,15 @@ class PersonState:
             ``(n_paths,)``. Created by the December close, discharged in the
             filing month, zero in between only if withholding happened to
             be exact.
-        prior_year_net_income: Net income for the calendar year that governs
-            the OAS recovery tax (and, eventually, other income-tested
-            benefits) for the benefit months currently in force,
-            ``(n_paths,)``. See ``docs/limitations.md`` L46 for what this is
-            at the opening of a run.
+        prior_year_net_income: Net income for the prior calendar year, per
+            person, ``(n_paths,)``. Its one consumer is the RESP
+            enhanced-grant rate (``grant.enhanced.income_year_offset``), which
+            is set by *family* income: a caller sums this across the
+            household's living persons. Not read by the OAS repayment, which
+            is assessed on the current year at the December close, nor by the
+            GIS band indicator, which uses a different income basis. See
+            ``docs/limitations.md`` L46 for what this is at the opening of a
+            run.
     """
 
     person_id: str
