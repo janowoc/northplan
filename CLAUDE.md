@@ -111,5 +111,12 @@
   `comments: <count>` header line, never the comment bodies. Amendments and
   decisions from review land in comments, so an issue read without them is the
   issue as it stood before the review that changed it.
+- A new issue lands in three places in the same commit as its creation: the
+  table row in `docs/roadmap.md`, a paragraph in that file saying where the
+  issue came from where its place in the order is not self-evident, and its
+  number in `EXECUTION_ORDER` in `docs/roadmap_page.py`, inserted where it
+  belongs rather than appended. `python docs/roadmap_page.py` refuses to render
+  when that list and the tracker disagree, so run it and check the issue reads
+  correctly on the page.
 - You may NEVER close an issue. Only the human closes issues, after
   verifying the output.
