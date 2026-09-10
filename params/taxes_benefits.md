@@ -11,6 +11,7 @@
 - 📌 marks a figure that is **fixed by statute** and only changes when Parliament or a legislature amends the law (rare, but it happens).
 - Each section ends with a **Parameters** table (what belongs in YAML, how often it changes, which source document publishes it) and a **Sources** list naming the primary document.
 - "Prior-year" always means the *calendar* year before the one being simulated. Canada's personal-tax year is the calendar year.
+- This document describes the **law**. What the engine does about it is decided and recorded, simplification by simplification, in `docs/limitations.md`. Where a sentence here says what the engine does, it is reporting that decision, not making it — if the two disagree, `docs/limitations.md` wins and this file has a bug.
 
 **Suggested reading order for a new contributor:** §1 → §2 → §3 → §5 (RRSP family) → §6 (TFSA) → §9 (CPP) → §10 (OAS/GIS) → §12 (interactions). RESP (§7) and FHSA (§8) matter for the accumulation use case.
 
@@ -524,7 +525,7 @@ The base contribution earns a *credit*; the enhanced (first and second additiona
 The single most important income threshold in Canadian retirement planning.
 
 - If **individual net income before adjustments (line 23400)** for a tax year exceeds a threshold, the pensioner repays **📌 15%** of the excess, up to the full OAS received. It is assessed on the **individual**, not the household, and includes OAS itself, CPP, pensions, RRIF/LIF withdrawals, interest, *grossed-up* dividends and the taxable half of capital gains. TFSA withdrawals and GIS are excluded.
-- **Timing — the July-to-June lag.** Income from tax year *Y* is reported in spring *Y+1* and drives a **monthly withholding from July Y+1 to June Y+2**; the actual liability is reconciled on the *Y+1* return. The engine must model both: the recovery tax as a line on year-*Y*'s return (reduces after-tax income in *Y*) and the cash-flow effect of reduced deposits from July *Y+1*.
+- **Timing — the July-to-June lag.** Income from tax year *Y* is reported in spring *Y+1* and drives a **monthly withholding from July Y+1 to June Y+2**; the actual liability is reconciled on the *Y+1* return. The engine models the repayment as the return line it is — assessed at the December close on that same calendar year's net income, capped at the OAS received in the same year, and settled with the balance owing in the filing month. It does not model the July-to-June withholding, which is a refundable prepayment of that amount rather than a separate charge; the difference is one of cash timing (L16, L23).
 - **Thresholds 🔄** (indexed with the federal factor):
 
 | Income year | Threshold | Full clawback 65–74 | Full clawback 75+ | OAS payment period affected |
