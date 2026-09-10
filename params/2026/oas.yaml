@@ -16,8 +16,7 @@
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/benefits/oas.py, engine/benefits/gis.py,
-#          engine/core/timeline.py (benefit_year_income_year)
+# Read by: engine/benefits/oas.py, engine/benefits/gis.py
 #
 # Ages are in MONTHS — the deferral increment is per month, and the age band
 # step-up happens in the month the threshold is reached.
