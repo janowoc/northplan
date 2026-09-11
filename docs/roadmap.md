@@ -58,6 +58,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 35 | The December close and the filing-month settlement (month step, part two) | agent | 19 | tax for Y leaves in April of Y+1, net of what was remitted |
 | 36 | Death, the terminal return, and the result object (month step, part three) | agent | 35 | estate after tax finite after the second death, NaN before |
 | 37 | taxes_benefits.md §10.2: the July-to-June OAS withholding instruction | human | — | prose only; nothing tells the engine to model a monthly withholding |
+| 38 | Loaders: a non-UTF-8 file fails naming the file | agent | — | a Windows-1252 file raises the loader's malformed-file error, naming it |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -102,8 +103,8 @@ is a segment between two pinned endpoints rather than a speculative design.
 Midpoint review, 2026-09-10. Issues 1 to 13 and 25 to 28 were reviewed
 together before the tax engine started. Seven issues came out of it, and six
 open issues carry an amendments section dated the same day. The order from
-here is 30, 32, 33, 29, 34, then 14 onward, with 31 and 37 for the human at
-any time.
+here is 30, 32, 38, 33, 29, 34, then 14 onward, with 31 and 37 for the
+human at any time.
 30 removes the prior-year OAS assessment that issue 12's docstring rewrite
 re-entrenched, and must land before anyone reads those files to implement 14
 or 16. 32 and 33 settle four shapes the engine issues would otherwise each
@@ -123,6 +124,13 @@ that L16 records as deliberately not modelled. The document exists partly to
 guide implementation, so that sentence reads as a specification rather than as
 a description of the law. Like 31 it is the human's and can be done at any
 time.
+
+Issue 38 came out of reviewing 32. Both YAML loaders read a hand-edited file
+as UTF-8 and let a decode failure escape as a bare `UnicodeDecodeError`, so
+one file saved in another encoding fails every load of its year without
+naming the file. It depends on nothing and sits straight after 32: ahead of
+33, which works in `engine/scenario/`, and ahead of 34, which trims the
+docstrings it edits.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
