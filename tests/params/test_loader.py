@@ -122,6 +122,32 @@ def test_malformed_file_raises(tmp_path: Path) -> None:
         load_year(2030, tmp_path)
 
 
+def test_non_utf8_file_raises_malformed_naming_that_file(tmp_path: Path) -> None:
+    """A hand-edited file saved in the wrong encoding names itself, not `UnicodeDecodeError`.
+
+    The bad file (``federal.yaml``) sorts between two valid ones (``ab.yaml``
+    and ``on.yaml``) in ``load_year``'s ``sorted(glob(...))`` order, so the
+    test shows the loader naming the file that actually failed rather than
+    the first or last one it happened to read.
+    """
+    year = tmp_path / "2030"
+    year.mkdir()
+    (year / "ab.yaml").write_text("x: 1\n", encoding="utf-8")
+    bad_file = year / "federal.yaml"
+    bad_file.write_bytes("# Québec\nx: 1\n".encode("cp1252"))
+    (year / "on.yaml").write_text("x: 1\n", encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(bad_file) in message
+    assert "UTF-8" in message
+    assert isinstance(excinfo.value.__cause__, UnicodeDecodeError)
+    assert "ab.yaml" not in message
+    assert "on.yaml" not in message
+
+
 def test_every_loader_error_is_a_param_error() -> None:
     """One exception root, so a caller can catch the whole category."""
     for error in (

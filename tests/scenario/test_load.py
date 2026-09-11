@@ -75,6 +75,20 @@ def test_a_directory_is_not_a_scenario(tmp_path: Path) -> None:
         load_scenario(tmp_path)
 
 
+def test_non_utf8_file_is_malformed(tmp_path: Path) -> None:
+    """A hand-edited scenario saved in the wrong encoding names itself, not `UnicodeDecodeError`."""
+    path = tmp_path / "scenario.yaml"
+    path.write_bytes("# Québec\nx: 1\n".encode("cp1252"))
+
+    with pytest.raises(MalformedScenarioFileError) as excinfo:
+        load_scenario(path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "UTF-8" in message
+    assert isinstance(excinfo.value.__cause__, UnicodeDecodeError)
+
+
 def test_invalid_yaml_is_malformed(tmp_path: Path) -> None:
     """Bytes that do not parse stop with the parser's own complaint attached."""
     path = write(tmp_path, "name: example\n  bad: indentation\n")

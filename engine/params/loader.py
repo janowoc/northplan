@@ -365,6 +365,10 @@ class ParamYear:
 def _read_yaml(path: Path) -> Mapping[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise MalformedParamFileError(
+            f"{path} is not valid UTF-8: {exc}. Save it as UTF-8."
+        ) from exc
     except OSError as exc:
         raise ParamFileMissingError(f"Cannot read parameter file {path}: {exc}") from exc
 
@@ -403,8 +407,10 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
 
     Raises:
         ParamYearMissingError: If no directory exists for that year.
-        MalformedParamFileError: If any file in the directory is not a YAML
-            mapping.
+        ParamFileMissingError: If a file in the directory exists but the
+            operating system cannot open or read it.
+        MalformedParamFileError: If any file in the directory is not valid
+            UTF-8, is not valid YAML, or is not a YAML mapping.
     """
     root = Path(root)
     year_dir = root / str(year)

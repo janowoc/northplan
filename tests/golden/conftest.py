@@ -942,8 +942,7 @@ def run_case(case: GoldenCase) -> None:
             file it names does not exist, any file in that year's directory
             is malformed, or — for ``real_params`` — the named file's
             ``indexation`` block is malformed. The loader's own errors all
-            subclass it; a file that is not valid UTF-8 surfaces as
-            ``UnicodeDecodeError`` instead.
+            subclass it.
         Exception: Whatever ``case.target`` itself raises, uncaught — a golden
             case is not responsible for turning the target's own failures
             into anything friendlier.

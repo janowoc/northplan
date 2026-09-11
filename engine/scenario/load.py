@@ -123,8 +123,8 @@ def load_scenario(path: str | Path) -> Scenario:
 
     Raises:
         ScenarioFileMissingError: No file at ``path``.
-        MalformedScenarioFileError: Not parseable as YAML, top level is not a
-            mapping, or a mapping repeats a key.
+        MalformedScenarioFileError: Not valid UTF-8, not parseable as YAML,
+            top level is not a mapping, or a mapping repeats a key.
         InvalidScenarioError: Parsed, but a validation rule rejects it. The
             message names the offending field and this file.
     """
@@ -135,6 +135,10 @@ def load_scenario(path: str | Path) -> Scenario:
         raise ScenarioFileMissingError(f"No scenario file at {source}.") from exc
     except IsADirectoryError as exc:
         raise ScenarioFileMissingError(f"{source} is a directory, not a scenario file.") from exc
+    except UnicodeDecodeError as exc:
+        raise MalformedScenarioFileError(
+            f"{source} is not valid UTF-8: {exc}. Save it as UTF-8."
+        ) from exc
 
     try:
         # yaml.load with an explicit loader, not yaml.safe_load: the loader
