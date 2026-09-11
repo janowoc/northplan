@@ -22,11 +22,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from engine.core.build import _month_offset, build_initial_state
+from engine.core.build import _month_offset, build_initial_state, build_market_inputs
 from engine.core.state import DEATH_NOT_DRAWN, updated
-from engine.scenario import LiraAccount, OasEntitlement, SpendingBand, load_scenario
+from engine.mc.market import DEFAULT_KIND
+from engine.mc.returns import generate
+from engine.scenario import (
+    DEFAULT_ALLOCATION,
+    Assumptions,
+    LiraAccount,
+    OasEntitlement,
+    SpendingBand,
+    load_scenario,
+)
 
 from .conftest import walk
 
@@ -154,6 +164,123 @@ class TestBuildAgainstTheExample:
         state = build_initial_state(scenario, n_paths=N_PATHS)
         truncated = updated(state, beneficiaries=())
         assert walk(truncated, N_PATHS) < MINIMUM_ARRAYS
+
+
+class TestBuildMarketInputs:
+    def test_asset_class_names_and_means_and_yields_and_covariance(self, scenario) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        names = scenario.assumptions.asset_class_names
+        classes = [scenario.assumptions.asset_classes[name] for name in names]
+
+        assert market.asset_class_names == names
+        np.testing.assert_allclose(market.annual_means, [c.real_mean for c in classes])
+        np.testing.assert_allclose(market.interest_yields, [c.interest_yield for c in classes])
+        np.testing.assert_allclose(market.dividend_yields, [c.dividend_yield for c in classes])
+        np.testing.assert_allclose(
+            market.distributed_gains_yields, [c.distributed_gains_yield for c in classes]
+        )
+
+        vols = [c.vol for c in classes]
+        n = len(names)
+        expected_covariance = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                expected_covariance[i, j] = (
+                    scenario.assumptions.correlation[i][j] * vols[i] * vols[j]
+                )
+        np.testing.assert_allclose(market.annual_covariance, expected_covariance)
+
+    def test_weights_for_rrsp_and_default_and_resp(self, scenario) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        names = scenario.assumptions.asset_class_names
+        default_weights = [
+            scenario.assumptions.allocations["default"].get(name, 0.0) for name in names
+        ]
+        resp_weights = [scenario.assumptions.allocations["resp"].get(name, 0.0) for name in names]
+
+        np.testing.assert_allclose(market.weights("default"), default_weights)
+        np.testing.assert_allclose(market.weights("rrsp"), default_weights)
+        np.testing.assert_allclose(market.weights("resp"), resp_weights)
+
+    def test_every_array_and_weight_vector_is_read_only(self, scenario) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        for array in (
+            market.annual_means,
+            market.annual_covariance,
+            market.interest_yields,
+            market.dividend_yields,
+            market.distributed_gains_yields,
+        ):
+            assert not array.flags.writeable
+        for weights in market.weights_by_kind.values():
+            assert not weights.flags.writeable
+
+    def test_a_class_absent_from_an_allocation_gets_zero_weight(self, scenario) -> None:
+        assumptions = scenario.assumptions
+        new_allocations = dict(assumptions.allocations)
+        new_allocations["resp"] = {"equity": 1.0}
+        new_assumptions = Assumptions.model_validate(
+            {
+                "inflation": assumptions.inflation,
+                "asset_classes": {
+                    name: assumptions.asset_classes[name].model_dump()
+                    for name in assumptions.asset_class_names
+                },
+                "correlation": assumptions.correlation,
+                "allocations": new_allocations,
+            }
+        )
+
+        market = build_market_inputs(new_assumptions)
+
+        bonds_index = new_assumptions.asset_class_names.index("bonds")
+        assert market.weights("resp")[bonds_index] == 0.0
+
+    def test_weights_follow_asset_class_order_not_allocation_order(self, scenario) -> None:
+        assumptions = scenario.assumptions
+        new_allocations = {
+            "default": {"bonds": 0.4, "equity": 0.6},
+            "resp": {"bonds": 0.7, "equity": 0.3},
+        }
+        new_assumptions = Assumptions.model_validate(
+            {
+                "inflation": assumptions.inflation,
+                "asset_classes": {
+                    name: assumptions.asset_classes[name].model_dump()
+                    for name in assumptions.asset_class_names
+                },
+                "correlation": assumptions.correlation,
+                "allocations": new_allocations,
+            }
+        )
+
+        market = build_market_inputs(new_assumptions)
+
+        names = new_assumptions.asset_class_names
+        assert names == ("equity", "bonds")
+
+        equity_index = names.index("equity")
+        bonds_index = names.index("bonds")
+
+        default_weights = market.weights("default")
+        assert default_weights[equity_index] == pytest.approx(0.6)
+        assert default_weights[bonds_index] == pytest.approx(0.4)
+
+        resp_weights = market.weights("resp")
+        assert resp_weights[equity_index] == pytest.approx(0.3)
+        assert resp_weights[bonds_index] == pytest.approx(0.7)
+
+    def test_weights_for_cash_raises(self, scenario) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        with pytest.raises(ValueError):
+            market.weights("cash")
+
+    def test_default_kind_matches_the_scenario_default_allocation(self) -> None:
+        assert DEFAULT_KIND == DEFAULT_ALLOCATION
+
+    def test_generate_accepts_the_builder_s_output(self, scenario) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        generate(1, 3, 5, market.annual_means, market.annual_covariance, n_persons=1)
 
 
 class TestHouseholdCash:

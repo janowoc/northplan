@@ -28,10 +28,12 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
 import yaml
 
 from engine.scenario import (
+    Assumptions,
     InvalidScenarioError,
     PolicySpec,
     Scenario,
@@ -51,6 +53,19 @@ def example_values() -> dict[str, Any]:
     values = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     assert isinstance(values, dict)
     return values
+
+
+def _matched_bonds_vol() -> float:
+    """A bonds vol whose ``vol / (1 + real_mean)`` ratio equals equity's.
+
+    Computed from the example's own figures rather than a literal: at
+    correlation +1, this is the boundary the schema must accept, and a
+    hand-typed number would drift silently if the example's own vol or
+    real_mean ever changed.
+    """
+    classes = example_values()["assumptions"]["asset_classes"]
+    equity, bonds = classes["equity"], classes["bonds"]
+    return equity["vol"] * (1.0 + bonds["real_mean"]) / (1.0 + equity["real_mean"])
 
 
 def _walk(values: dict[str, Any], path: str) -> tuple[Any, Any]:
@@ -405,6 +420,35 @@ REJECTIONS = [
         "correlation",
         sets("assumptions.correlation", [[1.0, 1.5], [1.5, 1.0]]),
     ),
+    # --- Attainability of the return assumptions -----------------------------
+    rejected(
+        "correlation-minus-one-at-five-percent-vol",
+        "asset classes 'equity' and 'bonds': no lognormal distribution",
+        sets("assumptions.asset_classes.equity.vol", 0.05),
+        sets("assumptions.correlation", [[1.0, -1.0], [-1.0, 1.0]]),
+    ),
+    rejected(
+        "correlation-plus-one-with-unequal-vol-to-growth-ratios",
+        "asset classes 'equity' and 'bonds': no lognormal distribution",
+        sets("assumptions.correlation", [[1.0, 1.0], [1.0, 1.0]]),
+    ),
+    rejected(
+        "a-negative-correlation-too-strong-for-the-log-argument",
+        "asset classes 'equity' and 'bonds': the moment-matching log argument",
+        sets("assumptions.asset_classes.equity.vol", 1.2),
+        sets("assumptions.asset_classes.bonds.vol", 1.2),
+        sets("assumptions.correlation", [[1.0, -1.0], [-1.0, 1.0]]),
+    ),
+    rejected(
+        "a-real-mean-at-minus-one",
+        "asset class 'equity': real_mean",
+        sets("assumptions.asset_classes.equity.real_mean", -1.0),
+    ),
+    rejected(
+        "a-real-mean-that-is-not-a-number",
+        "asset class 'equity': real_mean",
+        sets("assumptions.asset_classes.equity.real_mean", float("nan")),
+    ),
     # --- Allocations --------------------------------------------------------
     rejected(
         "allocation-names-an-unknown-class",
@@ -600,6 +644,11 @@ ACCEPTANCES = [
         sets("assumptions.asset_classes.bonds.vol", 0.0),
     ),
     accepted(
+        "correlation-plus-one-with-equal-vol-to-growth-ratios",
+        sets("assumptions.asset_classes.bonds.vol", _matched_bonds_vol()),
+        sets("assumptions.correlation", [[1.0, 1.0], [1.0, 1.0]]),
+    ),
+    accepted(
         "deflation",
         sets("assumptions.inflation", -0.01),
     ),
@@ -770,6 +819,44 @@ def test_every_rejection_has_its_own_case_id() -> None:
     ids = [case.id for case in REJECTIONS] + [case.id for case in ACCEPTANCES]
 
     assert len(ids) == len(set(ids)), sorted({name for name in ids if ids.count(name) > 1})
+
+
+# --- Attainability checked at load time, both entry points -----------------
+
+
+def test_load_scenario_names_both_classes_and_not_a_bare_index(tmp_path: Path) -> None:
+    """The -1-at-5%-vol case's message names both classes, in the wording a
+    reader of the file understands, not the index-only wording
+    ``engine.mc.returns.generate`` uses for direct construction."""
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        load_mutated(
+            tmp_path,
+            (
+                sets("assumptions.asset_classes.equity.vol", 0.05),
+                sets("assumptions.correlation", [[1.0, -1.0], [-1.0, 1.0]]),
+            ),
+        )
+
+    message = str(excinfo.value)
+    assert "'equity'" in message
+    assert "'bonds'" in message
+    assert "annual_covariance[" not in message
+
+
+def test_model_validate_refuses_the_same_case() -> None:
+    """``Assumptions.model_validate`` and ``Scenario.model_validate`` are
+    covered too, not only the ``load_scenario`` file path."""
+    values = example_values()
+    values["assumptions"]["asset_classes"]["equity"]["vol"] = 0.05
+    values["assumptions"]["correlation"] = [[1.0, -1.0], [-1.0, 1.0]]
+
+    with pytest.raises(pydantic.ValidationError) as assumptions_excinfo:
+        Assumptions.model_validate(values["assumptions"])
+    assert "asset classes 'equity' and 'bonds'" in str(assumptions_excinfo.value)
+
+    with pytest.raises(pydantic.ValidationError) as scenario_excinfo:
+        Scenario.model_validate(values)
+    assert "asset classes 'equity' and 'bonds'" in str(scenario_excinfo.value)
 
 
 # --- The addressing the grid uses ------------------------------------------

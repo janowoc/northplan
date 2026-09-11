@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Scenario -> opening :class:`~engine.core.state.HouseholdState`.
+"""Scenario -> opening :class:`~engine.core.state.HouseholdState` and
+:class:`~engine.mc.market.MarketInputs`.
 
 The one place a :class:`~engine.scenario.schema.Scenario` — a document, in
 scalar Python values, real dollars of January of its start year except each
@@ -19,6 +20,12 @@ scenario states is carried, even one no phase reads yet.
 
 The opening position is always 1 January of ``scenario.start_year``:
 ``year=start_year``, ``month=1``, ``month_index=0``.
+
+:func:`build_market_inputs` maps a scenario's
+:class:`~engine.scenario.schema.Assumptions` to the
+:class:`~engine.mc.market.MarketInputs` the draws and the step read, in
+``asset_class_names`` order. It validates nothing: attainability was
+checked when the scenario loaded.
 
 Two things a scenario cannot answer without help are worked out here rather
 than invented:
@@ -68,9 +75,20 @@ from engine.core.state import (
     TfsaState,
     select_spending_level,
 )
-from engine.scenario import Beneficiary, DbPension, Employment, Person, PolicySpec, Scenario
+from engine.mc.market import MarketInputs
+from engine.mc.moments import covariance_from_correlation
+from engine.scenario import (
+    INVESTABLE_KINDS,
+    Assumptions,
+    Beneficiary,
+    DbPension,
+    Employment,
+    Person,
+    PolicySpec,
+    Scenario,
+)
 
-__all__ = ["build_initial_state"]
+__all__ = ["build_initial_state", "build_market_inputs"]
 
 
 def _month_offset(base_year: int, year: int, month: int) -> int:
@@ -190,6 +208,52 @@ def build_initial_state(
         depleted=np.zeros(n_paths, dtype=np.bool_),
         estate_after_tax=np.full(n_paths, np.nan, dtype=np.float64),
         history=(),
+    )
+
+
+def build_market_inputs(assumptions: Assumptions) -> MarketInputs:
+    """Build a :class:`~engine.mc.market.MarketInputs` from ``assumptions``.
+
+    Validates nothing: attainability of the moments was already checked
+    when the scenario loaded (``Assumptions._check_moments_attainable``), and
+    ``MarketInputs`` itself checks only shapes.
+
+    Args:
+        assumptions: The validated capital-market assumptions to build from.
+
+    Returns:
+        A :class:`~engine.mc.market.MarketInputs`, in
+        ``assumptions.asset_class_names`` order.
+    """
+    names = assumptions.asset_class_names
+    classes = [assumptions.asset_classes[name] for name in names]
+
+    real_means = np.array([c.real_mean for c in classes], dtype=np.float64)
+    vols = np.array([c.vol for c in classes], dtype=np.float64)
+    interest_yields = np.array([c.interest_yield for c in classes], dtype=np.float64)
+    dividend_yields = np.array([c.dividend_yield for c in classes], dtype=np.float64)
+    distributed_gains_yields = np.array(
+        [c.distributed_gains_yield for c in classes], dtype=np.float64
+    )
+
+    annual_covariance = covariance_from_correlation(
+        vols, np.array(assumptions.correlation, dtype=np.float64)
+    )
+
+    weights_by_kind = {
+        kind: np.array([weights.get(name, 0.0) for name in names], dtype=np.float64)
+        for kind, weights in assumptions.allocations.items()
+    }
+
+    return MarketInputs(
+        asset_class_names=names,
+        annual_means=real_means,
+        annual_covariance=annual_covariance,
+        interest_yields=interest_yields,
+        dividend_yields=dividend_yields,
+        distributed_gains_yields=distributed_gains_yields,
+        weights_by_kind=weights_by_kind,
+        investable_kinds=INVESTABLE_KINDS,
     )
 
 

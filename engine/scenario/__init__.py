@@ -11,8 +11,8 @@ parameter file.
 
 ``schema`` says what a well-formed scenario is; ``load`` turns a file into one.
 Building engine state from a scenario is issue 11 and lives in
-``engine/core/build.py``, not here — this package has no idea what a NumPy
-array is.
+``engine/core/build.py``, not here — this package hands out no NumPy
+arrays.
 
 Names ending in ``Spec`` are the deliberate exceptions to plain naming: they
 describe an input that the engine also has a *runtime* class for, and the two

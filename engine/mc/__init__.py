@@ -12,9 +12,10 @@ sampling noise, and the optimizer will happily maximise that noise.
 Vectorization is across paths. The loop here is over months, because months are
 sequentially dependent; within a month, all paths are computed at once.
 
-Draws are monthly on their first axis. Scenario assumptions arrive annual and
-are converted to monthly exactly once, in ``returns.generate``. Downstream code
-receives monthly figures and must never convert again.
+Draws are monthly on their first axis. Scenario assumptions arrive annual
+and are converted to monthly exactly once, in
+``moments.monthly_log_moments``, which ``returns.generate`` calls.
+Downstream code receives monthly figures and must never convert again.
 
 Results are recorded annually even though the loop is monthly — see
 ``SimulationResult`` for why.

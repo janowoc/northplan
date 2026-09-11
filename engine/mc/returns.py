@@ -9,8 +9,9 @@ policy evaluation. Nothing here may be called from inside the optimizer's loop.
 The simulation steps monthly, so the draws are monthly and the first axis of
 every array is a month. Scenario assumptions are still expressed *annually*,
 because that is how return and inflation assumptions are stated and argued
-about; the conversion to a monthly distribution happens exactly once, here, and
-is never repeated downstream.
+about; the conversion to a monthly distribution happens exactly once, in
+:func:`engine.mc.moments.monthly_log_moments`, which :func:`generate` calls,
+and is never repeated downstream.
 
 There is no horizon in years to convert here, and there is no ``n_years``
 parameter anywhere in this module. The simulation runs every path to the
@@ -23,33 +24,14 @@ derivation lives in ``engine/mc/simulate.py`` (issue 19), not here: a reader
 of :func:`generate` or :func:`deterministic` should not go looking for a
 scenario field that supplies the horizon, because there isn't one.
 
-Two things about the covariance guards below are genuinely surprising, and are
-written down here because a reader who does not already know them will read
-the guards as redundant with ``engine.scenario.schema.Assumptions
-._check_correlation`` and be tempted to delete them:
-
-- **A correlation matrix can be perfectly valid and still have no lognormal
-  distribution that realises it.** ``_check_correlation`` requires symmetry,
-  a unit diagonal, and a non-negative smallest eigenvalue, and a matrix that
-  passes all three can still fail :func:`generate`'s PSD check on the
-  *moment-matched monthly log-covariance*, ``s`` — because entrywise
-  ``log(1 + x)`` does not preserve positive semi-definiteness. The schema
-  cannot see this failure because it only ever looks at a correlation matrix,
-  never at the covariance :func:`generate` derives from it. **The rule is
-  asymmetric between the two signs of a perfect correlation, and this is not
-  a gap in either direction:** a correlation of exactly -1 between two
-  classes is never realisable by two increasing transforms of one normal,
-  and is always rejected, at any volatility. A correlation of exactly +1 is
-  rejected *unless* the pair has equal ``sigma / (1 + mu)`` — in which case
-  the two classes are the same lognormal distribution written twice, ``s``
-  is exactly rank one with a smallest eigenvalue of exactly zero, and there
-  is a perfectly good distribution to draw from, so the guard correctly
-  accepts it.
-- **The guard therefore fires at draw time, on a scenario that loaded
-  cleanly**, a long way from the file that caused it. That gap closes only
-  once a builder from ``Assumptions`` to an ``annual_covariance`` array
-  exists and this check can be run at load time instead; no such builder
-  exists today.
+The attainability of the moments — ``1 + annual_means > 0``, a positive
+moment-matching log argument, and a positive semi-definite moment-matched
+monthly log-covariance — is checked in :mod:`engine.mc.moments`, which
+:func:`generate` calls and which ``engine.scenario.schema.Assumptions``
+calls when a scenario loads. This module's own guards (the counts,
+finiteness, ``1 + annual_means > 0``, and the shape, symmetry and positive
+semi-definiteness of ``annual_covariance``) run first. They protect direct
+calls and tests, and are not redundant with the schema's checks.
 """
 
 from __future__ import annotations
@@ -61,6 +43,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from engine.core.timeline import MONTHS_PER_YEAR
+from engine.mc.moments import monthly_log_moments
 
 #: Tolerance for how far a covariance matrix entry may sit from its mirror
 #: and still be treated as symmetric.
@@ -260,15 +243,11 @@ def _check_finite(name: str, array: NDArray[np.float64]) -> None:
     NaN and +/-inf both clear every guard in this module silently: ``nan <=
     0.0`` and ``nan > tolerance`` are both ``False``, and
     ``np.linalg.eigvalsh`` of a matrix containing NaN returns NaN, which
-    fails no comparison either. Without this check, the first sign of a
-    non-finite input is a ``LinAlgError`` raised by
-    ``rng.multivariate_normal`` deep inside :func:`generate`, a long way
-    from the value that caused it and naming neither.
+    fails no comparison either.
 
     This is a guard for direct construction of a :class:`RandomDraws`, like
-    every guard above it in this module. Whether
-    ``engine.scenario.schema.AssetClass`` should set ``allow_inf_nan=False``
-    on its own fields is a scenario-schema question and is not settled here.
+    every guard above it in this module. ``engine.mc.moments`` refuses
+    non-finite moments when a scenario loads, naming the asset class.
 
     Args:
         name: The parameter name to report in the message, e.g.
@@ -298,18 +277,10 @@ def _check_growth_positive(annual_means: NDArray[np.float64]) -> None:
 
     Same reasoning ``engine.scenario.schema.Assumptions.inflation`` carries as
     ``Field(gt=-1.0)``: at or below -1, ``(1 + mu)`` raised to a fractional
-    power is a complex number rather than an error, and ``log(1 + mu)`` --
-    which :func:`generate` needs for ``m_i = log(1 + mu_i) - s_ii / 2`` -- is
-    undefined at ``mu <= -1``. ``engine.scenario.schema.AssetClass.real_mean``
-    carries no such constraint, so this is the only place it is enforced.
-
-    Without this check: ``mu = -5`` (a percent-for-fraction typo on -5%)
-    leaves the moment-matching *log argument* well-defined (it depends on
-    ``growth ** 2``, which stays positive even when ``growth`` is negative),
-    but ``log(growth)`` in ``m_i`` is then a log of a negative number and
-    silently produces NaN, with only a printed ``invalid value encountered in
-    log`` in production, not an error. ``mu = -1.0`` exactly makes ``growth``
-    zero and produces a division by zero in the same place.
+    power is a complex number rather than an error, and ``log(1 + mu)`` is
+    undefined at ``mu <= -1``. ``engine.mc.moments`` enforces the same rule
+    when a scenario loads; this copy guards direct calls to :func:`generate`
+    and :func:`deterministic`.
 
     Args:
         annual_means: Expected real annual return per asset class.
@@ -326,101 +297,6 @@ def _check_growth_positive(annual_means: NDArray[np.float64]) -> None:
             f"annual_means must be strictly positive. At or below -1, "
             f"(1 + mu) raised to a fractional power is a complex number "
             f"rather than an error, and log(1 + mu) is undefined."
-        )
-
-
-def _check_log_argument_positive(
-    annual_covariance: NDArray[np.float64], log_argument: NDArray[np.float64]
-) -> None:
-    """Raise ``ValueError`` unless every entry of the moment-matching log
-    argument is strictly positive, before :func:`numpy.log` is applied to it.
-
-    ``log_argument[i, j] = 1 + Sigma_ij / ((1 + mu_i) * (1 + mu_j))`` must be
-    positive for every ``i, j``: a nonpositive entry means the requested
-    annual covariance is not attainable by any lognormal moment match at
-    these means, and ``np.log`` would otherwise silently produce NaN -- a
-    printed ``RuntimeWarning`` in production, not an error -- rather than
-    saying why.
-
-    Args:
-        annual_covariance: The covariance matrix the offending entry is
-            reported from, for the error message.
-        log_argument: ``1 + annual_covariance / outer(growth, growth)``,
-            already computed by the caller.
-
-    Raises:
-        ValueError: If any entry of ``log_argument`` is not strictly
-            positive, naming ``i``, ``j``, ``Sigma_ij``, and the offending
-            argument.
-    """
-    bad = np.argwhere(log_argument <= 0.0)
-    if bad.size:
-        i, j = (int(x) for x in bad[0])
-        raise ValueError(
-            f"annual_covariance[{i}][{j}] = {annual_covariance[i, j]!r}: the "
-            f"moment-matching log argument 1 + Sigma[{i}][{j}] / "
-            f"((1 + mu[{i}]) * (1 + mu[{j}])) = {log_argument[i, j]!r} is not "
-            f"positive, so log(1 + Sigma_ij / ((1 + mu_i)(1 + mu_j))) is "
-            f"undefined. No lognormal distribution realises this annual "
-            f"covariance at these means."
-        )
-
-
-def _check_moment_matched_covariance_psd(s_month: NDArray[np.float64]) -> None:
-    """Raise ``ValueError`` unless ``s_month``, the moment-matched monthly
-    log-covariance, is positive semi-definite.
-
-    This is not the same check :func:`_check_covariance` already ran on
-    ``annual_covariance``: ``s_month`` is derived from the *output* of the
-    moment-matching transform, ``log(1 + Sigma_ij / ((1+mu_i)(1+mu_j)))``,
-    and that transform does not preserve positive semi-definiteness -- only
-    a function with non-negative power-series coefficients would, and
-    ``log(1 + x) = x - x**2/2 + ...`` does not. A correlation matrix that is
-    perfectly valid on its own (symmetric, unit diagonal,
-    ``engine.scenario.schema.Assumptions._check_correlation``-clean) can
-    still admit no lognormal distribution with these annual means and
-    volatilities. See the module docstring for why this guard is not
-    redundant with the schema's, and for the asymmetric rule this check
-    enforces: a correlation of exactly -1 between two classes is always
-    rejected, at any volatility, while a correlation of exactly +1 is
-    rejected unless the pair has equal ``sigma / (1 + mu)`` -- in which case
-    it is the same lognormal written twice, ``s`` is exactly rank one with a
-    smallest eigenvalue of exactly zero, and correctly accepting it is not a
-    gap in this guard.
-
-    **This checks the monthly matrix, ``s_month = s_annual /
-    MONTHS_PER_YEAR``, not ``s_annual``.** Scaling by a positive constant
-    cannot change the *sign* of an eigenvalue, so either matrix would reject
-    the same inputs -- but ``_COVARIANCE_PSD_TOLERANCE`` is a fixed absolute
-    tolerance on an eigenvalue's magnitude, and ``s_annual``'s eigenvalues
-    are twelve times ``s_month``'s. Checking ``s_annual`` would apply the
-    tolerance at an effective ``_COVARIANCE_PSD_TOLERANCE / MONTHS_PER_YEAR``
-    on the matrix ``rng.multivariate_normal`` is actually handed, silently
-    tightening it twelvefold, and would report a smallest eigenvalue twelve
-    times the size of the one a reader who reproduces this check on
-    ``s_month`` -- the matrix the message names -- would get. Checking
-    ``s_month`` is what makes the message, the guard, and the tolerance's
-    own documented meaning agree with each other.
-
-    Args:
-        s_month: The moment-matched covariance of *monthly* log-returns --
-            the same matrix passed to ``rng.multivariate_normal``.
-
-    Raises:
-        ValueError: If ``s_month``'s smallest eigenvalue is below
-            ``-_COVARIANCE_PSD_TOLERANCE``, naming the eigenvalue.
-    """
-    smallest = float(np.linalg.eigvalsh(s_month).min())
-    if smallest < -_COVARIANCE_PSD_TOLERANCE:
-        raise ValueError(
-            f"the moment-matched monthly log-covariance is not positive "
-            f"semi-definite; its smallest eigenvalue is {smallest:g}. "
-            f"Entrywise log(1 + x) does not preserve positive "
-            f"semi-definiteness, so a correlation matrix that is perfectly "
-            f"valid on its own can still have no lognormal distribution "
-            f"that realises it at these annual means and volatilities -- "
-            f"there is nothing to draw from, and it is not clipped, "
-            f"projected, or nudged to the nearest matrix that works."
         )
 
 
@@ -453,21 +329,15 @@ def generate(
     ``E[prod(1 + r_month) over 12 months] == 1 + mu`` — twelve monthly draws
     compounded together must reproduce the specified annual arithmetic mean,
     not merely the annual mean divided by twelve, which understates
-    compounding. That equality is what the moment matching below is for, and
-    it is the reason the compounding test in ``tests/mc/test_returns.py``
-    exists.
+    compounding. That equality is what the moment matching in
+    :func:`engine.mc.moments.monthly_log_moments` is for, and it is the
+    reason the compounding test in ``tests/mc/test_returns.py`` exists.
 
-    The conversion, exactly:
-
-        s_ij = log(1 + Sigma_ij / ((1 + mu_i) * (1 + mu_j)))
-        m_i  = log(1 + mu_i) - s_ii / 2
-
-    on the annual *arithmetic* mean vector ``mu = annual_means`` and the
-    covariance of annual *simple* returns ``Sigma = annual_covariance``. Both
-    ``m`` and ``s`` are then divided by twelve to give the mean and covariance
-    of the *monthly* log-return distribution, monthly log-returns are drawn
-    iid multivariate normal from that distribution, and the simple returns
-    handed back are ``exp(x) - 1``.
+    The conversion is :func:`engine.mc.moments.monthly_log_moments`: the
+    annual arithmetic means and the covariance of annual simple returns go
+    in, the mean and covariance of *monthly* log-returns come out. Monthly
+    log-returns are drawn iid multivariate normal from that distribution,
+    and the simple returns handed back are ``exp(x) - 1``.
 
     The random stream, in order: :class:`numpy.random.Generator` is built once
     from ``seed`` with ``numpy.random.default_rng``, the return draws are
@@ -502,7 +372,7 @@ def generate(
     set for the test suite, and ``rng.multivariate_normal`` raises a
     ``RuntimeWarning`` — a test error, under that setting — on a covariance it
     considers non-positive-semi-definite. Checking ``s_month`` ourselves
-    first, with :func:`_check_moment_matched_covariance_psd`, means our own
+    first, with :func:`engine.mc.moments.monthly_log_moments`, means our own
     ``ValueError``, naming the matrix, fires before numpy's warning ever has
     the chance to; ``check_valid`` is deliberately not passed to
     ``rng.multivariate_normal``, so that failure mode is not inherited along
@@ -540,13 +410,12 @@ def generate(
             ``annual_means`` is not 1-D, is empty, or ``annual_covariance``
             is not square, its size does not match ``annual_means``, it is
             not symmetric, or it is not positive semi-definite. If the
-            moment-matching log argument,
-            ``1 + Sigma_ij / ((1 + mu_i)(1 + mu_j))``, is not strictly
-            positive for some ``i, j``. If the moment-matched monthly
-            log-covariance is not positive semi-definite — **this can happen
-            even when ``annual_covariance`` itself passed every check above**,
-            because the moment-matching transform does not preserve positive
-            semi-definiteness; see the module docstring.
+            moment-matching log argument is not strictly positive for some
+            ``i, j``. If the moment-matched monthly log-covariance is not
+            positive semi-definite — **this can happen even when
+            ``annual_covariance`` itself passed every check above**, because
+            the moment-matching transform does not preserve positive
+            semi-definiteness; see :mod:`engine.mc.moments`.
     """
     if n_months < 1:
         raise ValueError(f"generate: n_months must be at least 1, got {n_months}.")
@@ -562,14 +431,7 @@ def generate(
     _check_growth_positive(annual_means)
     _check_covariance(annual_means, annual_covariance)
 
-    growth = 1.0 + annual_means
-    log_argument = 1.0 + annual_covariance / np.outer(growth, growth)
-    _check_log_argument_positive(annual_covariance, log_argument)
-    s_annual = np.log(log_argument)
-    m_annual = np.log(growth) - np.diag(s_annual) / 2.0
-    m_month = m_annual / MONTHS_PER_YEAR
-    s_month = s_annual / MONTHS_PER_YEAR
-    _check_moment_matched_covariance_psd(s_month)
+    m_month, s_month = monthly_log_moments(annual_means, annual_covariance)
 
     rng = np.random.default_rng(seed)
 

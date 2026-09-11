@@ -68,6 +68,8 @@ from typing import Annotated, Any, Final, Literal, Self, TypeVar
 import numpy as np
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from engine.mc.moments import covariance_from_correlation, monthly_log_moments
+
 __all__ = [
     "CONTRIBUTION_KINDS",
     "DEFAULT_ALLOCATION",
@@ -826,7 +828,8 @@ class AssetClass(_Base):
 
     Attributes:
         real_mean: Expected real annual total return, a bare fraction. May be
-            negative; cash-like classes have been for years at a time.
+            negative; cash-like classes have been for years at a time. Must
+            be above -1.
         vol: Annual standard deviation of the real return. Zero is legal and
             means a riskless class.
         interest_yield: Fraction of balance a year distributed as interest,
@@ -864,7 +867,8 @@ class Assumptions(_Base):
             order of ``correlation``.
         correlation: Correlation matrix of real annual returns, square,
             symmetric, unit diagonal, positive semi-definite, and the same size
-            as ``asset_classes``.
+            as ``asset_classes``, and realisable, together with each class's
+            ``real_mean`` and ``vol``, by a lognormal distribution.
         allocations: Portfolio weights by account kind, plus the required
             ``default`` used by any account without an entry of its own. Each
             allocation names known classes and sums to one.
@@ -933,6 +937,28 @@ class Assumptions(_Base):
                 "from — the draw would fail or, worse, be silently altered to "
                 "the nearest matrix that works."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_moments_attainable(self) -> Self:
+        """Refuse assumptions no lognormal distribution realises.
+
+        Checks ``1 + real_mean <= 0``, a non-positive moment-matching log
+        argument, or a moment-matched monthly log-covariance that is not
+        positive semi-definite -- naming the asset class(es) involved.
+        Nothing is clipped or nudged to the nearest matrix that works.
+
+        The scenario package imports :mod:`engine.mc.moments` and nothing
+        else from ``engine.mc``, and :mod:`engine.mc.moments` imports nothing
+        from ``engine.scenario``, so the dependency runs one way only and
+        there is no cycle; ``tests/test_layering.py`` enforces both.
+        """
+        names = self.asset_class_names
+        classes = [self.asset_classes[name] for name in names]
+        means = np.array([c.real_mean for c in classes], dtype=np.float64)
+        vols = np.array([c.vol for c in classes], dtype=np.float64)
+        covariance = covariance_from_correlation(vols, np.array(self.correlation, dtype=float))
+        monthly_log_moments(means, covariance, names)
         return self
 
     @model_validator(mode="after")

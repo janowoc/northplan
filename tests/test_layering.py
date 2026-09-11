@@ -10,6 +10,10 @@ stops HTTP concerns from leaking into a bracket calculation.
 This walks the AST rather than importing, so a forbidden import is caught even
 inside a function body, a ``TYPE_CHECKING`` block, or a module that would fail
 to import for an unrelated reason.
+
+It also pins the one permitted dependency of ``engine/scenario`` on
+``engine/mc`` — the leaf ``engine.mc.moments``, which imports nothing from
+``engine.scenario``.
 """
 
 from __future__ import annotations
@@ -70,6 +74,144 @@ def test_engine_does_not_import_upper_layers(module: Path) -> None:
         "engine/ must be importable and testable with FastAPI absent, and must not "
         "depend on the layers above it:\n  " + "\n  ".join(violations)
     )
+
+
+SCENARIO_ROOT = ENGINE_ROOT / "scenario"
+
+
+def scenario_modules() -> list[Path]:
+    """Every Python module under ``engine/scenario/``."""
+    return sorted(SCENARIO_ROOT.rglob("*.py"))
+
+
+def module_package(path: Path) -> str:
+    """The dotted package ``path`` lives in, e.g. ``engine.scenario``.
+
+    Both ``engine/scenario/schema.py`` and ``engine/scenario/__init__.py``
+    give ``"engine.scenario"``: the module's own filename is always the
+    last path component, and this drops it.
+    """
+    parts = path.relative_to(REPO_ROOT).with_suffix("").parts
+    return ".".join(parts[:-1])
+
+
+def imported_modules(tree: ast.AST, package: str) -> set[tuple[str, int]]:
+    """Full dotted ``module.name`` of every import in ``tree``, with its line number.
+
+    Unlike :func:`imported_roots`, this keeps the whole dotted path rather
+    than only the top-level package, so ``engine.mc.moments`` and
+    ``engine.mc.returns`` are told apart. A from-import is recorded as
+    ``module.name`` for each imported name -- never the bare module on its
+    own -- with ``asname`` ignored and ``*`` recorded literally as
+    ``module.*``. A relative from-import is resolved against ``package``,
+    the dotted package the source file lives in (see :func:`module_package`),
+    rather than skipped, so it is caught exactly like an absolute one.
+    """
+    found: set[tuple[str, int]] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found.add((alias.name, node.lineno))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                base = node.module
+            else:
+                parts = package.split(".")
+                drop = node.level - 1
+                base_parts = parts[: len(parts) - drop] if drop else parts
+                base = ".".join(base_parts)
+                if node.module:
+                    base = f"{base}.{node.module}"
+            for alias in node.names:
+                found.add((f"{base}.{alias.name}", node.lineno))
+    return found
+
+
+def reaches_mc_beyond_moments(name: str) -> bool:
+    """True when ``name`` names ``engine.mc`` or any submodule other than
+    ``engine.mc.moments`` (or one of its own submodules)."""
+    in_mc = name == "engine.mc" or name.startswith("engine.mc.")
+    in_moments = name == "engine.mc.moments" or name.startswith("engine.mc.moments.")
+    return in_mc and not in_moments
+
+
+def reaches_scenario(name: str) -> bool:
+    """True when ``name`` names ``engine.scenario`` or any of its submodules."""
+    return name == "engine.scenario" or name.startswith("engine.scenario.")
+
+
+def test_moments_imports_nothing_from_the_scenario_package() -> None:
+    """``engine.mc.moments`` is the leaf: the scenario package may depend on
+    it, but it must depend on nothing from ``engine.scenario``."""
+    module = ENGINE_ROOT / "mc" / "moments.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+
+    violations = [
+        f"{module.relative_to(REPO_ROOT)}:{lineno} imports {name!r}"
+        for name, lineno in sorted(
+            imported_modules(tree, module_package(module)), key=lambda pair: pair[1]
+        )
+        if reaches_scenario(name)
+    ]
+
+    assert not violations, (
+        "engine.mc.moments must import nothing from engine.scenario, or the "
+        "dependency between the two packages would run in both directions:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+@pytest.mark.parametrize(
+    "module", scenario_modules(), ids=lambda p: str(p.relative_to(REPO_ROOT))
+)
+def test_the_scenario_package_imports_only_moments_from_mc(module: Path) -> None:
+    """The scenario package's one permitted dependency on ``engine/mc`` is
+    ``engine.mc.moments``, in any import form, ``from engine.mc import
+    moments`` included. ``engine.mc`` itself and every other submodule are
+    refused."""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    package = module_package(module)
+
+    violations = [
+        f"{module.relative_to(REPO_ROOT)}:{lineno} imports {name!r}"
+        for name, lineno in sorted(imported_modules(tree, package), key=lambda pair: pair[1])
+        if reaches_mc_beyond_moments(name)
+    ]
+
+    assert not violations, (
+        "engine/scenario may depend on engine.mc.moments only, never on "
+        "engine.mc itself or any other engine.mc submodule:\n  " + "\n  ".join(violations)
+    )
+
+
+def test_module_detector_is_not_vacuous() -> None:
+    """Runs the real predicates, ``reaches_mc_beyond_moments`` and
+    ``reaches_scenario``, over every import form the two tests above must
+    tell apart -- plain, from-import, aliased, relative, and a leaf-only
+    from-import -- so those tests are not vacuous passes over an empty
+    violation set. Also pins ``module_package``."""
+    package = module_package(SCENARIO_ROOT / "schema.py")
+    assert package == module_package(SCENARIO_ROOT / "__init__.py")
+    assert package == "engine.scenario"
+    assert module_package(ENGINE_ROOT / "mc" / "moments.py") == "engine.mc"
+
+    source = (
+        "from engine.mc.returns import generate\n"
+        "import engine.mc\n"
+        "from engine import mc\n"
+        "from engine.mc import returns\n"
+        "from ..mc import returns as r\n"
+        "from engine.mc import moments\n"
+        "from engine.mc.moments import monthly_log_moments\n"
+        "import engine.mc.moments\n"
+        "from engine import scenario\n"
+        "from engine.scenario.schema import Scenario\n"
+    )
+    tree = ast.parse(source)
+    found = imported_modules(tree, package)
+
+    assert {lineno for name, lineno in found if reaches_mc_beyond_moments(name)} == {1, 2, 3, 4, 5}
+    assert {lineno for name, lineno in found if reaches_scenario(name)} == {9, 10}
 
 
 def test_forbidden_roots_are_actually_detected() -> None:

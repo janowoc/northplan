@@ -502,9 +502,7 @@ class TestFiniteGuard:
     """Without this guard, NaN or +/-inf clears every other guard in this
     module silently: ``nan <= 0.0`` and ``nan > tolerance`` are both
     ``False``, and ``np.linalg.eigvalsh`` of a matrix containing NaN returns
-    NaN, which fails no comparison either. The first sign of it would
-    otherwise be a ``LinAlgError`` raised deep inside
-    ``rng.multivariate_normal``, a long way from the value that caused it."""
+    NaN, which fails no comparison either."""
 
     def test_generate_rejects_nan_in_annual_means(self) -> None:
         means = np.array([np.nan, 0.02])
