@@ -27,14 +27,17 @@ read-only view. Two separate reasons:
 **Dollars are real dollars of January of ``start_year``**, the same convention
 the engine holds everywhere. A balance, a salary, a pension, a spending band
 and an education cost are all stated in that purchasing power; the engine never
-converts them back until display.
+converts them back until display. The one exception is a person's
+``prior_year_net_income``, the figure as reported on that year's return, not
+restated.
 
 **Amounts are what the household has, not what the rules allow.** Contribution
-room is a scenario input because it depends on a filing history the model does
-not have. The schema checks that a number is non-negative and self-consistent;
-it never checks a number against a statutory limit, because the limits live in
-``params/`` for a particular year and a scenario may legitimately open with
-room carried forward from years the model knows nothing about.
+room, and the prior year's net income, are scenario inputs because they depend
+on a filing history the model does not have. The schema checks that a number is
+non-negative and self-consistent; it never checks a number against a statutory
+limit, because the limits live in ``params/`` for a particular year and a
+scenario may legitimately open with room carried forward from years the model
+knows nothing about.
 
 What this module deliberately does **not** validate
 ---------------------------------------------------
@@ -84,7 +87,9 @@ __all__ = [
     "ElectionsSpec",
     "Employment",
     "Household",
+    "LifAccount",
     "LiraAccount",
+    "OasEntitlement",
     "Person",
     "PolicySpec",
     "Resp",
@@ -112,10 +117,9 @@ CONTRIBUTION_KINDS: Final[frozenset[str]] = frozenset({"rrsp", "tfsa", "taxable"
 #: ``resp`` is absent: an RESP is drawn down by the education window, not by
 #: the household's withdrawal order, and naming it here would describe a
 #: decision the policy does not get to make. ``cash`` is absent for the same
-#: reason as above — spending comes out of cash by construction.
-WITHDRAWAL_KINDS: Final[frozenset[str]] = frozenset(
-    {"rrsp", "rrif", "lira", "lif", "tfsa", "taxable"}
-)
+#: reason as above — spending comes out of cash by construction. ``lira`` is
+#: absent because a LIRA takes no withdrawals — it becomes a LIF, which does.
+WITHDRAWAL_KINDS: Final[frozenset[str]] = frozenset({"rrsp", "rrif", "lif", "tfsa", "taxable"})
 
 #: Account kinds that hold investments and therefore carry an asset allocation.
 #:
@@ -161,7 +165,8 @@ def _freeze[V](mapping: Mapping[str, V]) -> Mapping[str, V]:
 FrozenMapping = Annotated[Mapping[str, _V], AfterValidator(_freeze)]
 
 #: A dollar amount that cannot be negative. Real dollars of January of the
-#: scenario's start year, like every amount below.
+#: scenario's start year, like every amount below except
+#: ``Person.prior_year_net_income``.
 Money = Annotated[float, Field(ge=0.0)]
 
 #: A calendar month, January is 1.
@@ -220,13 +225,15 @@ class CppEntitlement(_Base):
     - ``contributory_history`` — the person has not started CPP, and this is
       the fraction of the maximum they are on course for. The engine turns it
       into an amount using the start age the policy elects.
-    - ``in_pay_monthly`` — the person is already receiving CPP, and this is the
-      cheque. The start-age election no longer applies to them.
+    - ``in_pay_monthly`` — the person is already receiving CPP, and this is
+      the gross monthly amount. The start-age election no longer applies to
+      them.
 
     Attributes:
         contributory_history: Fraction of the maximum pension earned, ``[0,
             1]``. ``0.85`` is a career with some low-earning years.
-        in_pay_monthly: Real dollars a month, already being received.
+        in_pay_monthly: Real dollars a month, already being received: the
+            gross amount, before any income-tax withholding.
     """
 
     contributory_history: Fraction | None = None
@@ -301,7 +308,11 @@ class DbPension(_Base):
 
 
 class CashAccount(_Base):
-    """The hub. Every inflow and outflow passes through it.
+    """Cash one person holds on 1 January of the start year.
+
+    A per-person input: the builder sums every person's balance into the one
+    household cash account, which every inflow and outflow passes through
+    (limitations.md L38).
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
@@ -315,9 +326,10 @@ class RrspAccount(_Base):
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
-        room: Unused contribution room carried into the start year. A scenario
-            input rather than a computed figure: it depends on a filing history
-            the model does not have.
+        room: The unused room available on 1 January of the start year after
+            that year's grant, as a notice of assessment states it. A
+            scenario input rather than a computed figure: it depends on a
+            filing history the model does not have.
     """
 
     balance: Money = 0.0
@@ -341,8 +353,9 @@ class TfsaAccount(_Base):
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
-        room: Unused contribution room carried into the start year, including
-            room restored from withdrawals in earlier years.
+        room: The unused room available on 1 January of the start year after
+            that year's grant, including room restored from withdrawals in
+            earlier years.
     """
 
     balance: Money = 0.0
@@ -365,8 +378,50 @@ class TaxableAccount(_Base):
     acb: Money = 0.0
 
 
+def _check_jurisdiction_required_when_funded(
+    kind: str, balance: float, jurisdiction: str | None
+) -> None:
+    """Shared by :class:`LiraAccount` and :class:`LifAccount`: same rule, same shape of message.
+
+    ``kind`` is the field name the message begins with (``"lira"`` or
+    ``"lif"``), so the two accounts' messages stay specific to their own kind
+    rather than reading as a generic "locked-in" complaint.
+    """
+    if balance > 0.0 and jurisdiction is None:
+        raise ValueError(
+            f"{kind}: jurisdiction is required when balance is above zero "
+            f"(got {balance}). A locked-in account is governed by the "
+            "pension law it was registered under, which the province of "
+            "residence does not imply."
+        )
+
+
 class LiraAccount(_Base):
-    """A locked-in account, and the LIF it becomes.
+    """A LIRA, before conversion to a LIF.
+
+    Attributes:
+        balance: Real dollars on 1 January of the start year.
+        jurisdiction: The pension jurisdiction the account is **registered**
+            in, which is not necessarily where the household lives. An Alberta
+            resident may hold an Ontario-registered LIRA: once it becomes a
+            LIF they draw it under Ontario's maximum table, and they file
+            Alberta income tax. Required as soon as there is a balance,
+            because there is no safe fallback — defaulting to the province of
+            residence is right until it is silently wrong, and no test on a
+            household that never moved would catch it (limitations.md L3).
+    """
+
+    balance: Money = 0.0
+    jurisdiction: JurisdictionCode | None = None
+
+    @model_validator(mode="after")
+    def _check_jurisdiction_present(self) -> Self:
+        _check_jurisdiction_required_when_funded("lira", self.balance, self.jurisdiction)
+        return self
+
+
+class LifAccount(_Base):
+    """A LIF, for a person already converted.
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
@@ -385,13 +440,7 @@ class LiraAccount(_Base):
 
     @model_validator(mode="after")
     def _check_jurisdiction_present(self) -> Self:
-        if self.balance > 0.0 and self.jurisdiction is None:
-            raise ValueError(
-                f"lira: jurisdiction is required when balance is above zero "
-                f"(got {self.balance}). A locked-in account is governed by the "
-                "pension law it was registered under, which the province of "
-                "residence does not imply."
-            )
+        _check_jurisdiction_required_when_funded("lif", self.balance, self.jurisdiction)
         return self
 
 
@@ -399,15 +448,16 @@ class Accounts(_Base):
     """One person's accounts. Every kind is optional and opens empty.
 
     An absent account and one written as ``{balance: 0}`` mean the same thing,
-    so a household with no locked-in money simply omits ``lira``.
+    so a person with no locked-in money simply omits ``lira`` and ``lif``.
 
     Attributes:
-        cash: The hub account.
+        cash: Cash held, summed into the household's one cash account.
         rrsp: Registered retirement savings.
         rrif: Registered retirement income fund.
         tfsa: Tax-free savings account.
         taxable: Non-registered holdings.
-        lira: Locked-in retirement account, and the LIF it becomes.
+        lira: Locked-in retirement account before conversion.
+        lif: Life income fund, for a person already converted.
     """
 
     cash: CashAccount = Field(default_factory=CashAccount)
@@ -416,6 +466,42 @@ class Accounts(_Base):
     tfsa: TfsaAccount = Field(default_factory=TfsaAccount)
     taxable: TaxableAccount = Field(default_factory=TaxableAccount)
     lira: LiraAccount = Field(default_factory=LiraAccount)
+    lif: LifAccount = Field(default_factory=LifAccount)
+
+    @model_validator(mode="after")
+    def _check_lira_and_lif_agree_on_jurisdiction(self) -> Self:
+        lira_jurisdiction = self.lira.jurisdiction
+        lif_jurisdiction = self.lif.jurisdiction
+        if (
+            lira_jurisdiction is not None
+            and lif_jurisdiction is not None
+            and lira_jurisdiction != lif_jurisdiction
+        ):
+            raise ValueError(
+                f"accounts: lira.jurisdiction ({lira_jurisdiction!r}) and "
+                f"lif.jurisdiction ({lif_jurisdiction!r}) disagree. A person "
+                "carries at most one locked-in jurisdiction, sharing one "
+                "jurisdiction between a LIRA and the LIF it becomes "
+                "(limitations.md L47)."
+            )
+        return self
+
+
+class OasEntitlement(_Base):
+    """What the household knows about a person's OAS, when it is already in pay.
+
+    Absent, or given without ``in_pay_monthly``, means the person has not
+    started OAS — the common case, where the start-age election in
+    :class:`ElectionsSpec` decides when it begins. When ``in_pay_monthly`` is
+    given, the person is already receiving OAS, it is the gross monthly
+    amount, and the start-age election no longer applies to them.
+
+    Attributes:
+        in_pay_monthly: Real dollars a month, already being received: the
+            gross amount, before any recovery-tax or income-tax withholding.
+    """
+
+    in_pay_monthly: Money | None = None
 
 
 class Person(_Base):
@@ -434,8 +520,16 @@ class Person(_Base):
         employment: Bands of employment income, in any order, which must not
             overlap.
         cpp: What is known about their CPP.
+        oas: What is known about their OAS, if it is already in pay.
         db_pensions: Defined-benefit pensions, possibly none.
         accounts: Opening balances.
+        prior_year_net_income: Net income for the calendar year before
+            ``start_year``, the figure as reported on that year's return (an
+            estimate if it is not yet filed), not restated in start-year
+            dollars — the one amount in a scenario that is not real dollars.
+            Required, with no default: a scenario carries no filing history the
+            model could otherwise derive this from, and zero is a legitimate
+            value the author types.
     """
 
     id: str
@@ -444,8 +538,30 @@ class Person(_Base):
     sex: Literal["f", "m"]
     employment: tuple[Employment, ...] = ()
     cpp: CppEntitlement
+    oas: OasEntitlement = Field(default_factory=OasEntitlement)
     db_pensions: tuple[DbPension, ...] = ()
     accounts: Accounts = Field(default_factory=Accounts)
+    prior_year_net_income: Money
+
+    @model_validator(mode="before")
+    @classmethod
+    def _check_prior_year_net_income_present(cls, data: Any) -> Any:
+        """Reject a missing ``prior_year_net_income`` before field validation.
+
+        Runs before field validation so the message can name the person by
+        ``id``, which pydantic's own missing-field error does not. When this
+        raises, pydantic reports no other error for this person, so their
+        other mistakes surface only on the next load.
+        """
+        if isinstance(data, Mapping) and "prior_year_net_income" not in data:
+            who = f"person {data['id']!r}" if "id" in data else "person (no id)"
+            raise ValueError(
+                f"{who}: prior_year_net_income is required and "
+                "has no default; a scenario carries no filing history the "
+                "model could otherwise derive it from. Zero is a legitimate "
+                "value; write 0 if that is the figure."
+            )
+        return data
 
     @model_validator(mode="after")
     def _check_employment_does_not_overlap(self) -> Self:
@@ -525,7 +641,8 @@ class Resp(_Base):
         contributions: Contributions made to date, real dollars.
         grants: Grant received to date, real dollars.
         income: Accumulated income to date, real dollars.
-        grant_room_carried: Unused grant room carried into the start year.
+        grant_room_carried: The unused grant room available on 1 January of
+            the start year after that year's grant.
     """
 
     subscriber: str
@@ -582,7 +699,8 @@ class Household(_Base):
     Attributes:
         province: Two-letter code for the province of **residence**, selecting
             the provincial parameter file for income tax. Not the jurisdiction
-            a locked-in account is governed by; see :class:`LiraAccount`.
+            a locked-in account is governed by; see :class:`LiraAccount` and
+            :class:`LifAccount`.
         persons: One or two adults, in a stable order. Every per-person array
             downstream is indexed by position here.
         beneficiaries: RESP beneficiaries, possibly none.
@@ -997,8 +1115,8 @@ class Scenario(_Base):
     Attributes:
         name: Label for the run, used for export filenames.
         start_year: The simulation opens on 1 January of this year, every
-            amount is in that January's dollars, and ``params/<start_year>/``
-            serves the whole run.
+            amount but ``Person.prior_year_net_income`` is in that January's
+            dollars, and ``params/<start_year>/`` serves the whole run.
         n_paths: Monte Carlo paths.
         seed: Seed for the common random numbers. Fixed so the same scenario
             reproduces exactly, and shared across every policy so the optimizer
@@ -1127,10 +1245,10 @@ class Scenario(_Base):
         is no default to fall back on, because the start age *is* the decision
         being modelled.
 
-        A person already receiving CPP is exempt from the CPP election and only
-        from that one: their pension started on a date the scenario records as
-        an amount, and an age would be a second, contradictory answer. OAS has
-        no equivalent "already in pay" input, so it is required for everyone.
+        A person already receiving CPP or OAS is exempt from that benefit's
+        election and only that one: the pension started on a date the
+        scenario records as an amount, and an age would be a second,
+        contradictory answer.
         """
         for policy in self.policies:
             for field_name, needs_one in (
@@ -1138,7 +1256,10 @@ class Scenario(_Base):
                     "cpp_start_age_years",
                     [p.id for p in self.household.persons if p.cpp.in_pay_monthly is None],
                 ),
-                ("oas_start_age_years", list(self.household.person_ids)),
+                (
+                    "oas_start_age_years",
+                    [p.id for p in self.household.persons if p.oas.in_pay_monthly is None],
+                ),
             ):
                 elected: Mapping[str, int] = getattr(policy.elections, field_name)
                 missing = [person_id for person_id in needs_one if person_id not in elected]

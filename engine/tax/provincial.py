@@ -18,7 +18,7 @@ They are in the same file but reached by a different route, and the difference
 matters. Income tax follows the province of **residence**, so this module is
 handed ``ParamYear.province(household.province)``. A LIF follows the province
 its originating pension was **registered** in, so ``lira`` is handed
-``ParamYear.jurisdiction(LockedInState.jurisdiction)``. For a household
+``ParamYear.jurisdiction(LifState.jurisdiction)``. For a household
 that never moved these resolve to one object; for one that did, taking the LIF
 table from this module's parameter set is wrong and nothing downstream will say
 so.

@@ -53,15 +53,17 @@ Scope of the first version: Alberta residents, no GIS, no Quebec. See
 4. **Household is a list of persons from day one.** Pension splitting,
    survivor benefits, the RRIF spousal rollover, OAS ceasing at first death,
    and two mortality timelines all require two people.
-5. **Real dollars internally, January dollars of the start year.** One
-   parameter year serves the whole run. An indexed amount is constant in real
-   terms except for the erosion it suffers between adjustment dates, which
-   is a constant factor per indexation schedule computed once per scenario in
-   `engine/core/indexation.py`. An amount fixed in nominal terms by statute —
-   the pension income amount, the CESG figures, a non-indexed DB pension —
-   decays without limit and is decayed explicitly. Which amounts are on which
-   schedule is declared in the parameter files, not in code. Conversion to
-   nominal happens only at display.
+5. **Real dollars internally, January dollars of the start year.** The one
+   exception is the prior-year net income a scenario states for each person,
+   taken as filed; the first December close replaces it with a real figure.
+   One parameter year serves the whole run. An indexed amount is constant in
+   real terms except for the erosion it suffers between adjustment dates,
+   which is a constant factor per indexation schedule computed once per
+   scenario in `engine/core/indexation.py`. An amount fixed in nominal terms
+   by statute — the pension income amount, the CESG figures, a non-indexed
+   DB pension — decays without limit and is decayed explicitly. Which
+   amounts are on which schedule is declared in the parameter files, not in
+   code. Conversion to nominal happens only at display.
 6. **The timestep is one month.** Life events happen mid-year, benefits are
    paid monthly, and the balance owing on a tax year is paid in the filing
    month of the next one. Annual events — the assessment, contribution room,
@@ -128,13 +130,13 @@ are the filing month and the indexation schedules. See `CLAUDE.md`.
   schedule stops the run.
 - **Scenarios** — YAML, validated by `engine/scenario/`. One schema for
   regression fixtures, real households, and the API. A scenario carries the
-  household (persons with birth date and sex, employment schedule, CPP
-  history or amount in pay, DB pensions, account balances and room; RESP
-  beneficiaries with plan state and an education schedule), a spending
-  schedule, return assumptions (asset classes with real mean, volatility and
-  the yields that fix their tax character; a correlation matrix; allocations
-  per account kind), and a list of named policies. `scenarios/example.yaml` is
-  the reference.
+  household (persons with birth date and sex, employment schedule, CPP history
+  or amount in pay, OAS amount if already in pay, prior-year net income, DB
+  pensions, account balances and room; RESP beneficiaries with plan state and
+  an education schedule), a spending schedule, return assumptions (asset
+  classes with real mean, volatility and the yields that fix their tax
+  character; a correlation matrix; allocations per account kind), and a list
+  of named policies. `scenarios/example.yaml` is the reference.
 - **Results** — JSON over the API; CSV row-per-year for export; a single-path
   monthly trace for debugging. The engine steps monthly and aggregates to
   years at the boundary.

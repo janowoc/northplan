@@ -5,7 +5,7 @@
 
 Reads a scenario YAML file, runs it, writes results as CSV (row per year) or
 JSON. Real-to-nominal conversion, if requested, happens here — the engine never
-returns nominal figures.
+converts a figure to nominal.
 
 The engine steps monthly and reports per year, so a row here is a year: net
 worth at 31 December, the year's total spending, and the tax assessed on that

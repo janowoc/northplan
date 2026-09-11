@@ -197,6 +197,17 @@ REJECTIONS = [
         "contributory_history",
         sets("household.persons.0.cpp", {"contributory_history": 1.5}),
     ),
+    # --- Prior year net income -----------------------------------------------
+    rejected(
+        "prior-year-net-income-absent",
+        "prior_year_net_income",
+        deletes("household.persons.0.prior_year_net_income"),
+    ),
+    rejected(
+        "negative-prior-year-net-income",
+        "prior_year_net_income",
+        sets("household.persons.0.prior_year_net_income", -1),
+    ),
     # --- Employment ---------------------------------------------------------
     rejected(
         "employment-bands-overlap",
@@ -234,6 +245,22 @@ REJECTIONS = [
         "locked-in-balance-without-a-jurisdiction",
         "jurisdiction",
         deletes("household.persons.0.accounts.lira.jurisdiction"),
+    ),
+    rejected(
+        "lif-balance-without-a-jurisdiction",
+        "jurisdiction",
+        sets("household.persons.0.accounts.lif", {"balance": 1000}),
+    ),
+    rejected(
+        # The example's lira is registered in "ab".
+        "lira-and-lif-in-different-jurisdictions",
+        "jurisdiction",
+        sets("household.persons.0.accounts.lif", {"balance": 1000, "jurisdiction": "on"}),
+    ),
+    rejected(
+        "lira-and-lif-disagree-even-with-a-zero-balance",
+        "jurisdiction",
+        sets("household.persons.0.accounts.lif", {"balance": 0, "jurisdiction": "on"}),
     ),
     # --- Defined-benefit pensions -------------------------------------------
     rejected(
@@ -442,6 +469,11 @@ REJECTIONS = [
         sets("policies.0.withdrawal.order", ["taxable", "rrif", "taxable"]),
     ),
     rejected(
+        "withdrawal-order-names-a-lira",
+        "withdrawal.order",
+        sets("policies.0.withdrawal.order", ["taxable", "lira", "tfsa"]),
+    ),
+    rejected(
         "negative-bracket-index",
         "taxable_ceiling_bracket",
         sets("policies.0.withdrawal.taxable_ceiling_bracket", -1),
@@ -462,6 +494,11 @@ REJECTIONS = [
         "cpp_start_age_years",
         clone_person("b"),
         sets("policies.0.elections.oas_start_age_years", {"a": 65, "b": 65}),
+    ),
+    rejected(
+        "no-election-for-a-person-who-has-not-started-oas",
+        "oas_start_age_years",
+        sets("policies.0.elections.oas_start_age_years", {}),
     ),
     rejected(
         "two-policies-with-one-name",
@@ -571,6 +608,36 @@ ACCEPTANCES = [
         deletes("household.persons.0.accounts.lira"),
     ),
     accepted(
+        "a-prior-year-net-income-of-zero",
+        sets("household.persons.0.prior_year_net_income", 0),
+    ),
+    accepted(
+        "a-person-already-receiving-oas-needs-no-start-age",
+        sets("household.persons.0.oas", {"in_pay_monthly": 800}),
+        sets("policies.0.elections.oas_start_age_years", {}),
+    ),
+    accepted(
+        "a-withdrawal-order-naming-a-lif",
+        sets("policies.0.withdrawal.order", ["lif", "taxable"]),
+    ),
+    accepted(
+        "a-lira-and-a-lif-in-one-jurisdiction",
+        sets("household.persons.0.accounts.lif", {"balance": 50000, "jurisdiction": "ab"}),
+    ),
+    accepted(
+        "a-person-already-converted-to-a-lif",
+        deletes("household.persons.0.accounts.lira"),
+        sets("household.persons.0.accounts.lif", {"balance": 80000, "jurisdiction": "ab"}),
+    ),
+    accepted(
+        "an-allocation-for-a-lira",
+        sets("assumptions.allocations.lira", {"equity": 0.5, "bonds": 0.5}),
+    ),
+    accepted(
+        "an-allocation-for-a-lif",
+        sets("assumptions.allocations.lif", {"equity": 0.5, "bonds": 0.5}),
+    ),
+    accepted(
         "a-person-with-no-accounts-at-all",
         deletes("household.persons.0.accounts"),
     ),
@@ -661,6 +728,38 @@ def test_a_broken_person_is_reported_once_and_not_as_an_empty_household(
     message = str(excinfo.value)
     assert "1 validation error" in message, message
     assert "at least 1 item" not in message, message
+
+
+def test_absent_prior_year_net_income_names_the_person_by_id(tmp_path: Path) -> None:
+    """Pydantic's own "Field required" only names ``household.persons.0``.
+
+    A missing key is refused by our own before-validator instead, precisely
+    so the message can point at the person's ``id`` rather than a positional
+    index.
+    """
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        load_mutated(tmp_path, (deletes("household.persons.0.prior_year_net_income"),))
+
+    message = str(excinfo.value)
+    assert "prior_year_net_income" in message, message
+    assert "person 'a'" in message, message
+    assert "Field required" not in message, message
+
+
+def test_absent_prior_year_net_income_and_absent_id_names_neither(tmp_path: Path) -> None:
+    """With no ``id`` either, the message says so rather than printing ``None``."""
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        load_mutated(
+            tmp_path,
+            (
+                deletes("household.persons.0.id"),
+                deletes("household.persons.0.prior_year_net_income"),
+            ),
+        )
+
+    message = str(excinfo.value)
+    assert "person (no id)" in message, message
+    assert "person None" not in message, message
 
 
 def test_every_rejection_has_its_own_case_id() -> None:

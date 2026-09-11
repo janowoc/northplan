@@ -26,7 +26,7 @@ import pytest
 
 from engine.core.build import _month_offset, build_initial_state
 from engine.core.state import DEATH_NOT_DRAWN, updated
-from engine.scenario import SpendingBand, load_scenario
+from engine.scenario import LiraAccount, OasEntitlement, SpendingBand, load_scenario
 
 from .conftest import walk
 
@@ -35,10 +35,10 @@ EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
 
 N_PATHS = 3
 
-#: The example scenario currently builds exactly 52 arrays at n_paths=3.
+#: The example scenario currently builds exactly 53 arrays at n_paths=3.
 #: Close to that count, not merely "not zero": at 30 this floor passed with
-#: the entire RESP subtree gone (43) or the entire year-to-date ledger gone
-#: (37) — a wrong tree, not an empty one, and the floor never noticed. Left
+#: the entire RESP subtree gone (44) or the entire year-to-date ledger gone
+#: (38) — a wrong tree, not an empty one, and the floor never noticed. Left
 #: with room for a field or two, not a whole subtree.
 MINIMUM_ARRAYS = 50
 
@@ -99,13 +99,30 @@ class TestBuildAgainstTheExample:
         assert state.persons[0].cpp.in_pay_monthly is None
         assert state.persons[0].oas.contributory_history is None
 
-    def test_locked_in_jurisdiction(self, scenario) -> None:
+    def test_oas_start_age(self, scenario) -> None:
         state = build_initial_state(scenario, n_paths=N_PATHS)
-        assert state.persons[0].locked_in.jurisdiction == "ab"
+        assert state.persons[0].oas.start_age_months == 65 * 12
+        assert state.elections.oas_start_age_months == (65 * 12,)
 
-    def test_prior_year_net_income_opens_at_zero(self, scenario) -> None:
+    def test_household_cash_opens_at_the_example_balance(self, scenario) -> None:
         state = build_initial_state(scenario, n_paths=N_PATHS)
-        assert (state.persons[0].prior_year_net_income == 0.0).all()
+        assert (state.cash.balance == 20_000.0).all()
+
+    def test_lira_jurisdiction_and_balance(self, scenario) -> None:
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        assert state.persons[0].lira.jurisdiction == "ab"
+        assert (state.persons[0].lira.balance == 80_000.0).all()
+
+    def test_example_lif_opens_empty(self, scenario) -> None:
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        lif = state.persons[0].lif
+        assert (lif.balance == 0.0).all()
+        assert lif.jurisdiction == ""
+        assert lif.opened_year is None
+
+    def test_prior_year_net_income_is_broadcast_from_the_scenario(self, scenario) -> None:
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        assert (state.persons[0].prior_year_net_income == 92_000.0).all()
 
     def test_education_start_month_index(self, scenario) -> None:
         state = build_initial_state(scenario, n_paths=N_PATHS)
@@ -137,6 +154,79 @@ class TestBuildAgainstTheExample:
         state = build_initial_state(scenario, n_paths=N_PATHS)
         truncated = updated(state, beneficiaries=())
         assert walk(truncated, N_PATHS) < MINIMUM_ARRAYS
+
+
+class TestHouseholdCash:
+    def test_a_second_person_s_cash_is_added_to_the_household_balance(self, scenario) -> None:
+        person_a = scenario.household.persons[0]
+        person_b = person_a.model_copy(
+            update={
+                "id": "b",
+                "accounts": person_a.accounts.model_copy(
+                    update={"cash": person_a.accounts.cash.model_copy(update={"balance": 5000.0})}
+                ),
+            }
+        )
+        new_household = scenario.household.model_copy(update={"persons": (person_a, person_b)})
+
+        elections = scenario.policies[0].elections
+        new_elections = elections.model_copy(
+            update={
+                "cpp_start_age_years": {**elections.cpp_start_age_years, "b": 65},
+                "oas_start_age_years": {**elections.oas_start_age_years, "b": 65},
+            }
+        )
+        new_policy = scenario.policies[0].model_copy(update={"elections": new_elections})
+        new_scenario = scenario.model_copy(
+            update={"household": new_household, "policies": (new_policy,)}
+        )
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        assert (state.cash.balance == 25_000.0).all()
+
+
+class TestLifAlreadyConverted:
+    def test_a_person_already_converted_opens_the_lif_with_last_year_s_year(self, scenario) -> None:
+        person_a = scenario.household.persons[0]
+        new_accounts = person_a.accounts.model_copy(
+            update={
+                "lif": person_a.accounts.lif.model_copy(
+                    update={"balance": 50_000.0, "jurisdiction": "ab"}
+                )
+            }
+        )
+        new_person = person_a.model_copy(update={"accounts": new_accounts})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        lif = state.persons[0].lif
+        assert (lif.balance == 50_000.0).all()
+        assert lif.jurisdiction == "ab"
+        assert lif.opened_year == 2025
+
+    def test_a_person_holding_only_a_lif_has_an_empty_lira_jurisdiction(self, scenario) -> None:
+        person_a = scenario.household.persons[0]
+        new_accounts = person_a.accounts.model_copy(
+            update={
+                "lira": LiraAccount(),
+                "lif": person_a.accounts.lif.model_copy(
+                    update={"balance": 50_000.0, "jurisdiction": "ab"}
+                ),
+            }
+        )
+        new_person = person_a.model_copy(update={"accounts": new_accounts})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        lira = state.persons[0].lira
+        lif = state.persons[0].lif
+        assert lira.jurisdiction == ""
+        assert (lira.balance == 0.0).all()
+        assert lif.jurisdiction == "ab"
+        assert (lif.balance == 50_000.0).all()
+        assert lif.opened_year == 2025
 
 
 class TestPolicySelection:
@@ -308,6 +398,69 @@ class TestAlreadyInProgress:
         assert not cpp.in_pay_monthly.flags.writeable
         assert (cpp.in_pay_monthly == 1200.0).all()
         assert state.elections.cpp_start_age_months == (None,)
+
+    def test_oas_already_in_pay(self, scenario) -> None:
+        person_a = scenario.household.persons[0]
+        in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
+        new_person = person_a.model_copy(update={"oas": in_pay_oas})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        oas = state.persons[0].oas
+        assert oas.start_age_months is None
+        assert oas.contributory_history is None
+        assert oas.in_pay_monthly.shape == (N_PATHS,)
+        assert oas.in_pay_monthly.dtype.name == "float64"
+        assert not oas.in_pay_monthly.flags.writeable
+        assert (oas.in_pay_monthly == 800.0).all()
+        assert state.elections.oas_start_age_months == (None,)
+
+    def test_oas_already_in_pay_with_no_election_at_all(self, scenario) -> None:
+        """Proves the builder never looks up an OAS election for a person already in pay."""
+        person_a = scenario.household.persons[0]
+        in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
+        new_person = person_a.model_copy(update={"oas": in_pay_oas})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+
+        elections = scenario.policies[0].elections
+        new_elections = elections.model_copy(update={"oas_start_age_years": {}})
+        new_policy = scenario.policies[0].model_copy(update={"elections": new_elections})
+        new_scenario = scenario.model_copy(
+            update={"household": new_household, "policies": (new_policy,)}
+        )
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        oas = state.persons[0].oas
+        assert oas.start_age_months is None
+        assert (oas.in_pay_monthly == 800.0).all()
+        assert state.elections.oas_start_age_months == (None,)
+
+    def test_oas_election_looked_up_only_for_the_person_not_yet_in_pay(self, scenario) -> None:
+        """Two persons, only one in pay: the builder must key the election by id."""
+        person_a = scenario.household.persons[0]
+        in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
+        person_a = person_a.model_copy(update={"oas": in_pay_oas})
+        person_b = person_a.model_copy(update={"id": "b", "oas": OasEntitlement()})
+        new_household = scenario.household.model_copy(update={"persons": (person_a, person_b)})
+
+        elections = scenario.policies[0].elections
+        new_elections = elections.model_copy(
+            update={
+                "cpp_start_age_years": {**elections.cpp_start_age_years, "b": 65},
+                "oas_start_age_years": {"b": 65},
+            }
+        )
+        new_policy = scenario.policies[0].model_copy(update={"elections": new_elections})
+        new_scenario = scenario.model_copy(
+            update={"household": new_household, "policies": (new_policy,)}
+        )
+
+        state = build_initial_state(new_scenario, n_paths=N_PATHS)
+        assert state.elections.oas_start_age_months == (None, 780)
+        assert state.persons[0].oas.start_age_months is None
+        assert state.persons[1].oas.start_age_months == 780
+        assert state.persons[1].oas.in_pay_monthly is None
 
 
 class TestSpendingMonthlySelection:

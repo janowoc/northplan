@@ -19,5 +19,7 @@ indexation period, and the real-terms parameter view that is the only route
 from a dollar in ``params/`` to the engine. ``mortality`` owns the survival
 curve and the per-path death draw. ``state`` is what passes between months.
 
-All amounts are real dollars. All arrays are shape ``(n_paths,)``.
+All amounts are real dollars, except the opening
+``PersonState.prior_year_net_income``, which is the scenario's figure as
+filed. All arrays are shape ``(n_paths,)``.
 """

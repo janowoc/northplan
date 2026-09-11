@@ -10,13 +10,13 @@ part that distinguishes this from ``rrif.py``.
 
 **The jurisdiction is not the province of residence.** A LIF is governed by the
 pension legislation of the jurisdiction its originating pension was registered
-under. Someone resident in Alberta may hold an Ontario-registered LIF: they
-draw it under Ontario's table and file Alberta income tax. Every function here
-that takes a parameter set takes the *registration* jurisdiction's, reached
-through ``ParamYear.jurisdiction`` and named by
-``engine.core.state.LockedInState.jurisdiction`` — never through
-``ParamYear.province(household.province)``. The two coincide for a household
-that never moved, which is why the wrong one is easy to ship.
+under. Someone resident in Alberta may hold an Ontario-registered LIF: they draw
+it under Ontario's table and file Alberta income tax. Every function here that
+takes a parameter set takes the *registration* jurisdiction's, reached through
+``ParamYear.jurisdiction`` and named by
+``engine.core.state.LiraState.jurisdiction`` or ``LifState.jurisdiction`` —
+never through ``ParamYear.province(household.province)``. The two coincide for a
+household that never moved, which is why the wrong one is easy to ship.
 
 Both the minimum and the maximum are **annual** figures fixed in January from
 the 1 January balance, and both are satisfied or consumed across the months of
@@ -107,7 +107,7 @@ def maximum_withdrawal(
         age_at_start_of_year: Age in whole years on 1 January.
         params: The parameter set of the jurisdiction the account is
             **registered** in — from ``ParamYear.jurisdiction`` keyed by
-            ``LockedInState.jurisdiction``. Not the household's
+            ``LifState.jurisdiction``. Not the household's
             province of residence, and not the set that
             ``engine.tax.provincial`` was handed for the same household.
 

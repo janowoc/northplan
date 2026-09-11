@@ -114,7 +114,7 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        across the months.
     5. The LIF *maximum* for the year is fixed the same way, and read from the
        parameter set of the jurisdiction each locked-in account is registered
-       in — ``params.jurisdiction(LockedInState.jurisdiction)``, not
+       in — ``params.jurisdiction(LifState.jurisdiction)``, not
        ``params.province(household.province)``. Where
        ``engine.accounts.lira.has_maximum`` is false the jurisdiction imposes
        no ceiling and none is stored; that is a rule, not a missing table.
@@ -124,6 +124,9 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        both the grant received and the contributions made, the second because
        the additional grant tier's eligible window is a dollar amount per
        calendar year.
+
+    In January of the start year (month index zero) items 1 to 3 grant
+    nothing; the opening state already includes that year's grant.
 
     Args:
         state: Opening state for January.

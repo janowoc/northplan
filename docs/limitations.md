@@ -41,7 +41,7 @@ in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 pensions.** A LIF is governed by the jurisdiction its pension was registered
 in. We carry that jurisdiction per account and stop the run for any
 jurisdiction without a parameter file, which today means every one except
-Alberta. Lives in `engine/core/state.py::LockedInState`,
+Alberta. Lives in `engine/core/state.py::LiraState` and `LifState`,
 `engine/params/loader.py::ParamYear.jurisdiction`.
 
 ## Timeline and dollars
@@ -51,20 +51,10 @@ tax year is partly complete. We start every simulation on 1 January of the
 scenario's start year with balances as at that date, and model no income
 earned earlier in that year. Lives in `engine/scenario/`.
 
-**L46. Opening `prior_year_net_income`.** In reality anything assessed on an
-earlier year's net income is computed from a real figure carried forward from
-before the plan was drawn up. A scenario carries no income history from before
-the run, so the field opens at zero. Its one consumer is the RESP
-enhanced-grant rate; the OAS repayment is assessed on the current year and does
-not read it, and the GIS band indicator uses a different income basis.
-Direction: optimistic — a lower family income buys a higher match rate, so the
-enhanced grant is overstated in the first year of the run. Lives in
-`engine/core/build.py`. Issue 33 replaces this entry when the opening value
-becomes a scenario input.
-
 **L5. Real dollars are January dollars of the start year.** All amounts in a
-scenario are stated in the purchasing power of January of the start year, and
-one parameter year serves the whole run. Indexed amounts are constant in real
+scenario are stated in the purchasing power of January of the start year,
+except a person's prior-year net income, which is taken as filed; one
+parameter year serves the whole run. Indexed amounts are constant in real
 terms except for the within-cycle erosion an amount suffers between its
 adjustment dates, applied as a constant factor per indexation schedule.
 Amounts fixed in nominal terms by statute decay without limit. The routing is
@@ -259,13 +249,15 @@ hardship unlocking. Lives in `engine/accounts/lira.py`.
 **L47. One locked-in account per person.** In reality a person may hold
 several LIRAs or LIFs, from several employers, registered in different
 jurisdictions, and they do not merge: each is drawn under the maximum table of
-the jurisdiction its own originating pension was registered in. We model one
-per person, carrying one jurisdiction. Direction: neutral for a household whose
-locked-in money is all from one jurisdiction, which is the common case; where
-it is not, the ceiling on the whole balance comes from whichever jurisdiction
-the scenario names, and the error runs in either direction depending on which
-table is the looser. Lives in `engine/scenario/schema.py::Accounts.lira`,
-`engine/core/state.py::LockedInState`, read by `engine/accounts/lira.py`.
+the jurisdiction its own originating pension was registered in. We model at
+most one LIRA and one LIF per person, sharing one jurisdiction. Direction:
+neutral for a household whose locked-in money is all from one jurisdiction,
+which is the common case; where it is not, the ceiling on the whole balance
+comes from whichever jurisdiction the scenario names, and the error runs in
+either direction depending on which table is the looser. Lives in
+`engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
+`engine/core/state.py::LiraState` and `LifState`, read by
+`engine/accounts/lira.py`.
 
 The narrowing arrived with the scenario schema rather than with the account
 code, which is why it is recorded here rather than as a gap in `lira.py`: a
@@ -324,7 +316,20 @@ is rebalanced monthly at no cost. No glide path.
 
 **L38. Cash.** Cash pays zero real return. Negative cash at a month end is not
 allowed: the step force-withdraws in the policy's order, and if nothing
-remains spending is cut and the path is flagged depleted.
+remains spending is cut and the path is flagged depleted. In reality each
+spouse holds their own cash; we hold one household balance. Exact while cash
+pays nothing, since no income arises to attribute. Direction: neutral. The
+attribution lost when pooled cash funds one spouse's account is L50. Lives
+in `engine/core/state.py::HouseholdState.cash`.
+
+**L50. Spousal attribution.** In reality income and gains on property one
+spouse funds in the other's name are attributed back to the spouse who
+supplied the money. Cash is one household balance (L38), so the model does
+not know whose money funded a contribution, and taxes a taxable account's
+income and gains to its holder. A policy can therefore shift investment
+income to the lower-income spouse for free. Direction: optimistic for
+couples with unequal incomes. Lives in
+`engine/core/state.py::HouseholdState.cash`.
 
 ## Household, spending, death
 

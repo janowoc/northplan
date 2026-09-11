@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 from numpy.typing import DTypeLike
 
-#: Field names whose array is not real dollars, keyed to the dtype they must
+#: Field names whose array is not money, keyed to the dtype they must
 #: carry. Anything not listed here is money and must be float64 — an int
 #: array where a float belongs truncates dollars with no error at all.
 _EXPECTED_DTYPE: Final[dict[str, DTypeLike]] = {

@@ -9,10 +9,10 @@
 # is gitignored.
 #
 # Conventions:
-#   - Every dollar amount is a REAL dollar of January 2026, the start year.
+#   - Every dollar amount is a REAL dollar of January 2026, the start year,
+#     except prior_year_net_income, which is taken as filed.
 #     Do not inflate a future salary or a future school fee; the engine works
-#     in this January's purchasing power throughout and converts once, at
-#     display.
+#     in this January's purchasing power and converts once, at display.
 #   - Rates and shares are bare fractions (0.02), never percentages (2).
 #   - Nothing here is a tax rule. Brackets, credits, benefit formulas, the
 #     RRIF factor and the contribution ceilings all live under params/2026/
@@ -24,7 +24,7 @@
 # Read by: engine/scenario/load.py, and every test that needs a valid scenario.
 
 name: example-household
-start_year: 2026            # inputs are January-2026 dollars; params/2026 serves the run
+start_year: 2026            # dollars per the header's convention; params/2026 serves the run
 n_paths: 10000
 seed: 42                    # common random numbers: the same draws for every policy
 
@@ -39,6 +39,7 @@ household:
       employment:
         - {from_year: 2026, to_year: 2031, annual: 95000}   # both years inclusive
       cpp: {contributory_history: 0.85}          # or {in_pay_monthly: 1200}; exactly one
+      prior_year_net_income: 92000               # as filed for the prior year, not restated
       db_pensions:
         - name: employer
           start_year: 2031

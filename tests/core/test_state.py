@@ -13,6 +13,7 @@ built from the example scenario.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import FrozenInstanceError
 
 import numpy as np
@@ -27,7 +28,8 @@ from engine.core.state import (
     EmploymentBand,
     HouseholdState,
     IncomeLedger,
-    LockedInState,
+    LifState,
+    LiraState,
     PensionState,
     PersonState,
     RespState,
@@ -48,7 +50,7 @@ N_PATHS = 4
 #: A generous floor, not an exact count: high enough that an accidentally
 #: empty tree (a dropped tuple, a field quietly turned into None) cannot
 #: pass, without being so exact that an unrelated field addition breaks this
-#: test. The fixture below currently carries 52 arrays.
+#: test. The fixture below currently carries 53 arrays.
 MINIMUM_ARRAYS = 40
 
 
@@ -79,14 +81,20 @@ def _rrif(*, balance: float = 0.0, opened_year: int | None = None) -> RrifState:
     )
 
 
-def _locked_in(*, balance: float = 0.0, jurisdiction: str = "") -> LockedInState:
-    return LockedInState(
+def _lira(*, balance: float = 0.0, jurisdiction: str = "") -> LiraState:
+    return LiraState(balance=np.full(N_PATHS, balance), jurisdiction=jurisdiction)
+
+
+def _lif(
+    *, balance: float = 0.0, jurisdiction: str = "", opened_year: int | None = None
+) -> LifState:
+    return LifState(
         balance=np.full(N_PATHS, balance),
-        is_lif=False,
         jurisdiction=jurisdiction,
         annual_minimum=_zeros(),
         annual_maximum=_zeros(),
         withdrawn_ytd=_zeros(),
+        opened_year=opened_year,
     )
 
 
@@ -139,7 +147,8 @@ def _income_ledger() -> IncomeLedger:
 def _person(
     person_id: str = "a",
     *,
-    locked_in: LockedInState | None = None,
+    lira: LiraState | None = None,
+    lif: LifState | None = None,
     cpp: BenefitState | None = None,
 ) -> PersonState:
     return PersonState(
@@ -149,10 +158,10 @@ def _person(
         birth_month=3,
         alive=_bools(True),
         death_month_index=np.full(N_PATHS, DEATH_NOT_DRAWN, dtype=np.int64),
-        cash=_cash(),
         rrsp=_rrsp(),
         rrif=_rrif(),
-        locked_in=locked_in if locked_in is not None else _locked_in(),
+        lira=lira if lira is not None else _lira(),
+        lif=lif if lif is not None else _lif(),
         tfsa=_tfsa(),
         taxable=_taxable(),
         cpp=cpp if cpp is not None else _benefit(contributory_history=0.85),
@@ -207,6 +216,7 @@ def build_household(**overrides: object) -> HouseholdState:
         "province": "ab",
         "persons": (_person(),),
         "beneficiaries": (_beneficiary(),),
+        "cash": _cash(),
         "elections": _elections(),
         "spending_schedule": (SpendingLevel(from_year=2026, monthly_level=5000.0),),
         "spending_monthly": 5000.0,
@@ -308,7 +318,7 @@ class TestFreezeAndUpdated:
     def test_writing_into_a_frozen_array_raises_value_error(self) -> None:
         household = build_household()
         with pytest.raises(ValueError, match="read-only"):
-            household.persons[0].cash.balance[0] = 1.0
+            household.cash.balance[0] = 1.0
 
     def test_assigning_a_field_on_a_frozen_dataclass_raises(self) -> None:
         household = build_household()
@@ -331,12 +341,12 @@ class TestFreezeAndUpdated:
 
     def test_updated_on_a_nested_class_reflects_in_a_new_household(self) -> None:
         household = build_household()
-        new_cash = updated(household.persons[0].cash, balance=np.full(N_PATHS, 999.0))
-        new_person = updated(household.persons[0], cash=new_cash)
+        new_rrsp = updated(household.persons[0].rrsp, balance=np.full(N_PATHS, 999.0))
+        new_person = updated(household.persons[0], rrsp=new_rrsp)
         new_household = updated(household, persons=(new_person,))
 
-        assert new_household.persons[0].cash.balance[0] == 999.0
-        assert household.persons[0].cash.balance[0] == 100.0
+        assert new_household.persons[0].rrsp.balance[0] == 999.0
+        assert household.persons[0].rrsp.balance[0] == 0.0
         assert walk(new_household, N_PATHS) > 0
 
 
@@ -408,16 +418,29 @@ class TestFreezeGuardIsOneDirectional:
             col[0] = 1.0
 
 
-class TestLockedInJurisdictionInvariant:
+class TestLiraJurisdictionInvariant:
     def test_empty_jurisdiction_and_zero_balance_is_fine(self) -> None:
-        _locked_in(balance=0.0, jurisdiction="")
+        _lira(balance=0.0, jurisdiction="")
 
     def test_empty_jurisdiction_with_nonzero_balance_fails(self) -> None:
         with pytest.raises(ValueError, match="jurisdiction"):
-            _locked_in(balance=1.0, jurisdiction="")
+            _lira(balance=1.0, jurisdiction="")
 
     def test_named_jurisdiction_with_nonzero_balance_is_fine(self) -> None:
-        _locked_in(balance=1.0, jurisdiction="ab")
+        _lira(balance=1.0, jurisdiction="ab")
+
+
+class TestLifJurisdictionInvariant:
+    def test_empty_jurisdiction_and_zero_balance_is_fine(self) -> None:
+        _lif(balance=0.0, jurisdiction="")
+
+    def test_empty_jurisdiction_with_nonzero_balance_fails(self) -> None:
+        with pytest.raises(ValueError, match="jurisdiction"):
+            # opened_year is set so only the jurisdiction rule is under test.
+            _lif(balance=1.0, jurisdiction="", opened_year=2025)
+
+    def test_named_jurisdiction_with_nonzero_balance_is_fine(self) -> None:
+        _lif(balance=1.0, jurisdiction="ab", opened_year=2025)
 
 
 class TestRrifOpenedYearInvariant:
@@ -430,6 +453,18 @@ class TestRrifOpenedYearInvariant:
     def test_opened_year_none_with_nonzero_balance_fails(self) -> None:
         with pytest.raises(ValueError, match="opened_year"):
             _rrif(balance=1.0, opened_year=None)
+
+
+class TestLifOpenedYearInvariant:
+    def test_opened_year_none_and_zero_balance_is_fine(self) -> None:
+        _lif(balance=0.0, opened_year=None)
+
+    def test_opened_year_set_and_nonzero_balance_is_fine(self) -> None:
+        _lif(balance=1.0, jurisdiction="ab", opened_year=2025)
+
+    def test_opened_year_none_with_nonzero_balance_fails(self) -> None:
+        with pytest.raises(ValueError, match="opened_year"):
+            _lif(balance=1.0, jurisdiction="ab", opened_year=None)
 
 
 class TestDeathConsistency:
@@ -499,6 +534,11 @@ class TestPriorYearNetIncome:
         assert person.prior_year_net_income.shape == (N_PATHS,)
         assert (person.prior_year_net_income == 0.0).all()
         assert not person.prior_year_net_income.flags.writeable
+
+
+def test_person_state_has_no_cash_field() -> None:
+    """Cash is household-level; a person carries no share of it at all."""
+    assert "cash" not in {f.name for f in dataclasses.fields(PersonState)}
 
 
 class TestSpendingMonthlyInvariant:

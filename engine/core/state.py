@@ -314,8 +314,46 @@ class RrifState:
 
 
 @dataclass(frozen=True, slots=True)
-class LockedInState:
-    """A locked-in account: a LIRA, and the LIF it becomes.
+class LiraState:
+    """A LIRA, before conversion to a LIF. Takes no withdrawals.
+
+    Governed by the pension legislation of the jurisdiction the originating
+    pension was registered in — not by where the household lives now. See
+    ``docs/limitations.md`` L3. Conversion moves its balance into a
+    :class:`LifState`.
+
+    Attributes:
+        balance: Real dollars, ``(n_paths,)``.
+        jurisdiction: Two-letter code for the pension jurisdiction of
+            registration, e.g. ``"ab"``. Empty string when this account
+            names no jurisdiction of its own, which is valid only while its
+            balance is zero on every path. The builder takes it only from
+            the scenario's own account, never from the province of
+            residence or from the person's other locked-in account
+            (``docs/limitations.md`` L3); a conversion during the run
+            carries the LIRA's jurisdiction onto the LIF (L47).
+    """
+
+    balance: NDArray[np.float64]
+    jurisdiction: str
+
+    def __post_init__(self) -> None:
+        _freeze_fields(self, "balance")
+        if self.jurisdiction == "" and not np.all(self.balance == 0.0):
+            raise ValueError(
+                "jurisdiction is '' (this LIRA names no jurisdiction of its "
+                "own) but balance is nonzero on at least one path. An empty "
+                "jurisdiction is valid only while the balance is zero; "
+                "falling back to the province of residence is exactly the "
+                "mistake docs/limitations.md L3 exists to prevent."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class LifState:
+    """A LIF, for a person already converted.
+
+    It has a minimum and, in most jurisdictions, a maximum.
 
     Governed by the pension legislation of the jurisdiction the originating
     pension was registered in — not by where the household lives now. See
@@ -323,39 +361,56 @@ class LockedInState:
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        is_lif: Whether the account has converted from a LIRA to a LIF. A
-            LIRA takes no withdrawals at all; a LIF has both a minimum and,
-            in most jurisdictions, a maximum.
         jurisdiction: Two-letter code for the pension jurisdiction of
-            registration, e.g. ``"ab"``. Empty string, never a fallback to
-            the province of residence, when there is no locked-in money —
-            see ``docs/limitations.md`` L3 and ``engine/accounts/lira.py``,
-            both of which turn on that substitution being impossible.
+            registration, e.g. ``"ab"``. Empty string when this account
+            names no jurisdiction of its own, which is valid only while its
+            balance is zero on every path. The builder takes it only from
+            the scenario's own account, never from the province of
+            residence or from the person's other locked-in account
+            (``docs/limitations.md`` L3); a conversion during the run
+            carries the LIRA's jurisdiction onto the LIF (L47).
         annual_minimum: This year's RRIF-equivalent minimum, fixed in
             January, ``(n_paths,)``.
         annual_maximum: This year's jurisdiction-specific maximum
             withdrawal, fixed in January, ``(n_paths,)``. Only meaningful
-            once ``is_lif`` is true and the jurisdiction imposes one.
+            where the jurisdiction imposes one.
         withdrawn_ytd: Withdrawn so far this calendar year, ``(n_paths,)``.
+            Reset in January.
+        opened_year: The calendar year the plan was opened, or ``None`` when
+            the opening balance is zero — there is nothing to have opened,
+            enforced in ``__post_init__``. Mirrors
+            :attr:`RrifState.opened_year` exactly: the only question ever
+            asked of this field is "was it opened in the current year",
+            which decides whether the first year's minimum is exempt. For a
+            plan with a nonzero opening balance, the exact year it was
+            opened is not knowable from a scenario, so this is set to
+            ``scenario.start_year - 1`` — the year *before* the run, never
+            the start year itself, which would wrongly exempt the first
+            simulated year from the minimum.
     """
 
     balance: NDArray[np.float64]
-    is_lif: bool
     jurisdiction: str
     annual_minimum: NDArray[np.float64]
     annual_maximum: NDArray[np.float64]
     withdrawn_ytd: NDArray[np.float64]
+    opened_year: int | None
 
     def __post_init__(self) -> None:
         _freeze_fields(self, "balance", "annual_minimum", "annual_maximum", "withdrawn_ytd")
         if self.jurisdiction == "" and not np.all(self.balance == 0.0):
             raise ValueError(
-                "jurisdiction is '' (no locked-in account registered) but "
-                "balance is nonzero on at least one path. An empty "
-                "jurisdiction is only ever valid for a household with no "
-                "locked-in money at all — falling back to the province of "
-                "residence is exactly the mistake docs/limitations.md L3 "
-                "exists to prevent."
+                "jurisdiction is '' (this LIF names no jurisdiction of its "
+                "own) but balance is nonzero on at least one path. An empty "
+                "jurisdiction is valid only while the balance is zero; "
+                "falling back to the province of residence is exactly the "
+                "mistake docs/limitations.md L3 exists to prevent."
+            )
+        if self.opened_year is None and not np.all(self.balance == 0.0):
+            raise ValueError(
+                "opened_year is None (nothing has been opened) but balance "
+                "is nonzero on at least one path. opened_year is None only "
+                "when there is no LIF to have opened at all."
             )
 
 
@@ -437,24 +492,23 @@ class BenefitState:
     Attributes:
         start_age_months: Age in whole months the benefit is elected to
             start at, or ``None`` when there is no election left to make —
-            the only case today is a person whose CPP is already in pay,
-            recorded through ``in_pay_monthly`` instead.
-        in_pay_monthly: The known cheque for a benefit already being
-            received, ``(n_paths,)``, or ``None`` when the benefit has not
-            started and will be computed from ``start_age_months`` once it
-            does.
+            because the person's CPP or OAS is already in pay, recorded
+            through ``in_pay_monthly`` instead.
+        in_pay_monthly: The gross monthly amount of a benefit already being
+            received, before any withholding, ``(n_paths,)``, or ``None``
+            when the benefit has not started and will be computed from
+            ``start_age_months`` once it does.
         contributory_history: Fraction of the maximum CPP pension earned,
             ``[0, 1]``, the other input ``engine.benefits.cpp
-            .pension_monthly`` needs alongside ``start_age_months``. Always
-            ``None`` for OAS, which has no such input. At most one of this
-            and ``in_pay_monthly`` is set — enforced in ``__post_init__``,
-            since this class serves OAS too, where both are correctly
-            ``None`` and "exactly one" would be false. For CPP exactly one
-            *is* set, which ``engine.core.build`` enforces (mirroring
-            ``engine.scenario.schema.CppEntitlement``'s own rule): a person
-            already receiving CPP has no earnings fraction left to apply a
-            start-age adjustment to, so the cheque is the only figure left
-            to carry.
+            .pension_monthly`` needs alongside ``start_age_months``. For OAS
+            this is always ``None``, and ``in_pay_monthly`` is set only when
+            OAS is already in pay — so "exactly one of the two is set" does
+            not hold for OAS, and ``__post_init__`` enforces only "at most
+            one". For CPP exactly one *is* set, which ``engine.core.build``
+            enforces (mirroring ``engine.scenario.schema.CppEntitlement``'s
+            own rule): a person already receiving CPP has no earnings
+            fraction left to apply a start-age adjustment to, so the amount
+            is the only figure left to carry.
         monthly_amount: The amount actually in pay this month, ``(n_paths,)``.
             Zero until the benefit starts; computed by the benefit modules,
             not by this class.
@@ -613,12 +667,10 @@ class PersonState:
         death_month_index: Month index the person died in, ``(n_paths,)``,
             dtype ``int64``, or :data:`DEATH_NOT_DRAWN` on a path where
             death has not yet happened (or has not yet been drawn at all).
-        cash: This person's share of... no — cash is household-level in
-            spirit but, like every account here, tracked per person because
-            two people's accounts do not merge while both are alive.
         rrsp: RRSP standing.
         rrif: RRIF standing.
-        locked_in: LIRA/LIF standing.
+        lira: LIRA standing, before conversion.
+        lif: LIF standing, after conversion.
         tfsa: TFSA standing.
         taxable: Non-registered holding.
         cpp: CPP standing.
@@ -639,9 +691,12 @@ class PersonState:
             is set by *family* income: a caller sums this across the
             household's living persons. Not read by the OAS repayment, which
             is assessed on the current year at the December close, nor by the
-            GIS band indicator, which uses a different income basis. See
-            ``docs/limitations.md`` L46 for what this is at the opening of a
-            run.
+            GIS band indicator, which uses a different income basis. At the
+            opening of a run it is the scenario's
+            ``engine.scenario.schema.Person.prior_year_net_income``, the
+            figure as reported on the return rather than restated. Real
+            dollars once the December close has written it
+            (``engine.core.step.close_year``, item 6).
     """
 
     person_id: str
@@ -650,10 +705,10 @@ class PersonState:
     birth_month: int
     alive: NDArray[np.bool_]
     death_month_index: NDArray[np.int64]
-    cash: CashState
     rrsp: RrspState
     rrif: RrifState
-    locked_in: LockedInState
+    lira: LiraState
+    lif: LifState
     tfsa: TfsaState
     taxable: TaxableState
     cpp: BenefitState
@@ -716,8 +771,10 @@ class RespState:
         grants_lifetime: Total grant ever received, for the lifetime grant
             maximum, ``(n_paths,)``. Equal to ``grants`` at the opening for
             the same reason.
-        grant_room: Unused grant-eligible contribution room carried into the
-            run, ``(n_paths,)``.
+        grant_room: Unused grant-eligible contribution room, ``(n_paths,)``.
+            At the opening it is the scenario's ``Resp.grant_room_carried``,
+            the room available on 1 January of the start year after that
+            year's grant.
         grant_received_ytd: Grant received so far this calendar year,
             ``(n_paths,)``. Reset in January.
         contributed_ytd: Contributed so far this calendar year,
@@ -802,10 +859,11 @@ class Elections:
             issue's plain ``tuple[int, ...]`` for that reason: there is no
             election age to put in a slot that has nothing to elect.
         oas_start_age_months: Age in whole months each person starts OAS at,
-            indexed the same way. OAS has no "already in pay" input in the
-            scenario schema, so every entry is populated in practice; the
-            type stays ``int | None`` to match ``cpp_start_age_months`` and
-            because nothing about the field name promises otherwise.
+            indexed the same way as ``HouseholdState.persons``. An entry is
+            ``None`` exactly when that person's OAS has no election left to
+            make because it is already in pay — see
+            :attr:`BenefitState.start_age_months`, which this is copied from
+            per person.
         rrif_conversion_age_years: Age the RRSP-to-RRIF conversion happens
             at. Household-wide, not per person: one policy names one age.
         rrif_conversion_fraction: Share of the RRSP converted, ``[0, 1]``.
@@ -923,6 +981,10 @@ class HouseholdState:
     particular may not read this year's total income, which is not known
     until December.
 
+    The opening RRSP, TFSA and RESP grant room already include the start
+    year's grant, so January of the start year (month index zero) grants
+    none.
+
     Attributes:
         year: The calendar year this state is the opening position for.
         month: The month this state is the opening position for, ``1..12``.
@@ -935,10 +997,14 @@ class HouseholdState:
         province: Two-letter code for the province of residence, selecting
             the provincial parameter file for income tax. Not the
             jurisdiction a locked-in account is governed by; see
-            :class:`LockedInState`.
+            :class:`LiraState` and :class:`LifState`.
         persons: One or two adults, in scenario order. Every per-person
             tuple downstream is indexed by position here.
         beneficiaries: RESP beneficiaries, in scenario order, possibly none.
+        cash: The household's one cash account, which every inflow and every
+            outflow passes through. Household-wide, not per person
+            (``docs/limitations.md`` L38); the attribution this loses is
+            L50.
         elections: The dated choices in force for this run.
         spending_schedule: The full household spending schedule, in scenario
             order. Carried so a January recomputation of
@@ -987,6 +1053,7 @@ class HouseholdState:
     province: str
     persons: tuple[PersonState, ...]
     beneficiaries: tuple[BeneficiaryState, ...]
+    cash: CashState
     elections: Elections
     spending_schedule: tuple[SpendingLevel, ...]
     spending_monthly: float

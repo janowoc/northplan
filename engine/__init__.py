@@ -41,7 +41,10 @@ rather than writing it.
 
 **Real dollars, internally, always.** Every dollar amount that crosses a
 function boundary inside ``engine/`` is in real (constant purchasing power)
-dollars, expressed in the base year of the scenario. Consequences:
+dollars, expressed in the base year of the scenario. The one exception is the
+opening ``PersonState.prior_year_net_income``: the prior-year net income the
+scenario states for each person, taken as filed, which the first December
+close replaces with a real figure. Consequences:
 
 - CPI-indexed tax brackets, credits, and benefit thresholds are *constant* in
   real terms from one indexation date to the next. They are loaded once per tax
@@ -69,7 +72,7 @@ dollars, expressed in the base year of the scenario. Consequences:
 - Return assumptions are real returns. Contribution and withdrawal amounts are
   real amounts.
 - Conversion to nominal dollars happens exactly once, at display, in ``api/``
-  or ``cli/``. No function in ``engine/`` returns a nominal figure.
+  or ``cli/``. No function in ``engine/`` converts a figure to nominal.
 
 **Shapes.** The simulation is vectorized across paths, not across time. Months
 are sequentially dependent so the outer loop steps through them one at a time;

@@ -4,8 +4,9 @@
 """Scenario -> opening :class:`~engine.core.state.HouseholdState`.
 
 The one place a :class:`~engine.scenario.schema.Scenario` — a document, in
-scalar Python values, real dollars of January of its start year — is turned
-into the array-valued state the monthly loop steps forward. Everything here
+scalar Python values, real dollars of January of its start year except each
+person's prior-year net income, taken as filed — is turned into the
+array-valued state the monthly loop steps forward. Everything here
 is a mapping, not a decision: no balance is projected, no benefit is
 computed, no bracket is consulted. What the scenario states is what the
 opening state holds, broadcast to every path.
@@ -55,7 +56,8 @@ from engine.core.state import (
     EmploymentBand,
     HouseholdState,
     IncomeLedger,
-    LockedInState,
+    LifState,
+    LiraState,
     PensionState,
     PersonState,
     RespState,
@@ -156,8 +158,7 @@ def build_initial_state(
             _cpp_start_age_months(person, chosen) for person in scenario.household.persons
         ),
         oas_start_age_months=tuple(
-            chosen.elections.oas_start_age_years[person.id] * 12
-            for person in scenario.household.persons
+            _oas_start_age_months(person, chosen) for person in scenario.household.persons
         ),
         rrif_conversion_age_years=chosen.elections.rrif_conversion.age_years,
         rrif_conversion_fraction=chosen.elections.rrif_conversion.fraction,
@@ -165,6 +166,8 @@ def build_initial_state(
     )
 
     spending_schedule = _build_spending_schedule(scenario)
+
+    household_cash = sum(person.accounts.cash.balance for person in scenario.household.persons)
 
     return HouseholdState(
         year=start_year,
@@ -174,6 +177,7 @@ def build_initial_state(
         province=scenario.household.province,
         persons=persons,
         beneficiaries=beneficiaries,
+        cash=CashState(balance=_broadcast(household_cash, n_paths)),
         elections=elections,
         spending_schedule=spending_schedule,
         # select_spending_level is also what HouseholdState.__post_init__
@@ -214,6 +218,18 @@ def _cpp_start_age_months(person: Person, policy: PolicySpec) -> int | None:
     return policy.elections.cpp_start_age_years[person.id] * 12
 
 
+def _oas_start_age_months(person: Person, policy: PolicySpec) -> int | None:
+    """The election feeding both :class:`BenefitState.start_age_months` and ``Elections``.
+
+    ``None`` when the person's OAS is already in pay: there is no start age
+    left to elect for them, only the amount already flowing. Mirrors
+    :func:`_cpp_start_age_months` exactly.
+    """
+    if person.oas.in_pay_monthly is not None:
+        return None
+    return policy.elections.oas_start_age_years[person.id] * 12
+
+
 def _zeros(n_paths: int) -> NDArray[np.float64]:
     return np.zeros(n_paths, dtype=np.float64)
 
@@ -230,12 +246,20 @@ def _build_person(
 ) -> PersonState:
     accounts = person.accounts
     lira = accounts.lira
+    lif = accounts.lif
 
     cpp_start_months = _cpp_start_age_months(person, policy)
     cpp_in_pay = (
         None
         if person.cpp.in_pay_monthly is None
         else _broadcast(person.cpp.in_pay_monthly, n_paths)
+    )
+
+    oas_start_months = _oas_start_age_months(person, policy)
+    oas_in_pay = (
+        None
+        if person.oas.in_pay_monthly is None
+        else _broadcast(person.oas.in_pay_monthly, n_paths)
     )
 
     employment = tuple(
@@ -252,7 +276,6 @@ def _build_person(
         birth_month=person.birth_month,
         alive=np.ones(n_paths, dtype=np.bool_),
         death_month_index=np.full(n_paths, DEATH_NOT_DRAWN, dtype=np.int64),
-        cash=CashState(balance=_broadcast(accounts.cash.balance, n_paths)),
         rrsp=RrspState(
             balance=_broadcast(accounts.rrsp.balance, n_paths),
             room=_broadcast(accounts.rrsp.room, n_paths),
@@ -269,13 +292,21 @@ def _build_person(
             # minimum. See engine.core.state.RrifState.opened_year.
             opened_year=None if accounts.rrif.balance == 0.0 else start_year - 1,
         ),
-        locked_in=LockedInState(
+        lira=LiraState(
             balance=_broadcast(lira.balance, n_paths),
-            is_lif=False,
             jurisdiction=lira.jurisdiction or "",
+        ),
+        lif=LifState(
+            balance=_broadcast(lif.balance, n_paths),
+            jurisdiction=lif.jurisdiction or "",
             annual_minimum=_zeros(n_paths),
             annual_maximum=_zeros(n_paths),
             withdrawn_ytd=_zeros(n_paths),
+            # None when nothing has been opened yet. Otherwise the year
+            # before the run: the true opening year is not knowable from a
+            # scenario, and start_year would wrongly exempt this year's
+            # minimum. See engine.core.state.LifState.opened_year.
+            opened_year=None if lif.balance == 0.0 else start_year - 1,
         ),
         tfsa=TfsaState(
             balance=_broadcast(accounts.tfsa.balance, n_paths),
@@ -293,8 +324,8 @@ def _build_person(
             monthly_amount=_zeros(n_paths),
         ),
         oas=BenefitState(
-            start_age_months=policy.elections.oas_start_age_years[person.id] * 12,
-            in_pay_monthly=None,
+            start_age_months=oas_start_months,
+            in_pay_monthly=oas_in_pay,
             contributory_history=None,
             monthly_amount=_zeros(n_paths),
         ),
@@ -302,9 +333,7 @@ def _build_person(
         pensions=pensions,
         income=_empty_income_ledger(n_paths),
         balance_owing=_zeros(n_paths),
-        # Zero: a scenario carries no income history from before the run.
-        # limitations.md L46.
-        prior_year_net_income=_zeros(n_paths),
+        prior_year_net_income=_broadcast(person.prior_year_net_income, n_paths),
     )
 
 
