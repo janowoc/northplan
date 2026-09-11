@@ -103,9 +103,11 @@ class RoutedParameterError(ParamError):
 
     Raised by the pass-through accessors on :class:`RealParamSet` for a path
     that some schedule routes. The remedy is :meth:`RealParamSet.amount` or
-    :meth:`RealParamSet.amounts`; there is deliberately no flag to suppress
-    this, because the whole value of the real-terms view is that forgetting to
-    deflate is impossible rather than merely discouraged.
+    :meth:`RealParamSet.amounts` for a monthly quantity, or
+    :meth:`RealParamSet.annual_amount` or :meth:`RealParamSet.annual_amounts`
+    for an annual one; there is deliberately no flag to suppress this, because
+    the whole value of the real-terms view is that forgetting to deflate is
+    impossible rather than merely discouraged.
     """
 
 
@@ -202,6 +204,21 @@ def _check_inflation(inflation_rate: float) -> None:
         raise ValueError(
             f"inflation_rate must be greater than -1, got {inflation_rate!r}: at or "
             f"below -1 the price level is zero or negative and the factor is undefined."
+        )
+
+
+def _check_january_index(january_month_index: int) -> None:
+    """Reject a month index that is not January of some tax year.
+
+    Guards :meth:`RealParamSet.annual_amount` and
+    :meth:`RealParamSet.annual_amounts` against a caller passing December, or
+    any other month.
+    """
+    if january_month_index < 0 or january_month_index % MONTHS_PER_YEAR:
+        raise ValueError(
+            f"january_month_index must be January of the tax year being assessed, "
+            f"{MONTHS_PER_YEAR} * (year - start_year) for a non-negative integer year "
+            f"offset, got {january_month_index!r}."
         )
 
 
@@ -366,6 +383,8 @@ class RealParamSet:
     def amount(self, path: str, month_index: int) -> float:
         """Return one dollar amount in real terms, or raise.
 
+        For an annual quantity use :meth:`annual_amount`.
+
         Args:
             path: Dotted path to a scalar. A path holding a ``*`` names many
                 amounts and belongs to :meth:`amounts`.
@@ -388,6 +407,8 @@ class RealParamSet:
     def amounts(self, path: str, month_index: int) -> tuple[float, ...]:
         """Return a table of dollar amounts in real terms, or raise.
 
+        For an annual quantity use :meth:`annual_amount`.
+
         Covers both shapes a routed table takes: a list-valued parameter such
         as ``brackets.edges_annual``, and a ``*`` path naming one scalar per
         element of a list of mappings, such as
@@ -402,6 +423,72 @@ class RealParamSet:
             MalformedParamFileError: If any element is not numeric.
         """
         factor = self._factor(path, month_index)
+        return self._table(path, factor)
+
+    def annual_amount(self, path: str, january_month_index: int) -> float:
+        """Return one annual dollar amount in real terms, or raise.
+
+        Indexed: ``raw * erosion_factor(rate, k)``. Unindexed: ``raw *
+        unindexed_factor(rate, january_month_index) * erosion_factor(rate, 1)``.
+
+        Args:
+            path: Dotted path to a scalar annual amount. A path holding a
+                ``*`` names every element of a table and belongs to
+                :meth:`annual_amounts`.
+            january_month_index: Month index of January of the tax year being
+                assessed, ``12 * (year - start_year)``.
+
+        Raises:
+            ValueError: If ``january_month_index`` is not a non-negative
+                multiple of twelve, or if ``path`` holds a wildcard.
+            UnroutedParameterError: If no schedule routes ``path``.
+            MissingParameterError: If the parameter is absent.
+            MalformedParamFileError: If it is present but not numeric.
+        """
+        _check_january_index(january_month_index)
+        if WILDCARD in _segments(path):
+            raise ValueError(
+                f"{path!r} names every element of a table, not one amount. "
+                f"Use annual_amounts() for it."
+            )
+        return self.raw.number(path) * self._annual_factor(path, january_month_index)
+
+    def annual_amounts(self, path: str, january_month_index: int) -> tuple[float, ...]:
+        """Return a table of annual dollar amounts in real terms, or raise.
+
+        Covers both shapes a routed table takes, exactly as :meth:`amounts`
+        does, but on the annual rule: ``raw * erosion_factor(rate, k)`` per
+        element when indexed, ``raw * unindexed_factor(rate,
+        january_month_index) * erosion_factor(rate, 1)`` per element when not.
+
+        Args:
+            path: Dotted path, possibly holding a ``*``.
+            january_month_index: Month index of January of the tax year being
+                assessed, ``12 * (year - start_year)``.
+
+        Raises:
+            ValueError: If ``january_month_index`` is not a non-negative
+                multiple of twelve.
+            UnroutedParameterError: If no schedule routes ``path``.
+            MissingParameterError: If the parameter is absent, or if a ``*``
+                pattern matches nothing at all.
+            MalformedParamFileError: If any element is not numeric.
+        """
+        _check_january_index(january_month_index)
+        factor = self._annual_factor(path, january_month_index)
+        return self._table(path, factor)
+
+    def _table(self, path: str, factor: float) -> tuple[float, ...]:
+        """Expand a routed table ``path`` to a tuple of amounts, in table order.
+
+        Shared by :meth:`amounts` and :meth:`annual_amounts`, which differ
+        only in how ``factor`` was computed; this does not know which.
+
+        Raises:
+            MissingParameterError: If the parameter is absent, or if a ``*``
+                pattern matches nothing at all.
+            MalformedParamFileError: If any element is not numeric.
+        """
         if WILDCARD not in _segments(path):
             return tuple(value * factor for value in self.raw.numbers(path))
 
@@ -474,13 +561,22 @@ class RealParamSet:
             return unindexed_factor(self.inflation_rate, month_index)
         return erosion_factor(self.inflation_rate, adjustments)
 
+    def _annual_factor(self, path: str, january_month_index: int) -> float:
+        adjustments = self._adjustments(path)
+        if adjustments == 0:
+            return unindexed_factor(self.inflation_rate, january_month_index) * erosion_factor(
+                self.inflation_rate, 1
+            )
+        return erosion_factor(self.inflation_rate, adjustments)
+
     def _refuse_if_routed(self, path: str, accessor: str) -> None:
         for pattern in self.routes:
             if _matches(pattern, path):
                 raise RoutedParameterError(
                     f"{self.raw.source}[{path}]: this is a dollar amount on the "
                     f"{pattern!r} indexation schedule, and .{accessor}() would return "
-                    f"it undeflated. Use .amount() or .amounts() instead."
+                    f"it undeflated. Use .amount()/.amounts() for a monthly quantity "
+                    f"or .annual_amount()/.annual_amounts() for an annual one."
                 )
 
 

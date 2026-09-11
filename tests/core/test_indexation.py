@@ -77,6 +77,21 @@ pension:
 filing_month: 4
 """
 
+#: A second synthetic fixture, used only for the one shape ``SYNTHETIC`` above
+#: does not exercise: a list-valued amount on the unindexed schedule. Not a
+#: tax parameter, same as ``SYNTHETIC``.
+UNINDEXED_TABLE = """
+# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+indexation:
+  unindexed:
+    adjustment_months: []
+    applies_to:
+      - frozen.edges_annual
+
+frozen:
+  edges_annual: [4000, 8000]
+"""
+
 
 def _write(root: Path, name: str, text: str) -> Path:
     year_dir = root / "2026"
@@ -431,3 +446,118 @@ def test_the_raw_year_is_still_reachable_for_the_published_figure(
     year = real_year(load_year(2026, synthetic_root), HALVING)
     assert year.raw.federal.number("credits.basic_amount_annual") == 1000
     assert year.federal.raw.number("credits.basic_amount_annual") == 1000
+
+
+# --- RealParamSet: annual_amount / annual_amounts ---------------------------
+
+
+@pytest.mark.parametrize("bad_index", [-12, -1, 1, 11, 13, 23])
+@pytest.mark.parametrize("path", ["credits.basic_amount_annual", "credits.frozen_amount_annual"])
+def test_annual_amount_refuses_an_index_that_is_not_january(
+    real: RealParamSet, path: str, bad_index: int
+) -> None:
+    """The whole point: a caller cannot pass December, or any other month, by habit."""
+    with pytest.raises(ValueError, match="January"):
+        real.annual_amount(path, bad_index)
+
+
+@pytest.mark.parametrize("bad_index", [-12, -1, 1, 11, 13, 23])
+@pytest.mark.parametrize("path", ["brackets.edges_annual", "pension.bands.*.maximum_monthly"])
+def test_annual_amounts_refuses_an_index_that_is_not_january(
+    real: RealParamSet, path: str, bad_index: int
+) -> None:
+    with pytest.raises(ValueError, match="January"):
+        real.annual_amounts(path, bad_index)
+
+
+@pytest.mark.parametrize("good_index", [0, 12, 24])
+def test_annual_amount_accepts_a_multiple_of_twelve(real: RealParamSet, good_index: int) -> None:
+    real.annual_amount("credits.basic_amount_annual", good_index)  # must not raise
+    real.annual_amount("credits.frozen_amount_annual", good_index)  # must not raise
+
+
+@pytest.mark.parametrize("january", [0, 12, 120])
+def test_zero_inflation_makes_annual_amount_match_amount(
+    synthetic_root: Path, january: int
+) -> None:
+    """At zero inflation there is no averaging or decay to distinguish the two."""
+    federal = real_year(load_year(2026, synthetic_root), 0).federal
+    assert federal.annual_amount("credits.basic_amount_annual", january) == federal.amount(
+        "credits.basic_amount_annual", january
+    )
+    assert federal.annual_amount("credits.frozen_amount_annual", january) == federal.amount(
+        "credits.frozen_amount_annual", january
+    )
+
+
+@pytest.mark.parametrize("january", [0, 12, 120])
+@pytest.mark.parametrize("month", [0, 1, 7, 11, 120, 999])
+def test_annual_amount_of_an_indexed_path_matches_amount_at_any_month(
+    real: RealParamSet, month: int, january: int
+) -> None:
+    """An indexed amount's factor does not depend on the month, in either accessor.
+
+    Parametrized over ``january`` as well as ``month``: an ``_annual_factor``
+    whose indexed branch wrongly multiplied by ``unindexed_factor(rate,
+    january)`` would still pass at ``january == 0``, where that factor is 1.
+    """
+    assert real.annual_amount("credits.basic_amount_annual", january) == real.amount(
+        "credits.basic_amount_annual", month
+    )
+
+
+def test_annual_amount_of_an_unindexed_path_decays_to_january_then_averages(
+    real: RealParamSet,
+) -> None:
+    """The two-step rule, spelled out: decay to January of the tax year, then
+    apply the same within-year averaging an annually indexed amount gets."""
+    expected = 2000 * unindexed_factor(HALVING, 12) * erosion_factor(HALVING, 1)
+    assert real.annual_amount("credits.frozen_amount_annual", 12) == expected
+
+
+@pytest.mark.parametrize("january", [0, 12, 120])
+def test_annual_amounts_on_a_list_valued_path_returns_the_table_in_order(
+    real: RealParamSet, january: int
+) -> None:
+    """Parametrized over ``january`` for the same reason as the ``annual_amount`` test above."""
+    factor = erosion_factor(HALVING, 1)
+    assert real.annual_amounts("brackets.edges_annual", january) == (4000 * factor, 8000 * factor)
+
+
+@pytest.mark.parametrize("january", [0, 12, 120])
+def test_annual_amounts_on_a_wildcard_path_returns_the_table_in_order(
+    real: RealParamSet, january: int
+) -> None:
+    factor = erosion_factor(HALVING, 4)
+    assert real.annual_amounts("pension.bands.*.maximum_monthly", january) == (
+        100 * factor,
+        200 * factor,
+    )
+
+
+def test_a_wildcard_path_is_not_a_single_annual_amount(real: RealParamSet) -> None:
+    with pytest.raises(ValueError, match="names every element"):
+        real.annual_amount("pension.bands.*.maximum_monthly", 0)
+
+
+def test_an_unrouted_path_still_stops_the_run_via_annual_amount(real: RealParamSet) -> None:
+    with pytest.raises(UnroutedParameterError, match="no indexation schedule"):
+        real.annual_amount("credits.rate", 0)
+
+
+def test_annual_amounts_on_an_unindexed_list_valued_path_decays_then_averages(
+    tmp_path: Path,
+) -> None:
+    """The list shape on the unindexed schedule, which ``SYNTHETIC`` does not exercise.
+
+    An ``annual_amounts`` that fell back to plain ``amounts(path, j)`` after
+    its guard would pass every other test in this file but get this one
+    wrong: the unindexed rule needs the extra within-year averaging factor on
+    top of the decay to January, not the decay alone.
+    """
+    _write(tmp_path, "federal", UNINDEXED_TABLE)
+    federal = real_year(load_year(2026, tmp_path), HALVING).federal
+    expected = tuple(
+        value * unindexed_factor(HALVING, 12) * erosion_factor(HALVING, 1) for value in (4000, 8000)
+    )
+    assert federal.annual_amounts("frozen.edges_annual", 12) == expected

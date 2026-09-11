@@ -78,11 +78,17 @@ imprecision none of the four members describes needs a fifth member added
 here, in a diff a reviewer can check against the source, not a bespoke
 tolerance a case writer can quietly inflate.
 
-``inputs`` must be a mapping with string keys, and a ``params``/``real_params``
-value within it must be a mapping with exactly the keys ``year`` (an int) and
-``file`` (a str) — no more, no fewer. An unrecognized field on a case is
-rejected rather than silently ignored, because a typo'd field name is
-indistinguishable from a deliberately omitted one otherwise. And every file
+``inputs`` must be a mapping with string keys. A ``params`` value within it
+must be a mapping with exactly the keys ``year`` (an int) and ``file`` (a
+str) — no more, no fewer. A ``real_params`` value must be a mapping with
+exactly the keys ``year``, ``file``, and ``inflation`` (an int or float, not
+a bool, and finite) — the deflated real-terms view needs a stated inflation
+rate and the harness never assumes one. Both resolve lazily, at run time,
+and a resolved ``real_params`` is handed to its target under the keyword
+``params``, so a case names one or the other in ``inputs``, never both. An
+unrecognized field on a case is rejected rather than silently ignored,
+because a typo'd field name is indistinguishable from a deliberately omitted
+one otherwise. And every file
 actually found under ``cases/`` — recursively, so a subdirectory is not a
 place to hide from discovery — must be a case file (``.yaml``/``.yml``,
 matched case-sensitively) or ``.gitkeep``; anything else is a stray file
@@ -102,12 +108,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
 import numpy as np
 import pytest
 import yaml
 
+from engine.core.indexation import RealParamSet, real_year
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamSet, ParamYear, load_year
 
 __all__ = [
@@ -196,10 +203,15 @@ _CASE_FILE_SUFFIXES = frozenset({".yaml", ".yml"})
 #: The one non-case file `cases/` is allowed to hold.
 _KEEPER_FILENAME = ".gitkeep"
 
-#: Keys a ``params``/``real_params`` input spec must have — exactly these,
-#: no more, no fewer, so a typo (``provice`` for ``province``) is caught here
-#: rather than silently ignored.
+#: Keys a ``params`` input spec must have — exactly these, no more, no
+#: fewer, so a typo (``provice`` for ``province``) is caught here rather
+#: than silently ignored.
 _PARAMS_SPEC_KEYS = frozenset({"year", "file"})
+
+#: Keys a ``real_params`` input spec must have — one more than ``params``:
+#: the deflated real-terms view needs a stated inflation rate, and the
+#: harness never assumes one. See ``_validate_real_params_spec``.
+_REAL_PARAMS_SPEC_KEYS = frozenset({"year", "file", "inflation"})
 
 
 def _rounding_id_suffix(rounding: str) -> str:
@@ -241,9 +253,13 @@ class GoldenCase:
             anything either.
         inputs: Raw keyword arguments as written in the YAML. ``params`` and
             ``real_params`` entries are resolved lazily, at run time, by
-            :func:`resolve_inputs` — not here, so that a case naming a
-            ``real_params`` input still discovers cleanly and only fails when
-            actually run.
+            :func:`resolve_inputs` — not here, so that discovery does not
+            itself need to read parameter files from disk. A ``real_params``
+            entry resolves to a
+            :class:`~engine.core.indexation.RealParamSet` and is passed to
+            the target under the keyword ``params``; a case naming both
+            ``params`` and ``real_params`` fails at discovery instead, since
+            both would claim the same argument.
         expected: Either ``{"value": <number>}`` or a mapping of output name
             to expected number. Never empty — see :func:`discover_cases`.
         rounding: The declared reason the source is imprecise — one of the
@@ -464,8 +480,22 @@ def _parse_rounding(path: Path, name: str, raw_rounding: Any) -> str:
     return raw_rounding
 
 
+def _validate_year_and_file(path: Path, name: str, key: str, spec: Mapping[str, Any]) -> None:
+    """Validate the ``year``/``file`` pair common to both ``params`` and ``real_params``."""
+    year = spec["year"]
+    if isinstance(year, bool) or not isinstance(year, int):
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.year = {year!r}, which must be an int."
+        )
+    file = spec["file"]
+    if not isinstance(file, str):
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.file = {file!r}, which must be a string."
+        )
+
+
 def _validate_params_spec(path: Path, name: str, key: str, spec: Any) -> None:
-    """Validate a ``params``/``real_params`` input spec's shape, without resolving it.
+    """Validate a ``params`` input spec's shape, without resolving it.
 
     The actual :func:`load_year` call stays lazy, at run time, in
     :func:`resolve_params` — this only checks that the spec *could* resolve,
@@ -479,15 +509,49 @@ def _validate_params_spec(path: Path, name: str, key: str, spec: Any) -> None:
             f"{path}: case {name!r} has {key!r} = {spec!r}, which must be a mapping "
             f"with exactly the keys {sorted(_PARAMS_SPEC_KEYS)}."
         )
-    year = spec["year"]
-    if isinstance(year, bool) or not isinstance(year, int):
+    _validate_year_and_file(path, name, key, spec)
+
+
+def _validate_real_params_spec(path: Path, name: str, key: str, spec: Any) -> None:
+    """Validate a ``real_params`` input spec's shape, without resolving it.
+
+    One key wider than :func:`_validate_params_spec`: the deflated real-terms
+    view needs a stated inflation rate, and there is no default — a case
+    reading a nominal calculator states ``inflation: 0.0`` explicitly rather
+    than the harness assuming it. ``inflation`` must be an ``int`` or
+    ``float``, not a ``bool`` (rejected the same way ``year`` is), and finite
+    (``.nan``/``.inf``/``-.inf`` are rejected). The range check on the rate
+    itself — at or below -1 — is left to ``engine.core.indexation``, which
+    already raises at run time.
+    """
+    if not isinstance(spec, Mapping) or set(spec) != _REAL_PARAMS_SPEC_KEYS:
         raise GoldenCaseError(
-            f"{path}: case {name!r} has {key}.year = {year!r}, which must be an int."
+            f"{path}: case {name!r} has {key!r} = {spec!r}, which must be a mapping "
+            f"with exactly the keys {sorted(_REAL_PARAMS_SPEC_KEYS)}."
         )
-    file = spec["file"]
-    if not isinstance(file, str):
+    _validate_year_and_file(path, name, key, spec)
+    inflation = spec["inflation"]
+    if isinstance(inflation, bool) or not isinstance(inflation, (int, float)):
         raise GoldenCaseError(
-            f"{path}: case {name!r} has {key}.file = {file!r}, which must be a string."
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which must "
+            f"be an int or a float. There is no default; state 0.0 explicitly for a "
+            f"source that is a nominal calculator."
+        )
+    try:
+        finite = math.isfinite(inflation)
+    except OverflowError:
+        # An int literal too large to convert to float (e.g. a 400-digit
+        # number) makes math.isfinite raise rather than answer False.
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is too "
+            f"large to represent as a float. A golden case must state a finite "
+            f"inflation rate."
+        ) from None
+    if not finite:
+        kind = "NaN" if math.isnan(inflation) else "infinite"
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is "
+            f"{kind}. A golden case must state a finite inflation rate."
         )
 
 
@@ -496,9 +560,12 @@ def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any
 
     A list under ``inputs`` (``[x: 7.0]`` instead of ``{x: 7.0}``, an easy
     slip) dies inside ``target(**kwargs)`` with a bare ``TypeError`` naming
-    neither file nor case; this catches it here instead. Any ``params`` or
-    ``real_params`` entry is additionally checked by
-    :func:`_validate_params_spec`.
+    neither file nor case; this catches it here instead. Any ``params`` entry
+    is additionally checked by :func:`_validate_params_spec`, and any
+    ``real_params`` entry by :func:`_validate_real_params_spec`. Naming both
+    is rejected here too: both resolve to the same target keyword, ``params``
+    — see :func:`resolve_inputs` — so a case with both would be claiming that
+    argument twice.
     """
     if raw_inputs is None:
         raw_inputs = {}
@@ -507,9 +574,16 @@ def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any
             f"{path}: case {name!r} has 'inputs' = {raw_inputs!r}, which must be a "
             f"mapping with string keys."
         )
-    for key in ("params", "real_params"):
-        if key in raw_inputs:
-            _validate_params_spec(path, name, key, raw_inputs[key])
+    if "params" in raw_inputs and "real_params" in raw_inputs:
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has both 'params' and 'real_params' in 'inputs'. "
+            f"Both resolve to the target's 'params' keyword argument, so a case "
+            f"names one or the other, never both."
+        )
+    if "params" in raw_inputs:
+        _validate_params_spec(path, name, "params", raw_inputs["params"])
+    if "real_params" in raw_inputs:
+        _validate_real_params_spec(path, name, "real_params", raw_inputs["real_params"])
     return raw_inputs
 
 
@@ -724,37 +798,38 @@ def resolve_params(spec: Mapping[str, Any]) -> ParamSet:
     return _load_year_cached(spec["year"])[spec["file"]]
 
 
-def resolve_real_params(spec: Mapping[str, Any]) -> NoReturn:
-    """Hook for the deflated real-terms parameter view.
+def resolve_real_params(spec: Mapping[str, Any]) -> RealParamSet:
+    """Resolve a case's ``real_params: {year, file, inflation}`` input to a real
+    :class:`~engine.core.indexation.RealParamSet`.
 
-    The view itself now exists — roadmap issue 8 built
-    ``engine.core.indexation.RealParamSet`` — but it is not resolvable from a
-    case yet, because it needs the scenario's inflation rate and a case's
-    ``params`` spec names only a year and a file. An inflation rate is a
-    scenario assumption, not a parameter, so inventing one here would put an
-    unstated assumption inside every golden expectation.
+    ``inflation`` is the case's own stated rate — a bare fraction, e.g. ``0.0``
+    for a nominal source — and reaches
+    :func:`~engine.core.indexation.real_year` unchanged; there is no default
+    and this never assumes one. Reuses :func:`_load_year_cached`, the same
+    cache :func:`resolve_params` uses.
 
-    Issue 10's scenario schema does not settle it either: a scenario states an
-    inflation rate for a *run*, and a golden case is not a run. What is left is
-    for a case to name the rate in its own spec, which changes the case format
-    — and the case format is the human's, not the harness's.
+    Raises:
+        ParamYearMissingError: If ``spec["year"]`` has no parameter files.
+        ParamFileMissingError: If ``spec["file"]`` does not exist for that year.
+        ValueError: If ``spec["inflation"]`` is at or below -1 — see
+            :func:`~engine.core.indexation.real_year`.
     """
-    raise NotImplementedError(
-        "real_params is not resolvable yet: engine.core.indexation supplies the "
-        "deflated view (roadmap issue 8), but a case has no way to state the "
-        "scenario inflation rate it needs, and this will not assume one. "
-        f"Requested spec: {spec!r}."
-    )
+    return real_year(_load_year_cached(spec["year"]), float(spec["inflation"]))[spec["file"]]
 
 
 def resolve_inputs(raw_inputs: Mapping[str, Any]) -> dict[str, Any]:
-    """Turn a case's raw ``inputs`` mapping into real keyword arguments."""
+    """Turn a case's raw ``inputs`` mapping into real keyword arguments.
+
+    A ``real_params`` entry resolves through :func:`resolve_real_params` and
+    is stored under the key ``"params"``, not ``"real_params"`` — see the
+    module docstring on why a case names one or the other, never both.
+    """
     resolved: dict[str, Any] = {}
     for key, value in raw_inputs.items():
         if key == "params":
-            resolved[key] = resolve_params(value)
+            resolved["params"] = resolve_params(value)
         elif key == "real_params":
-            resolved[key] = resolve_real_params(value)
+            resolved["params"] = resolve_real_params(value)
         else:
             resolved[key] = value
     return resolved
@@ -858,9 +933,17 @@ def run_case(case: GoldenCase) -> None:
             the expected and the actual number.
         TypeError: If a result cannot be interpreted as a number (see
             :func:`to_float`).
-        ValueError: If a result is a multi-element array (see :func:`to_float`).
-        NotImplementedError: If an input named ``real_params`` is present (see
-            :func:`resolve_real_params`).
+        ValueError: Two distinct causes: a result is a multi-element array
+            (see :func:`to_float`), or a ``real_params`` input names an
+            inflation rate at or below -1 (raised by
+            ``engine.core.indexation``, via :func:`resolve_real_params`).
+        ParamError: From resolving a ``params`` or ``real_params`` input (see
+            :func:`resolve_params`, :func:`resolve_real_params`): the year or
+            file it names does not exist, any file in that year's directory
+            is malformed, or — for ``real_params`` — the named file's
+            ``indexation`` block is malformed. The loader's own errors all
+            subclass it; a file that is not valid UTF-8 surfaces as
+            ``UnicodeDecodeError`` instead.
         Exception: Whatever ``case.target`` itself raises, uncaught — a golden
             case is not responsible for turning the target's own failures
             into anything friendlier.

@@ -82,6 +82,19 @@ little too high in real terms, which understates tax and overstates income —
 the direction that flatters the plan, and the same direction as the oscillation
 term above.
 
+Annual amounts are valued at the year's mean. In reality a nominal annual
+amount — a bracket edge, a credit, a cap — is measured against the year's
+nominal income, each month's dollars at that month's price level; we measure
+the year's real income against the amount deflated by its mean over the year.
+For income spread evenly across the months the model's threshold is higher
+than the true one by a second-order amount, a few parts in a hundred thousand
+at ordinary inflation rates. Income that arrives late, such as a RRIF minimum
+forced out in December, meets a threshold that is too high by more; income
+that arrives early errs the other way. Too high is the direction that flatters
+the plan: it understates tax against a bracket edge or a credit, and lets more
+through a cap than the law would. For a household drawing monthly the error is
+close to zero.
+
 **L6. Inflation is a constant scenario assumption.** It is used only for the
 erosion factor and for the decay of unindexed amounts. Returns are real. There
 is no stochastic inflation.

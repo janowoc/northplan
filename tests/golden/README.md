@@ -125,10 +125,22 @@ discovery exactly as loudly as a typo at the case level — and the harness
 resolves it to the real, hand-populated parameter set —
 `load_year(year, ...)[file]` — so a case can exercise a function against
 `params/2026/federal.yaml` without the case file repeating any of its
-numbers. An input named `real_params` is the same idea for the deflated
-real-terms parameter view, which does not exist yet; until roadmap issue 8
-builds it, a case naming `real_params` fails clearly rather than silently
-resolving to something invented.
+numbers.
+
+An input named `real_params` is the same idea for the deflated real-terms
+parameter view (`engine.core.indexation.RealParamSet`), with one more
+required key: `real_params` is a mapping with exactly `year`, `file`, and
+`inflation` — an int or float bare fraction, e.g. `0.0` for a source that is
+a nominal calculator. There is no default for `inflation`: the human states
+it explicitly in every case, and the harness never assumes a rate. It
+resolves to `real_year(load_year(year, ...), inflation)[file]`, and — unlike
+`params` — is handed to the target under the keyword `params`, not
+`real_params`, because every engine function names its parameter-set
+argument `params`. A case therefore names `params` or `real_params` in
+`inputs`, never both; naming both fails at discovery, since they would
+otherwise claim the same argument. The range check on the inflation rate
+itself — at or below -1 — is not done here: it is `engine.core.indexation`'s
+own check, raised at run time, so that rule has a single owner.
 
 A worked example, using obviously synthetic numbers rather than a real tax
 value — this is not a shape any real case in this repository should take,
