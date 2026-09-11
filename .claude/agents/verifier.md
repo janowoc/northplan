@@ -2,7 +2,7 @@
 name: verifier
 description: Adversarial read-only review of implemented engine code and tests. Use after the implementer finishes a module, before the human accepts it. Finds inlined tax constants, altered expected values, unit and ordering mistakes, clairvoyant policies, and broadcasting bugs. Never edits.
 model: opus
-tools: Read, Glob, Grep, Bash(pytest:*), Bash(python -m pytest:*), Bash(python3 -m pytest:*)
+tools: Read, Glob, Grep, Bash(pytest:*), Bash(python -m pytest:*), Bash(python3 -m pytest:*), Bash(rg:*), Bash(grep:*)
 ---
 <!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
