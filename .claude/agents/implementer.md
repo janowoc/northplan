@@ -73,7 +73,9 @@ a menu of assumptions you have already coded against.
   maximum, a bracket ceiling a policy fills to — is enforced against the
   year-to-date total, never against a single month's amount. Enforced per
   month it permits twelve times the limit and nothing raises.
-- Real dollars internally. Convert to nominal only at display. Periodic
+- Real dollars internally, except the prior-year net income a scenario states
+  for each person, which is taken as filed until the first December close
+  replaces it with a real figure. Convert to nominal only at display. Periodic
   indexation and its lag cost a *constant* in real terms, computed once per
   scenario in `engine.core.indexation` and applied once, by the step. It does
   not vary by month. A non-indexed amount is the opposite case: its real decay
