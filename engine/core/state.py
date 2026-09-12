@@ -400,7 +400,7 @@ class PersonState:
             year) nor by the GIS band indicator (a different income basis). The one
             field taken as filed rather than converted to real dollars, until the
             first December close writes a real figure
-            (``engine.core.step.close_year``, item 6).
+            (``engine.core.step.close_year``, item 5).
     """
 
     person_id: str

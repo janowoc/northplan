@@ -104,17 +104,19 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
 
     1. Force out any unwithdrawn RRIF/LIF minimum for the year.
     2. Convert to a RRIF an RRSP whose owner reaches conversion age this year.
-    3. Assess tax on the full year's accumulated income, one assessment on this
-       year's brackets; the OAS repayment is a line within it, computed on this
-       year's net income (which itself includes this year's OAS), and capped at the
-       OAS received this year.
-    4. Elect pension income splitting for the year, jointly across the household.
-    5. Assessment less ``remitted_ytd`` becomes ``balance_owing`` (or a refund),
+    3. Assess the year in one joint step, on this year's brackets:
+       ``engine.tax.combined.household_assessment`` elects pension income
+       splitting and assesses every person at the elected split together, since
+       the election is chosen by minimising the assessment it is part of. The
+       OAS repayment is a line within that assessment, computed on this year's
+       net income (which itself includes this year's OAS), and capped at the OAS
+       received this year.
+    4. Assessment less ``remitted_ytd`` becomes ``balance_owing`` (or a refund),
        settled in next year's filing month.
-    6. Store this year's net income in ``prior_year_net_income``, read by next
+    5. Store this year's net income in ``prior_year_net_income``, read by next
        year's RESP enhanced-grant rate; the OAS repayment is not stored here, it is
        assessed in item 3.
-    7. Append the year to ``history``.
+    6. Append the year to ``history``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
