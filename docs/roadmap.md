@@ -34,9 +34,9 @@ belongs. `--standalone` writes a full document for a browser.
 | 11 | Typed immutable state and the initial-state builder | agent | 10 | walker test finds no writeable array |
 | 12 | Timeline arithmetic and mortality | agent | 4, 11 | death months geometric on a synthetic table |
 | 13 | Monthly return draws and mortality uniforms | agent | — | twelve months compound to the annual spec |
-| 14 | Tax engine: federal, Alberta, household assessment, withholding | agent | 6, 8, 9, 11 | structural tests pass; no undeflated dollar read |
+| 14 | Tax engine: federal, Alberta, household assessment, withholding | agent | 6, 8, 9, 11, 30, 32, 33, 34 | structural tests pass; no undeflated dollar read |
 | 15 | Golden tax cases from an external calculator | human | 3, 14 | cases pass or bugs filed |
-| 16 | Benefits and income: CPP, OAS, DB pension, employment, GIS metric | agent | 6, 8, 11, 14 | structural tests pass; refusal gone |
+| 16 | Benefits and income: CPP, OAS, DB pension, employment, GIS metric | agent | 6, 8, 11, 14, 30, 32, 33 | structural tests pass; refusal gone |
 | 17 | Golden benefit cases from published tables | human | 3, 16 | cases pass or bugs filed |
 | 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11, 29, 32, 33 | every annual limit year-to-date aware |
 | 19 | The month body and the run loop (month step, part one) | agent | 12, 13, 14, 16, 18, 29, 33, 34 | cash identity holds every month |
