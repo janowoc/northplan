@@ -3,20 +3,16 @@
 
 """The monthly step. One month, all paths, one implementation.
 
-``advance_month`` is the only place simulated time passes. Monte Carlo calls it
-in a loop over months; the optimizer calls Monte Carlo. If a second function in
-this repository starts to look like a step through time, that is a bug — say so
-rather than writing it.
+``advance_month`` is the only place simulated time passes; Monte Carlo calls it in a loop over
+months, and the optimizer calls Monte Carlo.
 
-The annual events have not gone away; they have become *phases* that
-``advance_month`` invokes in the months that call for them. ``open_year`` runs
-in January, ``close_year`` in December, ``settle_tax_balance`` in the filing
-month. They are called from inside the single loop and are not loops
-themselves. Nothing outside this module may call them.
+The annual events are *phases* ``advance_month`` invokes when due: ``open_year`` in January,
+``close_year`` in December, ``settle_tax_balance`` in the filing month. Nothing outside this
+module may call them directly.
 
-Ordering is a correctness decision, not a style one, and it is fixed here so
-that no account module can quietly disagree with it. The order is stated in
-each function's docstring and every change to it needs a verification row.
+Ordering is a correctness decision, fixed here so no account module can quietly disagree with
+it; the order is stated in each function's docstring and every change to it needs a verification
+row.
 """
 
 from __future__ import annotations
@@ -35,59 +31,34 @@ def advance_month(
     policy: Policy,
     params: ParamYear,
 ) -> HouseholdState:
-    """Advance the household by one month, for all paths at once.
+    """Advance the household by one month, across every path. Order of operations:
 
-    Order of operations within the month, which the implementation must follow
-    exactly:
-
-    1. If this is January, run :func:`open_year`. Ages advance on birthdays,
-       not on 1 January, so this is about the *tax* year: room is granted, the
-       annual RRIF minimum and LIF maximum are fixed from opening balances, and
-       the year-to-date ledger is reset.
-    2. Deaths are resolved for this month. A death changes what follows in the
-       same month — OAS and GIS stop, a RRIF may roll over to the survivor.
-    3. If this is the filing month, run :func:`settle_tax_balance`: the prior
-       year's balance owing is paid in cash out of the household's accounts.
-       This is a full year after the income that caused it.
-    4. Income the household receives this month regardless of policy: one
-       month of employment, one month of DB pension with its explicit and
-       growing real decay, one month of CPP, one month of gross OAS and GIS.
-       Benefit amounts are the published monthly amounts times the constant
-       factor from ``engine.core.indexation.erosion_factor``, which accounts
-       for an indexed benefit averaging below its published real value.
-       That factor is the same every month and is computed once per scenario,
-       so this step reads it rather than recomputing it.
-    5. Tax withheld at source on that income is remitted and added to
-       ``remitted_ytd``. It is a prepayment, not an assessment.
-    6. The policy chooses this month's contributions and discretionary
-       withdrawals, reading only opening balances, current age, income
-       accumulated so far this year, and the current year's parameters. It may
-       not read this month's return, which has not been applied yet.
-    7. Withdrawals are taken. The remaining RRIF minimum for the year is
-       tracked but not forced this month unless the year is running out of
-       months to take it in; by December it must have come out in full.
-    8. Contributions are made against room available at the start of the month;
-       room is updated afterwards, never before.
-    9. Growth is applied to closing balances, using this month's real return.
-       One month, not one twelfth of a year applied twelve times to the opening
-       balance — compounding within the year is the point of stepping monthly.
-    10. This month's income is added to the year-to-date ledger.
-    11. If this is December, run :func:`close_year`.
-    12. The month advances, rolling the year over after December. The roll
-        recomputes ``spending_monthly`` from ``spending_schedule`` for the
-        new year: ``HouseholdState`` refuses a state whose two disagree, so
-        this is not optional and it cannot be deferred to ``open_year`` —
-        the new year's state is constructed here, one call before January's
-        phases run.
+    1. January: run :func:`open_year`.
+    2. Resolve deaths for the month; may stop OAS/GIS, roll a RRIF to a survivor.
+    3. Filing month: run :func:`settle_tax_balance`.
+    4. Receive this month's employment, DB pension, CPP, and gross OAS/GIS income.
+       Employment is already a real monthly figure, no factor. CPP and gross OAS
+       each take the constant erosion factor from
+       ``engine.core.indexation.erosion_factor`` for their own schedule. A DB pension
+       takes no factor if fully indexed (already a real-dollar constant, on no
+       schedule) or ``engine.core.indexation.unindexed_factor`` if not indexed.
+    5. Remit tax withheld at source into ``remitted_ytd``, a prepayment only.
+    6. Policy picks contributions/withdrawals from opening state, not this return.
+    7. Take withdrawals; force the RRIF/LIF minimum only once the year is running
+       out of months, so it is fully out by December.
+    8. Make contributions against room available at the start of the month; room
+       updates after.
+    9. Apply this month's real return, once, to closing balances.
+    10. Add this month's income to the year-to-date ledger.
+    11. December: run :func:`close_year`.
+    12. Advance the month, rolling the year and recomputing ``spending_monthly``;
+        the roll happens one call before January's phases run.
 
     Args:
         state: Opening state for ``state.year``/``state.month``.
-        real_returns: Real return for *this month* per path and asset class,
-            shape ``(n_assets, n_paths)``. Real, not nominal, and monthly, not
-            annual — passing an annual figure here overstates growth by roughly
-            a factor of twelve and will not fail loudly.
-        policy: The decision rules being evaluated. Given only the information
-            available at this point in the simulation.
+        real_returns: This month's real return per path and asset class,
+            ``(n_assets, n_paths)``, monthly and real.
+        policy: Decision rules, given only information available at this point.
         params: Parameters for the tax year ``state.year`` falls in.
 
     Returns:
@@ -99,34 +70,22 @@ def advance_month(
 def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
     """January phase: grant room, fix the year's annual limits, reset the ledger.
 
-    Called by :func:`advance_month`, never directly. What happens here happens
-    once a year and is then drawn down over the eleven months that follow:
+    Called by :func:`advance_month`, never directly.
 
-    1. TFSA room is granted for the year, and room for the *prior* year's
-       withdrawals is restored — not the current year's, which is the whole
-       point of the restoration lag.
-    2. RRSP room accrued on the prior year's earned income is granted.
-    3. RESP grant room accrues, per beneficiary.
-    4. The RRIF and LIF minimum for the year is computed from the **opening**
-       balance on 1 January, before any of this year's growth, using age at the
-       start of the year. It is stored as an annual amount with a running
-       "still to be withdrawn" figure, because the withdrawal itself happens
-       across the months.
-    5. The LIF *maximum* for the year is fixed the same way, and read from the
-       parameter set of the jurisdiction each locked-in account is registered
-       in — ``params.jurisdiction(LifState.jurisdiction)``, not
-       ``params.province(household.province)``. Where
-       ``engine.accounts.lira.has_maximum`` is false the jurisdiction imposes
-       no ceiling and none is stored; that is a rule, not a missing table.
-    6. The year-to-date income ledger is reset to zero and ``remitted_ytd`` with
-       it. ``balance_owing`` is *not* reset: it is still owed until the filing
-       month. The per-beneficiary RESP year-to-date figures reset here too:
-       both the grant received and the contributions made, the second because
-       the additional grant tier's eligible window is a dollar amount per
-       calendar year.
+    1. Grant TFSA room; restore room for the *prior* year's withdrawals.
+    2. Grant RRSP room accrued on the prior year's earned income.
+    3. Accrue RESP grant room, per beneficiary.
+    4. Fix the RRIF/LIF minimum from the **opening** 1 January balance and age at
+       the start of the year.
+    5. Fix the LIF maximum the same way, from
+       ``params.jurisdiction(LifState.jurisdiction)``; where
+       ``engine.accounts.lira.has_maximum`` is false, none is stored.
+    6. Reset the year-to-date income ledger and ``remitted_ytd`` (not
+       ``balance_owing``, still owed until filing); reset per-beneficiary RESP
+       grant-received and contributed-ytd.
 
-    In January of the start year (month index zero) items 1 to 3 grant
-    nothing; the opening state already includes that year's grant.
+    In the start year's January, items 1-3 grant nothing; the opening state already
+    includes it.
 
     Args:
         state: Opening state for January.
@@ -143,25 +102,19 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
 
     Called by :func:`advance_month`, never directly.
 
-    1. Any unwithdrawn RRIF or LIF minimum for the year is forced out now. The
-       minimum is a statutory obligation with a 31 December deadline, so a
-       policy that under-withdrew all year has the balance taken from it here.
-    2. An RRSP belonging to a person who reaches the conversion age this year
-       becomes a RRIF, effective for next January's minimum.
-    3. Tax is assessed on the full year's accumulated income — one assessment,
-       on twelve months of accrued income, using this year's brackets. The OAS
-       repayment is a line within it, computed on *this* year's net income,
-       which includes this year's OAS, and capped at the OAS received this
-       year.
-    4. Pension income splitting is elected for the year, jointly across the
-       household. It is a year-end election and cannot be made monthly.
-    5. The assessment less ``remitted_ytd`` becomes ``balance_owing``, payable
-       in next year's filing month. A negative balance is a refund and is
-       received in that same month, not immediately.
-    6. This year's net income is stored in ``prior_year_net_income``, which
-       next year's RESP enhanced-grant rate reads. The OAS repayment does not:
-       it is assessed on the current year, in item 3.
-    7. The year is appended to ``history``.
+    1. Force out any unwithdrawn RRIF/LIF minimum for the year.
+    2. Convert to a RRIF an RRSP whose owner reaches conversion age this year.
+    3. Assess tax on the full year's accumulated income, one assessment on this
+       year's brackets; the OAS repayment is a line within it, computed on this
+       year's net income (which itself includes this year's OAS), and capped at the
+       OAS received this year.
+    4. Elect pension income splitting for the year, jointly across the household.
+    5. Assessment less ``remitted_ytd`` becomes ``balance_owing`` (or a refund),
+       settled in next year's filing month.
+    6. Store this year's net income in ``prior_year_net_income``, read by next
+       year's RESP enhanced-grant rate; the OAS repayment is not stored here, it is
+       assessed in item 3.
+    7. Append the year to ``history``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
@@ -203,27 +156,17 @@ def resolve_deaths(
 ) -> HouseholdState:
     """Apply mortality for this month and its immediate consequences.
 
-    Monthly, not annual: a death in March stops three quarters of a year of OAS
-    that an annual step would have paid in full, and the deceased's final
-    return covers only the part-year to the date of death.
+    Monthly, not annual: a death in March stops three quarters of a year of OAS that an annual
+    step would pay in full, and the final return covers only the part-year to death.
 
-    The draw is compared against a *monthly* hazard derived from the annual
-    mortality table. The conversion from an annual ``q_x`` to a monthly rate
-    assumes a constant force of mortality within the year; that assumption is
-    stated here because it is a modelling choice rather than a sourced value,
-    and it belongs in a comment beside the mortality table it is applied to as
-    well as here.
-
-    Consequences that land in the same month: OAS and GIS cease for the
-    deceased from the following month, a RRIF rolls to a surviving spouse
-    tax-deferred, and with no surviving spouse the registered balance is
-    brought fully into income in the year of death.
+    Consequences in the same month: OAS/GIS cease for the deceased from the following month, a
+    RRIF rolls to a surviving spouse tax-deferred, and with no survivor the registered balance
+    comes fully into income in the year of death.
 
     Args:
         state: Opening state for the month.
-        mortality_draw: Uniform draws, ``(n_persons, n_paths)``, compared
-            against this month's mortality hazard. From the common random
-            number stream, so mortality is identical across policies.
+        mortality_draw: Uniform draws, ``(n_persons, n_paths)``, from the common random number
+            stream, so mortality is identical across policies.
         params: Parameters for the current tax year.
 
     Returns:

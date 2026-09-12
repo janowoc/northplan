@@ -211,14 +211,12 @@ def monthly_log_moments(
     """Mean and covariance of monthly log-returns matching annual moments.
 
     ``s_ij = log(1 + Sigma_ij / ((1 + mu_i)(1 + mu_j)))``,
-    ``m_i = log(1 + mu_i) - s_ii / 2``, both then divided by
-    ``MONTHS_PER_YEAR``, where ``mu = annual_means`` are annual arithmetic
-    real means and ``Sigma = annual_covariance`` is the covariance of annual
-    simple returns. The attainability check runs on ``s_month`` — the
-    matrix a draw is actually taken from — not on ``annual_covariance``.
-
-    With ``names`` given, every message names the asset class(es) involved;
-    without it, messages use indices, matching ``engine.mc.returns.generate``.
+    ``m_i = log(1 + mu_i) - s_ii / 2``, both divided by ``MONTHS_PER_YEAR``, where
+    ``mu = annual_means`` and ``Sigma = annual_covariance`` is the covariance of
+    annual simple returns. The attainability check runs on ``s_month``, the matrix
+    a draw is actually taken from, not on ``annual_covariance``. With ``names``
+    given, messages name the asset class(es); without it, they use indices,
+    matching ``engine.mc.returns.generate``.
 
     Args:
         annual_means: Annual arithmetic real means, ``(n,)``.
@@ -227,16 +225,13 @@ def monthly_log_moments(
             ``annual_means``, for messages only.
 
     Returns:
-        ``(m_month, s_month)``: mean ``(n,)`` and covariance ``(n, n)`` of
-        monthly log-returns.
+        ``(m_month, s_month)``: mean ``(n,)`` and covariance ``(n, n)`` of monthly log-returns.
 
     Raises:
-        ValueError: In order: wrong shape or size of ``annual_means``,
-            ``annual_covariance``, or ``names``; a non-finite mean or
-            covariance entry; ``1 + annual_means`` not strictly positive; the
-            moment-matching log argument not strictly positive; the
-            moment-matched monthly log-covariance not positive
-            semi-definite.
+        ValueError: In order: wrong shape or size of any input; a non-finite mean
+            or covariance entry; ``1 + annual_means`` not strictly positive; the
+            moment-matching log argument not positive; the moment-matched
+            covariance not positive semi-definite.
     """
     annual_means = np.asarray(annual_means, dtype=np.float64)
     annual_covariance = np.asarray(annual_covariance, dtype=np.float64)

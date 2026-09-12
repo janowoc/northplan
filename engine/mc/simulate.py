@@ -24,37 +24,26 @@ from engine.policy.base import Policy
 class SimulationResult:
     """Per-year, per-path output of one policy evaluation.
 
-    The simulation steps monthly; the result is recorded **annually**, at each
-    December close. Two reasons, and both are deliberate:
+    Recorded annually, at each December close, not monthly: a monthly trace is
+    twelve times the memory at scale, and the quantities worth reporting (tax,
+    net worth) are annual anyway. Sub-annual detail is inspected on a single
+    path with a debug trace, not carried for every path.
 
-    - A monthly trace is twelve times the memory, and at a hundred thousand
-      paths over a forty-year horizon that is gigabytes per policy evaluated.
-      The optimizer evaluates many.
-    - The quantities worth reporting are annual anyway. Tax is assessed on a
-      year. Net worth at a month end is noise around net worth at a year end.
-
-    Anything that needs sub-annual detail — checking that a benefit started in
-    the right month, that a death mid-year stopped OAS when it should — is
-    inspected on a single path with a debug trace, not carried for every path.
-
-    All dollar amounts are real. Conversion to nominal happens at display, in
+    All dollar amounts are real; conversion to nominal happens at display, in
     ``api/`` or ``cli/``, never here.
 
     Attributes:
         years: Calendar years simulated, ``(n_years,)``.
         net_worth: Real household net worth at each 31 December,
             ``(n_years, n_paths)``.
-        spending: Real after-tax spending achieved over each year, summed from
-            the twelve months, ``(n_years, n_paths)``.
+        spending: Real after-tax spending achieved over each year, summed
+            from the twelve months, ``(n_years, n_paths)``.
         tax_assessed: Real household tax *assessed* on each year's income,
-            ``(n_years, n_paths)``. Assessed, not paid: the cash for it leaves
-            in the following year's filing month, and the two are a year apart.
-            The cash timing lives in the state ledger and is reflected in
-            ``net_worth``.
+            ``(n_years, n_paths)`` -- not paid; the cash leaves in the
+            following year's filing month, reflected in ``net_worth``.
         depleted: Whether the household ran out of money by each year end,
-            ``(n_years, n_paths)``. Monotone in year once true. Depletion is
-            detected in the month it happens, then reported at the year that
-            contains it.
+            ``(n_years, n_paths)``. Monotone in year once true; detected in
+            the month it happens, reported at the year that contains it.
         seed: The seed of the draws used, for reproducibility.
     """
 

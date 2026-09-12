@@ -24,8 +24,7 @@ class Decision:
 
     The benefit start ages are the exception: they are ages, in months, at
     which a benefit begins, and they do not change from month to month. They
-    are returned every month because the policy is stateless and there is
-    nowhere else to put them; the step reads them once, in the month the
+    are returned every month; the step reads them once, in the month the
     decision binds, and ignores them afterwards.
 
     Attributes:
@@ -49,12 +48,9 @@ class Policy(Protocol):
     """A decision rule the optimizer can evaluate.
 
     Implementations are pure and stateless: everything they need arrives in
-    ``decide``. State kept on the object between months would be a channel for
-    information the policy is not entitled to — and with twelve calls a year
-    instead of one, it is also twelve times as easy to accumulate by accident.
-    Anything a policy needs to remember from an earlier month is already in
-    ``HouseholdState``: year-to-date income, room consumed, minimums still
-    outstanding.
+    ``decide``. Anything a policy needs to remember from an earlier month is
+    already in ``HouseholdState``: year-to-date income, room consumed,
+    minimums still outstanding.
     """
 
     def decide(
@@ -66,13 +62,9 @@ class Policy(Protocol):
 
         Args:
             state: Opening state for the current month, carrying ``year`` and
-                ``month``. This, and the current tax year's ``params``, are the
-                *only* inputs. Anything else is clairvoyance.
-
-                What the state legitimately offers, and what a monthly policy
-                must be careful with: income accumulated *so far* this year is
-                knowable, and the year's eventual total is not. A policy that
-                reasons about "this year's income" must mean the former.
+                ``month``. This, and the current tax year's ``params``, are
+                the only legitimate inputs. Income accumulated *so far* this
+                year is knowable; the year's eventual total is not.
             params: Parameters for the current tax year.
 
         Returns:

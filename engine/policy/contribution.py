@@ -27,8 +27,7 @@ class SplitContributionPolicy:
 
     Weights are the optimizer's free variables. They are normalised to sum to
     one, and a contribution that exceeds available room spills to the next
-    account in priority order rather than being lost — otherwise the optimizer
-    sees a cliff where room runs out and the search behaves badly around it.
+    account in priority order rather than being lost.
 
     Room is granted annually, in January, and consumed over the months. So the
     spill is not a rare year-end event: an aggressive weight fills a TFSA by

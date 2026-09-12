@@ -3,64 +3,14 @@
 
 """Household state carried from one simulated month to the next.
 
-Everything here is a frozen, ``slots``-only dataclass. The monthly step
-returns a new state rather than mutating the old one, which keeps a path's
-history inspectable and makes it impossible for a policy to write into state
-it should only read.
+Every class here is a frozen, ``slots``-only dataclass; the monthly step returns a new state
+rather than mutating the old one. Every per-path field is a NumPy array of shape ``(n_paths,)``,
+real dollars unless noted otherwise; per-person and per-beneficiary state are tuples of these
+classes.
 
-Shape convention: scalar fields (a person's birth year, a pension's name) are
-plain Python values, shared across every path. Every field that varies by
-path is a NumPy array of shape ``(n_paths,)`` — never ``(n_persons,
-n_paths)`` or anything higher-rank. Per-person and per-beneficiary state are
-instead **tuples** of these classes, in scenario order, so a person's whole
-position is one object rather than one row spread across a dozen arrays.
-There is no ``dict`` field anywhere in this module and no untyped catch-all:
-every collection a caller might reach for a mapping is a tuple addressed by
-position, and every value has a concrete type.
-
-Two invariants are enforced structurally rather than left to convention:
-
-- **Read-only arrays.** :func:`freeze` is the one place that marks a NumPy
-  array non-writeable, called once per array field from the owning class's
-  ``__post_init__``. Freezing happens *in place* and returns the same array,
-  deliberately: a caller that kept a reference to the array it constructed
-  the state from must not retain a writeable handle on it once that array is
-  state.
-- **Shape agreement.** A leaf class such as :class:`CashState` cannot check
-  that its array is ``(n_paths,)`` because it has no ``n_paths`` to check
-  against — only :class:`HouseholdState` does. Its ``__post_init__`` walks
-  the whole tree once, so a mismatch anywhere below it — a pension array
-  built with the wrong path count, say — fails at construction rather than
-  three months into a run.
-
-:func:`updated` is the one way to produce a changed copy of any class here.
-It wraps :func:`dataclasses.replace`, which re-runs ``__post_init__`` on the
-copy, so the re-freeze happens for free and does not need its own code path.
-
-Because the timestep is a month and the tax year is a year, :class:`IncomeLedger`
-exists to bridge the two: year-to-date income accumulates over twelve monthly
-steps before the December close assesses it once, and what that assessment
-still owes sits on :attr:`PersonState.balance_owing` until the filing month.
-
-**Month indexes may be negative.** A month index counts months from January
-of the scenario's start year, and a negative one is not an error: it means
-the event it describes predates the run and was already under way when the
-run opened — a pension already in payment, a bridge that already ended, a
-subscriber already partway through a programme, an employment band that
-started years before the household became a scenario. Every field typed as a
-month index inherits this without restating it, for example
-:attr:`PensionState.start_month_index`, :attr:`PensionState
-.bridge_end_month_index`, :attr:`RespState.education_start_month_index`, and
-:attr:`EmploymentBand.from_month_index` / :attr:`EmploymentBand
-.to_month_index`. :attr:`PersonState.death_month_index` is the one exception:
-it is guarded by its own sentinel, :data:`DEATH_NOT_DRAWN` — the maximum
-``int64`` — rather than by a negative value, because a death cannot precede
-the run that will draw it, and because a negative index is this module's
-convention for a different thing entirely (see :data:`DEATH_NOT_DRAWN`'s own
-comment).
-
-Field lists here are deliberately minimal and grow as the modules that need
-them land, in the order the README's build order gives.
+**Month indexes may be negative**, counting from January of the scenario's start year: a
+negative one means the event predates the run, except :attr:`PersonState.death_month_index`,
+guarded instead by :data:`DEATH_NOT_DRAWN`.
 """
 
 from __future__ import annotations
@@ -73,66 +23,17 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
-#: Sentinel for a death that has not been drawn yet.
-#:
-#: The largest representable ``int64``, not a small or negative number.
-#: Decision B makes a negative month index this module's *ordinary* meaning
-#: for "already under way when the run opened", so a small sentinel like
-#: ``-1`` would no longer read as nonsense — it would read as a real, if
-#: implausible, December-before-the-run death. What used to justify a small
-#: sentinel — "a huge one reads as alive for the whole run" — is retired by
-#: :attr:`PersonState.alive`, which answers "is this person dead" on its
-#: own; this sentinel only has to avoid colliding with a real month index,
-#: and a value no calendar this run's month indexes could ever reach does
-#: that without needing to look small or look negative.
-#:
-#: Never do arithmetic on this value. ``death_month_index - month_index``
-#: silently overflows ``int64`` for a path that has not died — NumPy wraps
-#: rather than raising. Compare against :data:`DEATH_NOT_DRAWN` directly, or
-#: read ``alive``, which is what it exists for.
+#: Sentinel for a death that has not been drawn yet: the largest
+#: representable ``int64``. Never do arithmetic on this value —
+#: ``death_month_index - month_index`` silently overflows ``int64`` for a
+#: path that has not died. Compare against it directly, or read ``alive``.
 DEATH_NOT_DRAWN: Final[int] = int(np.iinfo(np.int64).max)
 
 
 def freeze(array: NDArray) -> NDArray:
     """Mark ``array`` non-writeable in place and return it.
 
-    The one routine in this module that flips ``flags.writeable``. Every
-    dataclass below calls this, once per array field, from its own
-    ``__post_init__`` — never anywhere else — so there is exactly one place
-    that decides an array has become state and stops being scratch space.
-
-    Idempotent: freezing an already-frozen array is a no-op rather than an
-    error, because :func:`dataclasses.replace` re-runs ``__post_init__`` on
-    every field of a copy, including the ones that were not named in the
-    change and were already read-only.
-
-    Setting ``array.flags.writeable = False`` protects exactly one array
-    object. It does nothing to ``array.base``: a column slice of a bigger
-    buffer (``big[0, :]``) shares memory with ``big``, and freezing the
-    slice leaves ``big`` itself writeable, so ``big[0, 0] = 1e9`` mutates the
-    "frozen" state with no error at all. ``engine.mc.simulate`` produces
-    ``real_returns`` shaped ``(n_assets, n_paths)`` and hands slices of it
-    downstream, so this is not a hypothetical: it is the shape of the next
-    caller. This walks the whole ``.base`` chain — a view of a view of a
-    view is possible (``a[0:2][0:1]``) and one link is not enough — and
-    refuses a writeable one rather than silently failing to protect it.
-
-    **This guard is one-directional, and there is no cheap fix.** It catches
-    a view handed to state *as* the array: ``freeze`` sees ``array.base`` and
-    can refuse it. It cannot catch a view taken *of* an array that was
-    already handed to state whole: ``big = np.zeros(10); col = big[0:4];
-    CashState(balance=big)`` freezes ``big`` itself (``big.base`` is
-    ``None``, so nothing here objects), but ``col`` was created before that
-    call and stays writeable — NumPy does not retroactively mark existing
-    views read-only when their base becomes read-only, only views taken
-    afterward inherit it. ``col[0] = 999`` then mutates the "frozen" state
-    with no error, the same failure this function exists to prevent, from
-    the opposite direction. Say it plainly: this protects against handing
-    state a view of a live buffer, not against handing state a buffer you
-    kept a view of. There is nothing in ``array`` at the point ``freeze``
-    sees it that distinguishes "nobody else holds a reference" from "a
-    reference was taken and is still live" — both are one array with
-    ``base is None`` — so no check here can close this side.
+    Idempotent. Refuses a view onto a buffer still writeable elsewhere (walks the ``.base`` chain).
 
     Args:
         array: A NumPy array, of any dtype.
@@ -141,20 +42,8 @@ def freeze(array: NDArray) -> NDArray:
         The same array object, non-writeable.
 
     Raises:
-        AssertionError: If ``array`` is not one-dimensional. Every per-path
-            field here is a flat ``(n_paths,)`` array; a caller building a
-            ``(1, n_paths)`` or ``(n_persons, n_paths)`` array has the wrong
-            shape convention for this module, not merely an oversized one.
-        ValueError: If ``array`` is a view onto a buffer that is still
-            writeable through some other reference. Freezing the view cannot
-            fix this; the caller must pass a copy (``array.copy()``) instead.
-            This over-rejects as well as under-protects: a view of a
-            freshly built, otherwise-unreferenced temporary —
-            ``np.zeros((1, n)).reshape(n)``, ``np.squeeze(...)``,
-            ``np.broadcast_to(...)`` — carries a ``.base`` too and is
-            refused exactly like a view anyone could still reach, even
-            though nothing else can reach this one. The remedy is the same
-            ``.copy()``.
+        AssertionError: If ``array`` is not one-dimensional.
+        ValueError: If ``array`` is a view onto a buffer still writeable elsewhere; pass a copy.
     """
     assert array.ndim == 1, (
         f"expected a one-dimensional array, got shape {array.shape}. Every "
@@ -177,40 +66,21 @@ def freeze(array: NDArray) -> NDArray:
 
 
 def updated[T](obj: T, **changes: object) -> T:
-    """Return a copy of ``obj`` with ``changes`` applied, frozen like the original.
-
-    A thin wrapper: ``dataclasses.replace`` builds the copy, and building it
-    re-runs the class's own ``__post_init__`` on every field — the changed
-    ones and the untouched ones alike — which is what re-freezes the arrays
-    and, for :class:`HouseholdState`, re-checks that everything below it
-    still agrees with ``n_paths``. Nothing here duplicates that logic; it
-    relies on every class in this module doing its own freezing correctly.
+    """Return a copy of ``obj`` with ``changes`` applied, frozen like the original; re-runs
+    ``__post_init__`` and re-freezes, like ``dataclasses.replace``.
 
     Args:
         obj: One of the frozen dataclasses defined in this module.
-        changes: Field name to new value, exactly as ``dataclasses.replace``
-            takes them.
+        changes: Field name to new value, as ``dataclasses.replace`` takes them.
 
     Returns:
-        A new, frozen instance of ``type(obj)``. "New" describes the
-        instance, not necessarily every array reachable from it: a field
-        ``changes`` did not name keeps the same array object the original
-        holds, shared between the two. That sharing is safe rather than a
-        leak, because both instances hold it read-only — it is not a copy
-        one of them could go on to mutate out from under the other.
+        A new, frozen instance of ``type(obj)``.
     """
     return dataclasses.replace(obj, **changes)
 
 
 def _freeze_fields(obj: object, *names: str) -> None:
-    """Freeze the named array fields of ``obj`` in place, via :func:`freeze`.
-
-    Loop plumbing only — the read-only marking still happens nowhere but
-    :func:`freeze`. Every ``__post_init__`` below calls this once, naming
-    exactly its array fields, so a field a class forgets to list here is a
-    field that stays writeable, which is the failure mode the walker test
-    exists to catch.
-    """
+    """Freeze the named array fields of ``obj`` in place, via :func:`freeze`."""
     for name in names:
         object.__setattr__(obj, name, freeze(getattr(obj, name)))
 
@@ -218,12 +88,8 @@ def _freeze_fields(obj: object, *names: str) -> None:
 def _iter_arrays(value: object) -> Iterator[NDArray]:
     """Yield every NumPy array reachable from ``value``, at any depth.
 
-    Recurses into dataclass fields and into tuple elements; stops at anything
-    else, which in this module means a plain scalar (``int``, ``float``,
-    ``str``, ``bool``, or ``None``) or a leaf array itself. Used only by
-    :meth:`HouseholdState.__post_init__` to check every array in the tree
-    against ``n_paths`` in one pass, without a second, hand-maintained list of
-    "everywhere an array might be".
+    Recurses into dataclass fields and tuple elements. Used by
+    :meth:`HouseholdState.__post_init__` to check every array against ``n_paths``.
     """
     if isinstance(value, np.ndarray):
         yield value
@@ -255,13 +121,9 @@ class RrspState:
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        room: Unused contribution room, ``(n_paths,)``.
-        contributed_ytd: Contributions made so far this calendar year,
-            ``(n_paths,)``. Reset in January.
-        converted_fraction_applied: Whether the scenario's RRIF-conversion
-            election has already moved money out of this account. A person
-            partially converts once; this flag is what stops a second
-            conversion from firing on the same path.
+        room: Unused contribution room.
+        contributed_ytd: Contributions made so far this year; reset in January.
+        converted_fraction_applied: Whether the RRIF conversion has already fired, on this path.
     """
 
     balance: NDArray[np.float64]
@@ -279,23 +141,10 @@ class RrifState:
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        annual_minimum: The statutory minimum still to be withdrawn this
-            calendar year, fixed in January from the 1 January balance and
-            drawn down over the months that follow, ``(n_paths,)``.
-        withdrawn_ytd: Withdrawn so far this calendar year, ``(n_paths,)``.
-            Reset in January.
-        opened_year: The calendar year the plan was opened, or ``None`` when
-            the opening balance is zero — there is nothing to have opened,
-            enforced in ``__post_init__``. The only question ever asked of
-            this field is "was it opened in the current year", which decides
-            whether the first year's minimum is exempt (a plan opened
-            partway through a year owes no minimum until the following
-            January). For a plan with a nonzero opening balance, the exact
-            year it was opened is not knowable from a scenario, so this is
-            set to ``scenario.start_year - 1`` — the year *before* the run,
-            never the start year itself. Setting it to the start year would
-            wrongly exempt the first simulated year from the minimum, which
-            flatters the plan.
+        annual_minimum: This year's statutory minimum still to be withdrawn, fixed in January.
+        withdrawn_ytd: Withdrawn so far this year; reset in January.
+        opened_year: The calendar year opened, or ``None`` if the opening balance is zero. If
+            already open at scenario start, set to ``scenario.start_year - 1``, not the start year.
     """
 
     balance: NDArray[np.float64]
@@ -317,21 +166,10 @@ class RrifState:
 class LiraState:
     """A LIRA, before conversion to a LIF. Takes no withdrawals.
 
-    Governed by the pension legislation of the jurisdiction the originating
-    pension was registered in — not by where the household lives now. See
-    ``docs/limitations.md`` L3. Conversion moves its balance into a
-    :class:`LifState`.
-
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        jurisdiction: Two-letter code for the pension jurisdiction of
-            registration, e.g. ``"ab"``. Empty string when this account
-            names no jurisdiction of its own, which is valid only while its
-            balance is zero on every path. The builder takes it only from
-            the scenario's own account, never from the province of
-            residence or from the person's other locked-in account
-            (``docs/limitations.md`` L3); a conversion during the run
-            carries the LIRA's jurisdiction onto the LIF (L47).
+        jurisdiction: Two-letter pension-jurisdiction code, e.g. ``"ab"``; empty only while balance
+            is zero (L3); carried onto the LIF on conversion (L47).
     """
 
     balance: NDArray[np.float64]
@@ -351,42 +189,16 @@ class LiraState:
 
 @dataclass(frozen=True, slots=True)
 class LifState:
-    """A LIF, for a person already converted.
-
-    It has a minimum and, in most jurisdictions, a maximum.
-
-    Governed by the pension legislation of the jurisdiction the originating
-    pension was registered in — not by where the household lives now. See
-    ``docs/limitations.md`` L3.
+    """A LIF, for a person already converted (``docs/limitations.md`` L3: governed by the
+    jurisdiction of the originating pension). Has a minimum and, in most jurisdictions, a maximum.
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        jurisdiction: Two-letter code for the pension jurisdiction of
-            registration, e.g. ``"ab"``. Empty string when this account
-            names no jurisdiction of its own, which is valid only while its
-            balance is zero on every path. The builder takes it only from
-            the scenario's own account, never from the province of
-            residence or from the person's other locked-in account
-            (``docs/limitations.md`` L3); a conversion during the run
-            carries the LIRA's jurisdiction onto the LIF (L47).
-        annual_minimum: This year's RRIF-equivalent minimum, fixed in
-            January, ``(n_paths,)``.
-        annual_maximum: This year's jurisdiction-specific maximum
-            withdrawal, fixed in January, ``(n_paths,)``. Only meaningful
-            where the jurisdiction imposes one.
-        withdrawn_ytd: Withdrawn so far this calendar year, ``(n_paths,)``.
-            Reset in January.
-        opened_year: The calendar year the plan was opened, or ``None`` when
-            the opening balance is zero — there is nothing to have opened,
-            enforced in ``__post_init__``. Mirrors
-            :attr:`RrifState.opened_year` exactly: the only question ever
-            asked of this field is "was it opened in the current year",
-            which decides whether the first year's minimum is exempt. For a
-            plan with a nonzero opening balance, the exact year it was
-            opened is not knowable from a scenario, so this is set to
-            ``scenario.start_year - 1`` — the year *before* the run, never
-            the start year itself, which would wrongly exempt the first
-            simulated year from the minimum.
+        jurisdiction: Two-letter pension-jurisdiction code; empty only while balance is zero (L3);
+            carried from the LIRA on conversion (L47).
+        annual_minimum, annual_maximum, withdrawn_ytd, opened_year: This year's RRIF-equivalent
+            minimum, jurisdiction-specific maximum (where imposed), and amount withdrawn so far
+            (fixed/reset in January); opened_year mirrors :attr:`RrifState.opened_year` exactly.
     """
 
     balance: NDArray[np.float64]
@@ -420,12 +232,8 @@ class TfsaState:
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        room: Unused contribution room, including room restored from earlier
-            withdrawals, ``(n_paths,)``.
-        withdrawn_this_year: Withdrawn so far this calendar year,
-            ``(n_paths,)``. Restored to room the following January, not this
-            one — a TFSA withdrawal does not free up room until the year
-            after it happens.
+        room: Unused contribution room, including room restored from earlier withdrawals.
+        withdrawn_this_year: Withdrawn so far this year; restored to room the *following* January.
     """
 
     balance: NDArray[np.float64]
@@ -441,10 +249,8 @@ class TaxableState:
     """One person's non-registered holding.
 
     Attributes:
-        balance: Market value, real dollars, ``(n_paths,)``.
-        acb: Adjusted cost base, same dollars, ``(n_paths,)``. May exceed
-            ``balance``: a holding standing at a loss is an ordinary
-            position, not an error.
+        balance: Market value.
+        acb: Adjusted cost base; may exceed ``balance`` (a loss is ordinary, not an error).
     """
 
     balance: NDArray[np.float64]
@@ -459,17 +265,10 @@ class EmploymentBand:
     """One band of employment income, resolved to a monthly figure.
 
     Attributes:
-        from_month_index: Month index the band starts in, inclusive —
-            January of the scenario's ``from_year``. May be negative; see
-            the module docstring's convention on month indexes. A band
-            lying entirely before the run (``to_month_index`` also
-            negative) is still carried rather than dropped: discarding
-            scenario data silently is worse than carrying a band no month
-            of the run will ever match.
-        to_month_index: Month index the band ends in, inclusive — December
-            of the scenario's ``to_year``, matching that field's own
-            inclusive convention.
-        monthly_amount: Real dollars a month while the band is in force,
+        from_month_index, to_month_index: Inclusive start/end month index; may be
+            negative, per the module docstring's convention. A band lying entirely
+            before the run is still carried rather than dropped.
+        monthly_amount: Real dollars for one month while the band is in force,
             ``(n_paths,)`` — the scenario's ``annual`` divided by twelve.
     """
 
@@ -485,33 +284,14 @@ class EmploymentBand:
 class BenefitState:
     """One person's standing on a public pension: CPP or OAS.
 
-    The same shape serves both, because both are "a monthly amount that
-    either starts on an elected age or is already flowing", and nothing else
-    about the two differs at the level of state.
+    The same shape serves both: an amount either starting on an elected age or already flowing.
 
     Attributes:
-        start_age_months: Age in whole months the benefit is elected to
-            start at, or ``None`` when there is no election left to make —
-            because the person's CPP or OAS is already in pay, recorded
-            through ``in_pay_monthly`` instead.
-        in_pay_monthly: The gross monthly amount of a benefit already being
-            received, before any withholding, ``(n_paths,)``, or ``None``
-            when the benefit has not started and will be computed from
-            ``start_age_months`` once it does.
-        contributory_history: Fraction of the maximum CPP pension earned,
-            ``[0, 1]``, the other input ``engine.benefits.cpp
-            .pension_monthly`` needs alongside ``start_age_months``. For OAS
-            this is always ``None``, and ``in_pay_monthly`` is set only when
-            OAS is already in pay — so "exactly one of the two is set" does
-            not hold for OAS, and ``__post_init__`` enforces only "at most
-            one". For CPP exactly one *is* set, which ``engine.core.build``
-            enforces (mirroring ``engine.scenario.schema.CppEntitlement``'s
-            own rule): a person already receiving CPP has no earnings
-            fraction left to apply a start-age adjustment to, so the amount
-            is the only figure left to carry.
-        monthly_amount: The amount actually in pay this month, ``(n_paths,)``.
-            Zero until the benefit starts; computed by the benefit modules,
-            not by this class.
+        start_age_months: Age in months elected to start, or ``None`` if already in pay.
+        in_pay_monthly: Gross monthly amount received, before withholding, ``None`` if not started.
+        contributory_history: Fraction of the maximum CPP pension earned, ``[0, 1]``; always
+            ``None`` for OAS. At most one of this and ``in_pay_monthly`` may be set.
+        monthly_amount: The amount actually in pay this month; zero until started.
     """
 
     start_age_months: int | None
@@ -540,35 +320,14 @@ class PensionState:
     """One defined-benefit pension one person receives or will receive.
 
     Attributes:
-        name: Label, unique within the person, used to tell two pensions
-            apart in output.
-        monthly_amount: The base pension, real dollars a month,
-            ``(n_paths,)``. Constant once in pay for a fully indexed
-            pension (the indexation cost is carried separately, in
-            ``engine.core.indexation``); decaying in real terms for one
-            that is not.
-        start_month_index: Month index, counted from January of the
-            scenario's start year, the pension begins.
-        indexed: Whether the pension moves with CPI. ``False`` means fixed
-            in nominal terms and losing real value every month it is in
-            pay.
-        bridge_monthly: A bridge benefit paid on top through
-            ``bridge_end_month_index``, real dollars a month,
-            ``(n_paths,)``. Zero when there is no bridge.
-        bridge_end_month_index: The *last* month the bridge is paid,
-            inclusive, or ``None`` when there is no bridge at all. May be
-            negative, per the module's month-index convention, when the
-            bridge already ended before the run opened. A bridge whose end
-            falls before the pension starts would never pay a cent, and is
-            refused by ``engine.scenario.schema.Person``, so this field is
-            never built for one — refused at ``load_scenario``, not here,
-            because it is a statement about a well-formed scenario rather
-            than about a state. A bridge ending in the *same* month the
-            pension starts is legal and pays for that one month.
-        survivor_share: Fraction of the pension the survivor continues to
-            receive after the member's death, ``[0, 1]``. Not per-path: a
-            product term fixed by the pension's own rules, not something
-            that varies by simulated draw.
+        name, start_month_index: Label (unique per person) and month index the pension begins.
+        monthly_amount: The base pension; a real-dollar constant once in pay if fully indexed
+            (on no indexation schedule, so no erosion factor applies), decaying under
+            ``engine.core.indexation.unindexed_factor`` otherwise.
+        indexed, bridge_monthly, bridge_end_month_index: Whether the pension moves with CPI
+            (``False`` means fixed in nominal terms); the bridge paid on top through the end
+            index (zero/``None`` if none, else the last month paid, inclusive; may be negative).
+        survivor_share: Fraction the survivor keeps after death, ``[0, 1]``. Not per-path.
     """
 
     name: str
@@ -585,46 +344,20 @@ class PensionState:
 
 @dataclass(frozen=True, slots=True)
 class IncomeLedger:
-    """One person's income components, accumulated year to date.
-
-    Not a month's income: these are running totals for the current calendar
-    year, added to by each monthly step and consumed once by the December
-    assessment. January resets them. A field read mid-year is the income
-    *so far*, which is what a policy is entitled to know — never the year's
-    total, which is not knowable until December.
-
-    Kept as components rather than one total because the tax treatment
-    differs: only some of it is eligible for pension income splitting,
-    dividends and capital gains enter taxable income at their own inclusion
-    rates, and CPP and EI premiums feed a tax credit rather than income at
-    all.
-
-    Every field is real dollars, ``(n_paths,)``.
+    """One person's income components, accumulated year to date; reset in January, consumed
+    once in December.
 
     Attributes:
-        employment: Salary and wages.
-        cpp: CPP retirement pension received.
-        oas: OAS received, gross. The repayment is a line on the December
-            assessment, not a deduction from the monthly payment.
-        db_pension: Defined-benefit pension income, including any bridge.
-        rrsp_withdrawals: Withdrawals from an RRSP that has not converted.
-        rrif_lif_withdrawals: Withdrawals from a RRIF or a LIF.
-        interest: Interest income from taxable holdings.
-        eligible_dividends: Eligible dividends from taxable holdings, before
-            gross-up.
-        capital_gains: Realized capital gains from taxable holdings, before
-            the inclusion rate.
-        resp_accumulated_income: Accumulated income payments received from
-            an RESP wind-up.
-        rrsp_deductions: RRSP contributions made this year, an above-the-line
-            deduction rather than income.
-        cpp_base_contributions: Base CPP contributions made this year, which
-            feed a credit.
-        cpp_enhanced_contributions: Enhanced CPP contributions made this
-            year, which feed a deduction rather than a credit.
-        ei_premiums: EI premiums paid this year, which feed a credit.
-        remitted: Tax already withheld and remitted this year, reducing the
-            balance the December assessment leaves owing.
+        employment, cpp, db_pension, rrsp_withdrawals, rrif_lif_withdrawals, interest:
+            Income by component and source.
+        eligible_dividends: Eligible dividends from taxable holdings, before gross-up.
+        capital_gains: Capital gains from taxable holdings, realized on disposition or
+            distributed by the holding without a sale, before the inclusion rate.
+        oas, resp_accumulated_income: Gross OAS received (repayment assessed in
+            December), and accumulated-income payments from an RESP wind-up.
+        rrsp_deductions, cpp_enhanced_contributions, cpp_base_contributions, ei_premiums:
+            This year's amounts (the first two are deductions, the last two credits).
+        remitted: Tax already withheld and remitted this year.
     """
 
     employment: NDArray[np.float64]
@@ -651,51 +384,22 @@ class IncomeLedger:
 class PersonState:
     """One member of the household, at the boundary between two months.
 
-    A household is a list of these from day one, even when only one person
-    is modelled, because pension splitting, survivor benefits, the RRIF
-    spousal rollover, OAS ceasing at first death, and two mortality
-    timelines all require the second slot to exist.
-
     Attributes:
-        person_id: Stable identifier, unique within the household.
-        sex: ``"f"`` or ``"m"``, selecting the life table. A mortality
-            input, not a demographic statement.
-        birth_year: Calendar year of birth.
-        birth_month: Month of birth, ``1..12``.
-        alive: Per-path survival flag, ``(n_paths,)``. Once false it stays
-            false.
-        death_month_index: Month index the person died in, ``(n_paths,)``,
-            dtype ``int64``, or :data:`DEATH_NOT_DRAWN` on a path where
-            death has not yet happened (or has not yet been drawn at all).
-        rrsp: RRSP standing.
-        rrif: RRIF standing.
-        lira: LIRA standing, before conversion.
-        lif: LIF standing, after conversion.
-        tfsa: TFSA standing.
-        taxable: Non-registered holding.
-        cpp: CPP standing.
-        oas: OAS standing.
-        employment: Bands of employment income, in scenario order, possibly
-            empty. Carried in full even where a band lies wholly before or
-            after the run; see :class:`EmploymentBand`.
-        pensions: Defined-benefit pensions, in scenario order, possibly
-            empty.
-        income: Year-to-date income components.
-        balance_owing: Assessed tax for the *prior* year not yet paid,
-            ``(n_paths,)``. Created by the December close, discharged in the
-            filing month, zero in between only if withholding happened to
-            be exact.
-        prior_year_net_income: Net income for the prior calendar year, per
-            person, ``(n_paths,)``. Its one consumer is the RESP
-            enhanced-grant rate (``grant.enhanced.income_year_offset``), which
-            is set by *family* income: a caller sums this across the
-            household's living persons. Not read by the OAS repayment, which
-            is assessed on the current year at the December close, nor by the
-            GIS band indicator, which uses a different income basis. At the
-            opening of a run it is the scenario's
-            ``engine.scenario.schema.Person.prior_year_net_income``, the
-            figure as reported on the return rather than restated. Real
-            dollars once the December close has written it
+        person_id, sex, birth_year, birth_month: Identifier; ``"f"``/``"m"`` (selects the life
+            table); and birth date (month ``1..12``).
+        alive, death_month_index: Survival flag (monotonic) and month index of death, int64 or
+            :data:`DEATH_NOT_DRAWN`.
+        rrsp, rrif, lira, lif, tfsa, taxable, cpp, oas: Standing on each account or benefit.
+        employment, pensions: Bands and defined-benefit pensions, in scenario order, possibly empty.
+        income, balance_owing: Year-to-date income components, and the prior year's assessed tax
+            unpaid (paid in the filing month).
+        prior_year_net_income: Net income for the prior calendar year, per person,
+            ``(n_paths,)``. Its one consumer is the RESP enhanced-grant rate
+            (``grant.enhanced.income_year_offset``), summed across the household's
+            living persons; not read by the OAS repayment (assessed on the current
+            year) nor by the GIS band indicator (a different income basis). The one
+            field taken as filed rather than converted to real dollars, until the
+            first December close writes a real figure
             (``engine.core.step.close_year``, item 6).
     """
 
@@ -741,9 +445,8 @@ class PersonState:
     def age_months(self, year: int, month: int) -> int:
         """Age in whole months at the start of ``(year, month)``.
 
-        Delegates to ``engine.core.timeline.age_in_months``. Age is derived
-        from the birth date on every call and never stored, so the two
-        cannot drift apart.
+        Delegates to ``engine.core.timeline.age_in_months``; computed fresh from the birth
+        date on every call, never cached.
         """
         from engine.core import timeline
 
@@ -752,40 +455,17 @@ class PersonState:
 
 @dataclass(frozen=True, slots=True)
 class RespState:
-    """The RESP standing to one beneficiary, split into its three buckets.
-
-    The split is not bookkeeping: a withdrawal is taxed by which bucket it
-    comes out of. Contributions come out tax-free, grants and accumulated
-    income are taxable to the student, and grants are clawed back if the
-    plan winds up without one.
+    """The RESP standing to one beneficiary, split into its three buckets: contributions come
+    out tax-free, grants/income taxable to the student, grants clawed back if wound up without one.
 
     Attributes:
-        contributions: Contributions bucket, real dollars, ``(n_paths,)``.
-        grants: Grant bucket, real dollars, ``(n_paths,)``.
-        income: Accumulated-income bucket, real dollars, ``(n_paths,)``.
-        contributions_lifetime: Total ever contributed, for the lifetime
-            contribution ceiling, ``(n_paths,)``. Equal to ``contributions``
-            at the opening of a run — nothing has been withdrawn yet — and
-            diverges from it once a withdrawal draws the bucket down without
-            reducing the lifetime figure the ceiling is checked against.
-        grants_lifetime: Total grant ever received, for the lifetime grant
-            maximum, ``(n_paths,)``. Equal to ``grants`` at the opening for
-            the same reason.
-        grant_room: Unused grant-eligible contribution room, ``(n_paths,)``.
-            At the opening it is the scenario's ``Resp.grant_room_carried``,
-            the room available on 1 January of the start year after that
-            year's grant.
-        grant_received_ytd: Grant received so far this calendar year,
-            ``(n_paths,)``. Reset in January.
-        contributed_ytd: Contributed so far this calendar year,
-            ``(n_paths,)``. Reset in January.
-        subscriber_index: Index into ``HouseholdState.persons`` of the
-            subscriber who owns the plan.
-        education_start_month_index: Month index enrolment begins.
-        education_months: Length of the programme, in months.
-        education_monthly_cost: Real dollars a month while enrolled, spent
-            whether or not the RESP covers it. Not per-path: a household
-            input, not a simulated quantity.
+        contributions, grants, income: The three buckets.
+        contributions_lifetime, grants_lifetime, grant_room: Totals ever received (for the
+            lifetime ceilings), and unused grant-eligible contribution room.
+        grant_received_ytd, contributed_ytd, subscriber_index: So far this year (reset in
+            January); and index into ``HouseholdState.persons`` of the subscriber.
+        education_start_month_index, education_months, education_monthly_cost: Enrolment's start
+            month index, length in months, and monthly cost (not per-path).
         wound_up: Whether the plan has been wound up, ``(n_paths,)``.
     """
 
@@ -820,16 +500,10 @@ class RespState:
 
 @dataclass(frozen=True, slots=True)
 class BeneficiaryState:
-    """An RESP beneficiary.
-
-    Tracked individually and never pooled: grant room, the lifetime
-    contribution limit, and the withdrawal window are all per-beneficiary
-    and do not aggregate across children.
+    """An RESP beneficiary, tracked individually and never pooled.
 
     Attributes:
-        beneficiary_id: Stable identifier, unique within the household.
-        birth_year: Calendar year of birth.
-        birth_month: Month of birth, ``1..12``.
+        beneficiary_id, birth_year, birth_month: Identifier and birth date (month ``1..12``).
         resp: The plan standing to them.
     """
 
@@ -843,34 +517,12 @@ class BeneficiaryState:
 class Elections:
     """The dated choices a policy makes, set once from the policy by the simulator.
 
-    Named to match ``engine.scenario.schema.ElectionsSpec``, which is the same
-    choices *by person id*, as written in a scenario file. This is the
-    runtime form, addressed *by person index* instead — the position in
-    ``HouseholdState.persons`` — because state carries no name-to-index
-    mapping and every other per-person field here is already positional.
-
     Attributes:
-        cpp_start_age_months: Age in whole months each person starts CPP at,
-            indexed the same way as ``HouseholdState.persons``. An entry is
-            ``None`` exactly when that person's CPP has no election left to
-            make because it is already in pay — see
-            :attr:`BenefitState.start_age_months`, which this is copied from
-            per person. Typed ``tuple[int | None, ...]`` rather than the
-            issue's plain ``tuple[int, ...]`` for that reason: there is no
-            election age to put in a slot that has nothing to elect.
-        oas_start_age_months: Age in whole months each person starts OAS at,
-            indexed the same way as ``HouseholdState.persons``. An entry is
-            ``None`` exactly when that person's OAS has no election left to
-            make because it is already in pay — see
-            :attr:`BenefitState.start_age_months`, which this is copied from
-            per person.
-        rrif_conversion_age_years: Age the RRSP-to-RRIF conversion happens
-            at. Household-wide, not per person: one policy names one age.
-        rrif_conversion_fraction: Share of the RRSP converted, ``[0, 1]``.
-            Household-wide for the same reason.
-        fill_pension_credit: Whether to draw enough eligible pension income
-            to use the pension income credit. Household-wide: a single
-            withdrawal-order decision, not one made per person.
+        cpp_start_age_months, oas_start_age_months: Age in months each starts, indexed like
+            ``HouseholdState.persons``; ``None`` if already in pay.
+        rrif_conversion_age_years, rrif_conversion_fraction: Age and share converted, ``[0, 1]``;
+            household-wide, not per person.
+        fill_pension_credit: Whether to draw enough eligible pension income to use the credit.
     """
 
     cpp_start_age_months: tuple[int | None, ...]
@@ -884,23 +536,12 @@ class Elections:
 class SpendingLevel:
     """One step of the household spending schedule, resolved to a monthly figure.
 
-    Named ``SpendingLevel`` and deliberately not ``SpendingBand``:
-    ``engine.scenario.schema.SpendingBand`` already owns that name and states
-    an *annual* figure, and ``tests/core/test_build.py`` imports both side by
-    side to compare them — the two must not collide.
-
     Attributes:
         from_year: First calendar year this level applies in.
-        monthly_level: Real dollars for one month at full household share —
-            the scenario's ``annual`` divided by twelve. Named
-            ``monthly_level`` rather than ``monthly_amount`` because that
-            name is already taken by the *per-path* kind, on
-            :class:`EmploymentBand` and :class:`PensionState`. Those stay
-            arrays — a salary or a pension becomes per-path the moment
-            deaths start landing in different months on different paths —
-            and this is a household-wide figure with nothing to broadcast
-            over, deliberately a bare ``float`` rather than a same-named
-            array that would happen to broadcast against them.
+        monthly_level: Real dollars for one month at full share — the scenario's
+            ``annual`` divided by twelve; a bare ``float`` (household-wide), unlike
+            the per-path ``monthly_amount`` on :class:`EmploymentBand`/
+            :class:`PensionState`.
     """
 
     from_year: int
@@ -910,23 +551,8 @@ class SpendingLevel:
 def select_spending_level(schedule: tuple[SpendingLevel, ...], year: int) -> float:
     """The monthly figure in force for ``year``: the latest level starting at or before it.
 
-    One selection rule, read from both ends of its own honour system:
-    ``engine.core.build`` calls this to compute ``HouseholdState
-    .spending_monthly`` in the first place, and :meth:`HouseholdState
-    .__post_init__` calls it again to check that field was not set out of
-    step with ``spending_schedule`` and ``year`` — by a January rollover, for
-    instance, that updated ``year`` without recomputing ``spending_monthly``
-    to match. Both sides computing the *same* selection, rather than one
-    computing it and the other guessing, is what makes that check exact
-    rather than approximate.
-
     Raises:
-        ValueError: If ``schedule`` is empty, or if no level's ``from_year``
-            is at or before ``year``. A schedule built by ``engine.core
-            .build`` cannot hit the second case — the scenario schema
-            requires the first band to cover the start year, and ``year``
-            only advances from there — but this function makes no
-            assumption about where its ``schedule`` came from.
+        ValueError: If ``schedule`` is empty, or no level's ``from_year`` is at or before ``year``.
     """
     if not schedule:
         raise ValueError("spending_schedule is empty; there is no level to select.")
@@ -944,21 +570,12 @@ def select_spending_level(schedule: tuple[SpendingLevel, ...], year: int) -> flo
 class YearRecord:
     """One calendar year's summary, appended to :attr:`HouseholdState.history`.
 
-    Not enumerated by the issue that introduced this class; the fields are
-    exactly the per-path arrays that ``api/schemas.py::YearRow`` takes its
-    percentiles from, because that is the only thing downstream that reads a
-    year of history. Assembled once, at the December close.
-
     Attributes:
-        year: The calendar year this record summarizes.
-        net_worth: Household net worth at 31 December, ``(n_paths,)``.
-        spending: Household spending over the year, ``(n_paths,)``.
-        tax_assessed: Combined household tax assessed *for* this year at the
-            December close — not what was paid in cash during it, which is
-            mostly the prior year's balance settled in the filing month —
-            ``(n_paths,)``.
-        depleted: Whether the household ran out of money during the year,
-            ``(n_paths,)``.
+        year, net_worth, spending: Calendar year, net worth at 31 December, and
+            spending over it.
+        tax_assessed: Tax assessed *for* this year at the December close, not paid
+            in cash during it.
+        depleted: Whether the household ran out of money during the year.
     """
 
     year: int
@@ -975,75 +592,22 @@ class YearRecord:
 class HouseholdState:
     """The full state of the household at the boundary between two months.
 
-    Returned by the monthly step and fed straight back into it. A policy
-    function receives this and may read all of it — everything in here is
-    knowable at that simulated moment. It may not read anything else, and in
-    particular may not read this year's total income, which is not known
-    until December.
-
-    The opening RRSP, TFSA and RESP grant room already include the start
-    year's grant, so January of the start year (month index zero) grants
-    none.
-
     Attributes:
-        year: The calendar year this state is the opening position for.
-        month: The month this state is the opening position for, ``1..12``.
-            January is 1.
-        month_index: Months elapsed since January of the scenario's start
-            year. Zero at the opening position.
-        n_paths: Number of Monte Carlo paths every array in this tree must
-            agree on. Checked, not merely declared: see
-            :meth:`__post_init__`.
-        province: Two-letter code for the province of residence, selecting
-            the provincial parameter file for income tax. Not the
-            jurisdiction a locked-in account is governed by; see
-            :class:`LiraState` and :class:`LifState`.
-        persons: One or two adults, in scenario order. Every per-person
-            tuple downstream is indexed by position here.
-        beneficiaries: RESP beneficiaries, in scenario order, possibly none.
-        cash: The household's one cash account, which every inflow and every
-            outflow passes through. Household-wide, not per person
-            (``docs/limitations.md`` L38); the attribution this loses is
-            L50.
+        year, month, month_index, n_paths, province: Calendar position (month
+            ``1..12``, months elapsed since January of the start year), path count,
+            and two-letter tax-province code.
+        persons, beneficiaries, cash: Adults and RESP beneficiaries, in scenario
+            order (persons indexed by position downstream), and the one household
+            cash account, not per person (``docs/limitations.md`` L38; L50).
         elections: The dated choices in force for this run.
-        spending_schedule: The full household spending schedule, in scenario
-            order. Carried so a January recomputation of
-            ``spending_monthly`` never needs to go back to the scenario it
-            was built from.
-        spending_monthly: Household spending for one month at full share,
-            real dollars, for the current ``year``/``month``. **Derived, not
-            independent, and checked:** it must equal
-            ``select_spending_level(spending_schedule, year)``, enforced in
-            ``__post_init__`` rather than left on the honour system — unlike
-            the other invariants here, a violation of this one is a wrong
-            dollar amount, not a crash, and the wrong dollar amount is a
-            plausible one: ``updated(state, year=state.year + 1)`` at a
-            December rollover, without a matching ``spending_monthly=``,
-            would otherwise carry the outgoing year's level silently into
-            the next. The builder computes the opening value with the same
-            function this checks against, so the comparison is exact. A
-            call site wanting a different month's figure reads
-            ``spending_schedule`` directly rather than setting this field
-            out of step with ``year``. Not per-path: a schedule input, not a
-            simulated quantity.
-
-            **Recomputed by the year roll**, which is step 12 of
-            ``engine.core.step.advance_month`` and not ``open_year``: the
-            year changes as December's state is built, one call before
-            January's phases run, so a December step that rolled ``year``
-            without this could not construct its own return value.
-        spending_survivor_share: Fraction of ``spending_monthly`` the
-            survivor continues from the month after the first death.
-        spending_achieved_ytd: What the household has actually spent so far
-            this calendar year, ``(n_paths,)``. May fall short of the target
-            on a path that has run out of money.
-        depleted: Whether the household has run out of money, ``(n_paths,)``.
-            Once true it stays true.
-        estate_after_tax: Value of the estate after tax, ``(n_paths,)``. NaN,
-            never zero, until the second death: zero is a real estate value
-            and would be indistinguishable from an estate that is genuinely
-            worth nothing, whereas NaN can only mean "not yet settled".
-        history: Appended once a year, at the December close. Append-only.
+        spending_schedule, spending_monthly, spending_survivor_share: Full
+            schedule; derived spending for one month at full share (must equal
+            ``select_spending_level(...)``, recomputed at the year roll); and the
+            survivor's continuing share after death.
+        spending_achieved_ytd, depleted, estate_after_tax, history: What has
+            actually been spent this year; whether out of money (monotonic);
+            estate value after tax (NaN until the second death); and the
+            year-by-year record, append-only.
     """
 
     year: int

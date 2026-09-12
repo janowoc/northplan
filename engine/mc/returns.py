@@ -3,35 +3,19 @@
 
 """Return and mortality draw generation.
 
-Generated once per scenario, from an explicit seed, and reused across every
-policy evaluation. Nothing here may be called from inside the optimizer's loop.
+Generated once per scenario, from an explicit seed, and reused across every policy
+evaluation. Draws are monthly, the first axis of every array; scenario assumptions
+are annual and converted to monthly exactly once, in
+:func:`engine.mc.moments.monthly_log_moments`, called by :func:`generate`.
 
-The simulation steps monthly, so the draws are monthly and the first axis of
-every array is a month. Scenario assumptions are still expressed *annually*,
-because that is how return and inflation assumptions are stated and argued
-about; the conversion to a monthly distribution happens exactly once, in
-:func:`engine.mc.moments.monthly_log_moments`, which :func:`generate` calls,
-and is never repeated downstream.
+There is no ``n_months`` derived here: the simulation runs every path to the second
+death with no separate horizon (``docs/limitations.md`` L10), so the caller derives
+the month count from the household's ages and the life table (in
+``engine/mc/simulate.py``) and hands it in.
 
-There is no horizon in years to convert here, and there is no ``n_years``
-parameter anywhere in this module. The simulation runs every path to the
-second death and has no separate horizon (``docs/limitations.md`` L10), so the
-month count is a property of the household's ages and the life table, not of a
-scenario field. The caller derives it — the longest
-:func:`engine.core.mortality.survival_curve` across the household, since every
-path is dead by the end of it — and hands the count in as ``n_months``. That
-derivation lives in ``engine/mc/simulate.py`` (issue 19), not here: a reader
-of :func:`generate` or :func:`deterministic` should not go looking for a
-scenario field that supplies the horizon, because there isn't one.
-
-The attainability of the moments — ``1 + annual_means > 0``, a positive
-moment-matching log argument, and a positive semi-definite moment-matched
-monthly log-covariance — is checked in :mod:`engine.mc.moments`, which
-:func:`generate` calls and which ``engine.scenario.schema.Assumptions``
-calls when a scenario loads. This module's own guards (the counts,
-finiteness, ``1 + annual_means > 0``, and the shape, symmetry and positive
-semi-definiteness of ``annual_covariance``) run first. They protect direct
-calls and tests, and are not redundant with the schema's checks.
+Attainability of the moments is checked in :mod:`engine.mc.moments`, called both
+here and by ``engine.scenario.schema.Assumptions`` when a scenario loads; this
+module's own guards run first and protect direct calls and tests.
 """
 
 from __future__ import annotations
@@ -46,37 +30,21 @@ from engine.core.timeline import MONTHS_PER_YEAR
 from engine.mc.moments import monthly_log_moments
 
 #: Tolerance for how far a covariance matrix entry may sit from its mirror
-#: and still be treated as symmetric.
-#:
-#: Same value as ``engine.scenario.schema.TOLERANCE``, but a deliberate second
-#: copy rather than an import: by the time a scenario reaches this module its
-#: correlation matrix has already been validated by
-#: ``engine.scenario.schema.Assumptions._check_correlation``, so this guard
-#: exists for direct construction of a :class:`RandomDraws` and for tests, not
-#: for the scenario path. A numerical tolerance on a covariance check here is
-#: free to diverge from a correlation check in the scenario layer even though
-#: both currently hold the same number.
+#: and still count as symmetric. A deliberate duplicate of
+#: ``engine.scenario.schema.TOLERANCE``, not an import — this guard exists
+#: for direct construction of :class:`RandomDraws` and for tests.
 _COVARIANCE_SYMMETRY_TOLERANCE: Final[float] = 1e-9
 
 #: How negative the smallest eigenvalue of the covariance matrix may be and
-#: still be treated as positive semi-definite.
-#:
-#: Same value and same reasoning as ``engine.scenario.schema.PSD_TOLERANCE``:
-#: looser than :data:`_COVARIANCE_SYMMETRY_TOLERANCE` because it is the output
-#: of an eigenvalue decomposition rather than of one subtraction, and a matrix
-#: that is positive semi-definite in exact arithmetic routinely produces an
-#: eigenvalue a few units in the last place below zero. Duplicated from the
-#: schema module for the same reason as the tolerance above; do not delete
-#: either guard as redundant with the schema's.
+#: still count as positive semi-definite. Looser than
+#: :data:`_COVARIANCE_SYMMETRY_TOLERANCE` since it is an eigenvalue, not a
+#: subtraction. Duplicated from ``engine.scenario.schema.PSD_TOLERANCE``.
 _COVARIANCE_PSD_TOLERANCE: Final[float] = 1e-8
 
 #: The seed recorded on a :class:`RandomDraws` built by :func:`deterministic`.
-#:
-#: No draw is ever made from it — :func:`deterministic` calls neither
-#: ``numpy.random.default_rng`` nor anything downstream of it — so this marks
-#: "no draw was made", not a real stream. ``RandomDraws.seed`` still has to
-#: hold something, and the field is not optional: a scenario replayed with
-#: ``deterministic`` output must not read as "seed unknown".
+#: No draw is ever made from it — :func:`deterministic` never touches
+#: ``numpy.random.default_rng`` — so this marks "no draw was made", not a
+#: real stream.
 DETERMINISTIC_SEED: Final[int] = 0
 
 
@@ -84,43 +52,18 @@ DETERMINISTIC_SEED: Final[int] = 0
 class RandomDraws:
     """The fixed random inputs to a scenario. Generated once, reused forever.
 
-    Generated once per scenario and handed unchanged to every policy the
-    optimizer evaluates — this is what "common random numbers" (design
-    decision 2) means: path 123 sees the same market and the same death month
-    under every policy, so the optimizer is comparing policies against the
-    same draws rather than against noise. **Both array fields are read-only**
-    for exactly the reason ``engine/core/state.py`` freezes its own arrays: a
-    mutation anywhere, by any policy, would silently corrupt every other
-    policy's view of the same run. ``__post_init__`` marks each array
-    non-writeable directly, rather than through
-    ``engine.core.state.freeze`` — that helper also walks a view's whole
-    ``.base`` chain to guard against a caller retaining a writeable handle on
-    a buffer this object shares memory with, a case that does not arise here:
-    every array a caller passes in is fresh from :func:`generate` or
-    :func:`deterministic`, not a slice of something a caller kept a reference
-    to.
+    Handed unchanged to every policy the optimizer evaluates (common random numbers).
+    Both arrays are read-only, marked in ``__post_init__`` since every array is fresh
+    from :func:`generate` or :func:`deterministic`, never a slice a caller held
+    writeable.
 
     Attributes:
-        seed: The seed these were generated from. Recorded so a run can be
-            reproduced exactly. :data:`DETERMINISTIC_SEED` on a
-            :class:`RandomDraws` built by :func:`deterministic`.
-        real_returns: Real returns *per month*, shape
-            ``(n_months, n_assets, n_paths)``. Real, not nominal, and monthly,
-            not annual. The naming is deliberate: an array that is silently
-            annual has the right shape and the wrong magnitude, and produces a
-            plausible answer.
-        mortality: One uniform draw per person per path, shape ``(n_persons,
-            n_paths)``, each value strictly inside the open interval
-            ``(0, 1)``. Inverted through
-            :func:`engine.core.mortality.survival_curve` by
-            :func:`engine.core.mortality.death_month_index`, once per person
-            per path, into a death month — never compared against a monthly
-            hazard. (An earlier version of this field was
-            ``(n_months, n_persons, n_paths)`` and was compared against a
-            per-month Bernoulli hazard so that a death landed in a month
-            rather than at a year boundary; issue 12 replaced that mechanism
-            with the inversion above, which needs only one uniform per person
-            per path.)
+        seed: The seed these were generated from; :data:`DETERMINISTIC_SEED` for
+            :func:`deterministic`.
+        real_returns: Real returns per month, ``(n_months, n_assets, n_paths)``.
+        mortality: One uniform draw per person per path, ``(n_persons, n_paths)``,
+            each in ``(0, 1)``, inverted into a death month by
+            :func:`engine.core.mortality.death_month_index`.
         n_months: Month count, for shape assertions at call sites.
         n_paths: Path count, for shape assertions at call sites.
     """
@@ -171,31 +114,15 @@ def _check_covariance(
 ) -> None:
     """Raise ``ValueError`` if ``annual_covariance`` cannot be used as-is.
 
-    Checks the same four things :func:`generate`'s docstring promises, each
-    with its own message naming the offending value: not square, size not
-    matching ``annual_means``, not symmetric, not positive semi-definite.
+    Checks the same four things :func:`generate`'s docstring promises: not square,
+    size not matching ``annual_means``, not symmetric, not positive semi-definite —
+    each with its own message. Symmetry and PSD checks mirror
+    ``engine.scenario.schema.Assumptions._check_correlation``, deliberately
+    duplicated rather than imported (no diagonal-is-one check here, since this is a
+    covariance, not a correlation matrix).
 
-    The symmetry and PSD checks are the same shape of test
-    ``engine.scenario.schema.Assumptions._check_correlation`` uses — the
-    largest gap between an entry and its mirror, and the smallest eigenvalue
-    against a negative tolerance — deliberately duplicated rather than
-    imported; see :data:`_COVARIANCE_SYMMETRY_TOLERANCE`. There is no
-    diagonal-is-one check here, unlike that one: ``annual_covariance`` is a
-    covariance matrix, whose diagonal is a variance, not a correlation matrix,
-    whose diagonal is forced to one.
-
-    Also refuses an ``annual_means`` that is not 1-D, and refuses it empty,
-    before any of the four checks above run. A 0-d ``annual_means`` -- a bare
-    scalar such as ``0.05`` passed in place of ``np.array([0.05])`` -- would
-    otherwise reach ``annual_means.shape[0]`` below and raise ``IndexError:
-    tuple index out of range``, naming neither this function nor the field.
-    With zero asset classes, the symmetry check's ``np.abs(...).max()`` is a
-    reduction over an empty array, which raises numpy's own ``ValueError``
-    ("zero-size array to reduction operation maximum which has no identity")
-    naming neither this function nor the reason. Same situation
-    ``engine.scenario.schema.Assumptions._check_asset_classes_exist`` exists
-    to prevent for a scenario; these are the same guards for direct
-    construction and for tests.
+    Also refuses an ``annual_means`` that is not 1-D or is empty, before the checks
+    above run, so the failure names this function rather than a bare ``IndexError``.
     """
     if annual_means.ndim != 1:
         raise ValueError(
@@ -240,23 +167,15 @@ def _check_covariance(
 def _check_finite(name: str, array: NDArray[np.float64]) -> None:
     """Raise ``ValueError`` unless every entry of ``array`` is finite.
 
-    NaN and +/-inf both clear every guard in this module silently: ``nan <=
-    0.0`` and ``nan > tolerance`` are both ``False``, and
-    ``np.linalg.eigvalsh`` of a matrix containing NaN returns NaN, which
-    fails no comparison either.
-
-    This is a guard for direct construction of a :class:`RandomDraws`, like
-    every guard above it in this module. ``engine.mc.moments`` refuses
-    non-finite moments when a scenario loads, naming the asset class.
+    NaN and +/-inf both pass every other guard in this module silently (e.g.
+    ``nan <= 0.0`` is ``False``), so this check must run first.
 
     Args:
-        name: The parameter name to report in the message, e.g.
-            ``"annual_means"``.
-        array: The array to check. Any shape, including 0-d.
+        name: Parameter name to report in the message, e.g. ``"annual_means"``.
+        array: Array to check, any shape, including 0-d.
 
     Raises:
-        ValueError: If any entry of ``array`` is not finite, naming ``name``,
-            the entry's index, and its value.
+        ValueError: If any entry is not finite, naming ``name``, the index, and value.
     """
     finite = np.isfinite(array)
     if not np.all(finite):
@@ -272,22 +191,17 @@ def _check_finite(name: str, array: NDArray[np.float64]) -> None:
 
 
 def _check_growth_positive(annual_means: NDArray[np.float64]) -> None:
-    """Raise ``ValueError`` unless ``1 + annual_means`` is strictly positive
-    everywhere.
+    """Raise ``ValueError`` unless ``1 + annual_means`` is strictly positive everywhere.
 
-    Same reasoning ``engine.scenario.schema.Assumptions.inflation`` carries as
-    ``Field(gt=-1.0)``: at or below -1, ``(1 + mu)`` raised to a fractional
-    power is a complex number rather than an error, and ``log(1 + mu)`` is
-    undefined at ``mu <= -1``. ``engine.mc.moments`` enforces the same rule
-    when a scenario loads; this copy guards direct calls to :func:`generate`
-    and :func:`deterministic`.
+    At or below -1, ``log(1 + mu)`` is undefined — the same rule
+    ``engine.scenario.schema.Assumptions.inflation`` enforces via ``Field(gt=-1.0)``,
+    duplicated here to guard direct calls to :func:`generate` and :func:`deterministic`.
 
     Args:
         annual_means: Expected real annual return per asset class.
 
     Raises:
-        ValueError: If ``1 + annual_means[i] <= 0`` for any ``i``, naming the
-            index and the value.
+        ValueError: If ``1 + annual_means[i] <= 0`` for any ``i``, naming the index.
     """
     offending = np.flatnonzero(1.0 + annual_means <= 0.0)
     if offending.size:
@@ -310,112 +224,37 @@ def generate(
 ) -> RandomDraws:
     """Generate the full set of monthly random draws for a scenario.
 
-    Called exactly once, before the optimizer starts. The returned draws are
-    passed to every policy evaluation unchanged.
+    Asset order is positional (``Assumptions.asset_class_names``). Log-returns come from
+    :func:`engine.mc.moments.monthly_log_moments`, which moment-matches the monthly
+    lognormal draw to the annual mean and covariance given. The asset axis is moved with
+    :func:`numpy.moveaxis` to match :attr:`RandomDraws.real_returns`, and an exact ``0.0``
+    mortality uniform becomes the smallest positive double, since
+    :func:`engine.core.mortality.death_month_index` refuses either endpoint.
 
-    **Asset order is positional and is
-    ``engine.scenario.schema.Assumptions.asset_class_names`` order** — the
-    same convention ``assumptions.correlation`` already follows, where
-    nothing in the matrix names a class and a reordered ``asset_classes``
-    block reinterprets every entry without changing a number.
-    ``annual_means[i]`` and ``annual_covariance[i][j]`` are read as that
-    class, and ``real_returns[:, i, :]`` on the result is that class's
-    monthly draws. ``asset_class_names`` is the single place that order is
-    read from; nothing here re-derives or re-states it.
-
-    Converting an annual assumption to a monthly one is a modelling decision,
-    not arithmetic, and this function states which convention it uses and
-    holds to it. The requirement it satisfies:
-    ``E[prod(1 + r_month) over 12 months] == 1 + mu`` — twelve monthly draws
-    compounded together must reproduce the specified annual arithmetic mean,
-    not merely the annual mean divided by twelve, which understates
-    compounding. That equality is what the moment matching in
-    :func:`engine.mc.moments.monthly_log_moments` is for, and it is the
-    reason the compounding test in ``tests/mc/test_returns.py`` exists.
-
-    The conversion is :func:`engine.mc.moments.monthly_log_moments`: the
-    annual arithmetic means and the covariance of annual simple returns go
-    in, the mean and covariance of *monthly* log-returns come out. Monthly
-    log-returns are drawn iid multivariate normal from that distribution,
-    and the simple returns handed back are ``exp(x) - 1``.
-
-    The random stream, in order: :class:`numpy.random.Generator` is built once
-    from ``seed`` with ``numpy.random.default_rng``, the return draws are
-    taken from it first, and the mortality uniforms are taken from it second.
-    That order is part of the contract, not an implementation detail — it is
-    what keeps the stream fixed under design decision 2: a caller that adds a
-    third draw between these two, or reorders them, changes what every
-    existing seed produces.
-
-    **The axis order is the trap in this function.**
-    ``rng.multivariate_normal(mean, cov, size=(n_months, n_paths))`` returns
-    ``(n_months, n_paths, n_assets)``, and the contract on
-    :attr:`RandomDraws.real_returns` is ``(n_months, n_assets, n_paths)``. The
-    asset axis is moved explicitly with :func:`numpy.moveaxis` rather than
-    relied on to already be in the right place: a transposed result has a
-    plausible shape whenever ``n_assets == n_paths``, and when it does not, it
-    fails somewhere far downstream with a broadcasting error that names
-    neither this function nor the axis.
-
-    Mortality uniforms: shape ``(n_persons, n_paths)``, drawn with
-    ``rng.random()``, which returns values in ``[0, 1)`` — so an exact zero is
-    possible, not hypothetical, and
-    :func:`engine.core.mortality.death_month_index` refuses it. Any exact zero
-    drawn is replaced with ``numpy.nextafter(0.0, 1.0)``, the smallest
-    positive double, rather than left to chance: relying on ``rng.random()``
-    never happening to draw exactly ``0.0`` across every path of every run
-    this engine will ever be asked to do is not a guarantee, and the
-    replacement is cheap and exact where it applies and a no-op everywhere
-    else.
-
-    Validation happens before either draw. ``filterwarnings = ["error"]`` is
-    set for the test suite, and ``rng.multivariate_normal`` raises a
-    ``RuntimeWarning`` — a test error, under that setting — on a covariance it
-    considers non-positive-semi-definite. Checking ``s_month`` ourselves
-    first, with :func:`engine.mc.moments.monthly_log_moments`, means our own
-    ``ValueError``, naming the matrix, fires before numpy's warning ever has
-    the chance to; ``check_valid`` is deliberately not passed to
-    ``rng.multivariate_normal``, so that failure mode is not inherited along
-    with numpy's own wording.
-
-    Note that a scenario built through ``engine.scenario.schema.Scenario``
-    has already had its correlation matrix validated by
-    ``Assumptions._check_correlation`` by the time it reaches here — these
-    guards are for direct construction of a :class:`RandomDraws` and for
-    tests, not for the scenario path. They stay regardless: do not delete
-    them as redundant with the schema's.
+    The random stream is drawn in a fixed order — real-return draws first, mortality
+    uniforms second — and that order is part of the contract: every recorded seed and
+    every characterization snapshot depends on it.
 
     Args:
-        seed: Fixed seed. The same seed must reproduce identical draws.
-        n_months: Number of months to draw. See the module docstring for
-            where this count comes from — never a scenario field.
+        seed: Fixed seed; the same seed reproduces identical draws.
+        n_months: Number of months to draw. See the module docstring.
         n_paths: Number of Monte Carlo paths.
-        annual_means: Expected **real annual** return per asset class,
-            ``(n_assets,)``, as bare fractions, in
-            ``Assumptions.asset_class_names`` order.
-        annual_covariance: Covariance matrix of real **annual** simple
-            returns, ``(n_assets, n_assets)``, same order.
+        annual_means: Expected real annual return per asset class, as bare fractions
+            (``0.05``, not ``5``), ``(n_assets,)``.
+        annual_covariance: Covariance of real annual simple returns, ``(n_assets,
+            n_assets)``, same order.
         n_persons: Number of persons in the household.
 
     Returns:
         A frozen :class:`RandomDraws` with monthly draws.
 
     Raises:
-        ValueError: Listed in the order the checks actually run, since a
-            caller fixing one failure at a time meets them in this order and
-            not the order they might be listed. If ``n_months``, ``n_paths``,
-            or ``n_persons`` is below one. If ``annual_means`` or
-            ``annual_covariance`` contains a NaN or an infinite entry. If
-            ``1 + annual_means`` is not strictly positive everywhere. If
-            ``annual_means`` is not 1-D, is empty, or ``annual_covariance``
-            is not square, its size does not match ``annual_means``, it is
-            not symmetric, or it is not positive semi-definite. If the
-            moment-matching log argument is not strictly positive for some
-            ``i, j``. If the moment-matched monthly log-covariance is not
-            positive semi-definite — **this can happen even when
-            ``annual_covariance`` itself passed every check above**, because
-            the moment-matching transform does not preserve positive
-            semi-definiteness; see :mod:`engine.mc.moments`.
+        ValueError: If any count is below one; if the inputs are not finite; if
+            ``1 + annual_means`` is not strictly positive everywhere; if
+            ``annual_means`` is not 1-D, is empty, or ``annual_covariance`` is not
+            square, mismatched, not symmetric, or not PSD; if the moment-matching
+            log argument is not strictly positive for some asset pair; or if the
+            moment-matched covariance fails PSD despite that.
     """
     if n_months < 1:
         raise ValueError(f"generate: n_months must be at least 1, got {n_months}.")
@@ -463,65 +302,28 @@ def deterministic(
 ) -> RandomDraws:
     """Draws with zero volatility: one path, every month at the mean.
 
-    The bridge between the deterministic single-path check and Monte Carlo.
-    Running the simulator with these must reproduce the hand-checked
-    spreadsheet exactly; that equality is the test that says the Monte Carlo
-    wrapper introduced no error of its own.
+    The bridge between the deterministic single-path check and Monte Carlo: running
+    the simulator with these must reproduce the hand-checked spreadsheet exactly.
+    Each month's return is ``(1 + mu) ** (1 / 12) - 1`` per asset — the value that
+    compounds to ``annual_means`` over twelve months, not ``mu / 12``.
 
-    Every month gets the monthly return that compounds to ``annual_means``
-    over twelve months — ``(1 + mu) ** (1 / 12) - 1`` per asset, not
-    ``mu / 12``, which understates compounding the same way it would in
-    :func:`generate`.
-
-    Mortality uniforms are ``numpy.nextafter(0.0, 1.0)``, the smallest
-    positive double, shape ``(n_persons, 1)`` — never ``0.0`` and never
-    ``1.0``. Both endpoints are excluded for reasons specific to this
-    function's purpose, not merely because
-    :func:`engine.core.mortality.death_month_index` raises on either:
-    ``deterministic`` exists to remove *dispersion*, not mortality, so the
-    single path must survive as long as the life table allows and die only at
-    the very last index of its survival curve — the latest death the curve
-    admits. ``u == 1.0`` would instead give the *earliest* possible death,
-    not the latest: ``curve[1] < 1`` for any positive hazard, so
-    ``death_month_index`` would return month 1 for it, the opposite of what a
-    zero-dispersion draw should mean. Using the smallest positive double
-    instead of exactly ``0.0`` costs nothing: ``death_month_index`` requires
-    every ``u`` strictly inside the open interval ``(0, 1)`` and raises on
-    either endpoint, and "nobody dies" is unreachable by construction anyway,
-    since every path dies by the table's terminal age
-    (``docs/limitations.md`` L10).
-
-    ``RandomDraws.seed`` is set to :data:`DETERMINISTIC_SEED`: no draw is made
-    here, so there is no stream for a seed to identify, but the field is not
-    optional and a plausible-looking seed would misrepresent that.
+    Mortality uniforms are ``numpy.nextafter(0.0, 1.0)``, shape ``(n_persons, 1)``:
+    never ``0.0`` or ``1.0``, so the single path survives to the life table's latest
+    death rather than its earliest (``u == 1.0`` would give the earliest, since
+    ``curve[1] < 1`` for any positive hazard).
 
     Args:
-        n_months: Number of months to draw. See the module docstring for
-            where this count comes from — never a scenario field.
-        annual_means: Expected real annual return per asset class,
-            ``(n_assets,)``, in ``Assumptions.asset_class_names`` order.
+        n_months: Number of months to draw. See the module docstring.
+        annual_means: Expected real annual return per asset class, ``(n_assets,)``.
         n_persons: Number of persons in the household.
 
     Returns:
         A :class:`RandomDraws` with ``n_paths == 1`` and no dispersion.
 
     Raises:
-        ValueError: Listed in the order the checks actually run. If
-            ``n_months`` or ``n_persons`` is below one. If ``annual_means``
-            contains a NaN or an infinite entry. If ``annual_means`` is not
-            1-D -- a bare scalar such as ``0.05`` passed in place of
-            ``np.array([0.05])`` would otherwise reach
-            ``annual_means.shape[0]`` below and raise ``IndexError: tuple
-            index out of range``, naming neither this function nor the
-            field. If ``annual_means`` is empty. If ``1 + annual_means`` is
-            not strictly positive everywhere — this last one is not
-            hypothetical: without it, ``annual_means = -5`` (a
-            percent-for-fraction typo on -5%) produces an all-NaN
-            ``real_returns`` with only a printed
-            ``invalid value encountered in power``, and this function is the
-            one the hand-checked spreadsheet in issue 21 is compared against,
-            so a silent all-NaN array there fails that comparison with
-            nothing saying why.
+        ValueError: If ``n_months`` or ``n_persons`` is below one; if
+            ``annual_means`` is not finite, not 1-D, empty, or ``1 + annual_means``
+            is not strictly positive everywhere.
     """
     if n_months < 1:
         raise ValueError(f"deterministic: n_months must be at least 1, got {n_months}.")

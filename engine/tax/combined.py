@@ -7,10 +7,6 @@ The single entry point the year-end close calls, once per simulated year, on
 income accumulated over that year's twelve monthly steps. Household-level
 elections that cannot be evaluated one person at a time — pension income
 splitting above all — belong here, not in ``federal`` or ``provincial``.
-
-Nothing in this module is called monthly. The election it makes is an annual
-one made with the completed year in hand, which is the one point in the
-simulation where the whole year *is* legitimately knowable.
 """
 
 from __future__ import annotations
@@ -74,12 +70,8 @@ def optimal_pension_split(
     Bounded by the statutory maximum share. Chosen to minimise combined
     household tax for the year being closed only — this is a within-year
     election, not a multi-year optimisation, and must not consider future
-    years.
-
-    Elected once, at the year-end close, on the completed year. It is not a
-    monthly decision and must not be recomputed as income accrues: a split
-    chosen in March on a quarter of the year's income is not the split that
-    minimises the year's tax.
+    years. Made once, at the year-end close, on the completed year; not
+    recomputed monthly as income accrues.
 
     Args:
         household_income: Income components for every person, accumulated over

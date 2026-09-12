@@ -4,32 +4,24 @@
 """Registered Education Savings Plan — tracked per beneficiary.
 
 **Never one pot.** Grant room, the lifetime contribution limit, and the
-withdrawal window are all per-beneficiary and do not aggregate. Two children
-with one plan between them still have two independent grant entitlements, and
-an EAP paid for one child cannot draw on the other's grant. Every function here
-takes a single beneficiary's state; the step iterates.
+withdrawal window are all per-beneficiary and do not aggregate — an EAP paid
+for one child cannot draw on another's grant. Every function here takes a
+single beneficiary's state; the step iterates.
 
 A withdrawal splits three ways and the split is not the caller's choice:
-contributions come out tax-free, while grant and accumulated income come out as
-an Educational Assistance Payment taxable in the *student's* hands, not the
-subscriber's.
+contributions come out tax-free, while grant and accumulated income come out
+as an Educational Assistance Payment taxable in the *student's* hands, not
+the subscriber's.
 
-Timing on a monthly step. Grant room accrues once a year, in January, and the
-annual grant maximum is an annual cap enforced against the year-to-date grant
-received — enforced per month it would pay twelve times the maximum. Enrolment
-begins in a month, not on 1 January, and the cap on EAP withdrawals applies to
-a window measured in weeks from the start of enrolment, so the month of
-enrolment is state the plan has to carry.
+Grant room accrues once a year, in January; the annual grant maximum is
+enforced against the year-to-date grant received, not a single month's.
+Enrolment begins in a month, not on 1 January, and the EAP cap window is
+measured in weeks from the start of enrolment, so the enrolment month is
+state the plan carries.
 
-The grant has two tiers. The basic match is paid at one rate to everyone; an
-additional match is paid on the first dollars of each year's contribution at a
-rate that steps down as family income rises, and is capped in dollars rather
-than being a pure percentage. Leaving the additional tier out understates the
-grant precisely for the households it matters most to, so it is modelled.
-
-The optimizer should discover on its own that contributing up to the annual
-grant maximum dominates almost every alternative. If it does not, the model is
-wrong — a guaranteed match is hard to beat, and that makes this a free oracle.
+The grant has two tiers: a basic match paid to everyone, and an additional
+match on the first dollars of each year's contribution at a rate that steps
+down as family income rises and is capped in dollars.
 
 Parameters come from ``params/{year}/resp.yaml``.
 """
@@ -47,16 +39,13 @@ class RespState:
     """Per-beneficiary plan state: contributions, grant, and accumulated income.
 
     The three components are tracked separately because they are taxed
-    separately on the way out. It also carries the year-to-date grant received,
-    so the annual grant maximum can be enforced against the year rather than
-    against a month, and the month enrolment began, which the EAP window is
-    measured from.
+    separately on the way out. Also carries: year-to-date grant received (so
+    the annual grant maximum enforces against the year, not a month), the
+    month enrolment began (the EAP window is measured from it), and — once
+    implemented — year-to-date contributions, needed because the enhanced
+    grant tier's eligible window is a dollar amount per year, not per month.
 
-    The additional grant tier needs one more year-to-date figure: the
-    contribution already made this calendar year, because the enhanced rate
-    applies only to the first dollars of each year's contribution and a month
-    cannot know how much of that window is left without it. Defined here as a
-    placeholder; its fields land with the implementation.
+    Defined here as a placeholder; its fields land with the implementation.
     """
 
 
@@ -66,29 +55,23 @@ def enhanced_grant_rate(
 ) -> NDArray[np.float64]:
     """Additional match rate for the first dollars of this year's contribution.
 
-    A step function of family income: the highest rate below the first cut-off,
-    a lower rate between the cut-offs, and zero above the last. The cut-offs
-    and rates are a table in ``params`` under ``grant.enhanced``, laid out like
-    a bracket table — ``len(match_rates) == len(income_edges_annual) + 1`` — so
-    the same branch-free clipping idiom as ``engine.tax.federal.gross_tax``
-    applies. The steps are cliffs rather than a phase-out: a dollar of income
-    across a cut-off changes the rate on every eligible dollar.
+    A step function of family income: the highest rate below the first
+    cut-off, a lower rate between cut-offs, and zero above the last — cliffs,
+    not a phase-out, so a dollar of income across a cut-off changes the rate
+    on every eligible dollar. Cut-offs and rates come from ``params`` under
+    ``grant.enhanced``, laid out as a bracket table
+    (``len(match_rates) == len(income_edges_annual) + 1``), so the
+    branch-free clipping idiom from ``engine.tax.federal.gross_tax`` applies.
 
-    This returns a *rate*. The dollar cap on the eligible contribution is
-    applied by :func:`grant_on_contribution`, which is the only caller that
-    knows how much of this year's eligible window is already used.
+    This returns a rate; the dollar cap on eligible contribution is applied
+    by :func:`grant_on_contribution`.
 
     Args:
-        family_income: Family income for the governing year, ``(n_paths,)``.
-            Family, not one person's: the rate is set by the household's
-            income, so a caller assembling this from
-            ``PersonState.prior_year_net_income`` sums it across the
-            household's living persons. Which year governs is a statutory rule, not
-            this function's guess: the offset is in ``params`` under
-            ``grant.enhanced.income_year_offset`` and is applied by the caller.
-            Passing the current year's income when the rule says otherwise
-            overstates the grant for a household whose income is rising, and
-            understates it for one drawing down.
+        family_income: Family income for the governing year, ``(n_paths,)`` —
+            summed across the household's living persons, not one person's.
+            The governing year is set by
+            ``grant.enhanced.income_year_offset`` in ``params`` and applied
+            by the caller, not guessed here.
         params: The ``resp`` parameter set.
 
     Returns:
@@ -109,33 +92,21 @@ def grant_on_contribution(
 ) -> NDArray[np.float64]:
     """Grant matched to this month's contribution, for one beneficiary.
 
-    Both tiers, summed. The basic match is paid at a flat rate on every
-    eligible dollar; the additional match is paid at
-    :func:`enhanced_grant_rate` on the first
-    ``grant.enhanced.eligible_contribution_annual`` dollars contributed in the
-    calendar year, which is what ``contributed_ytd`` measures.
-
-    Bounded five ways: the two match rates, the annual grant room (which
-    carries forward), the annual grant maximum measured against what has
-    already been received this calendar year, and the lifetime grant maximum.
-    Every bound comes from ``params``.
-
-    Two arguments exist solely to keep annual limits annual.
-    ``grant_received_ytd`` is what makes the annual maximum an annual maximum —
-    without it, twelve monthly contributions each collect a full year's grant.
-    ``contributed_ytd`` does the same job for the enhanced tier's eligible
-    window, which is a dollar amount per year and not per month.
+    Both tiers, summed: the basic match at a flat rate on every eligible
+    dollar, and the additional match at :func:`enhanced_grant_rate` on the
+    first ``grant.enhanced.eligible_contribution_annual`` dollars contributed
+    this year. Bounded by both match rates, the annual grant room (which
+    carries forward), the annual grant maximum against ``grant_received_ytd``,
+    and the lifetime grant maximum — every bound from ``params``.
 
     Args:
-        contribution: This month's contribution for this beneficiary,
-            ``(n_paths,)``.
+        contribution: This month's contribution, ``(n_paths,)``.
         grant_room: Unused annual grant room, including carry-forward.
-        grant_received_ytd: Grant already received for this beneficiary in this
-            calendar year, ``(n_paths,)``.
-        contributed_ytd: Contributions already made for this beneficiary in
-            this calendar year, ``(n_paths,)``, excluding this month's.
-        lifetime_grant_paid: Grant already received by this beneficiary over
-            all years.
+        grant_received_ytd: Grant received this calendar year, ``(n_paths,)``.
+        contributed_ytd: Contributions made this calendar year,
+            ``(n_paths,)``, excluding this month's — bounds the enhanced
+            tier's eligible window.
+        lifetime_grant_paid: Grant received over all years.
         family_income: Family income for the year that governs the enhanced
             rate; see :func:`enhanced_grant_rate`.
         params: The ``resp`` parameter set.
@@ -179,21 +150,18 @@ def withdraw(
 ) -> tuple[RespState, WithdrawalResult]:
     """Withdraw for one beneficiary this month.
 
-    The tax-free and taxable portions are determined by the plan's composition,
-    not chosen by the caller. EAP withdrawals require the beneficiary to be
-    enrolled and are capped for an initial window measured from the start of
-    enrolment — which is why the window, in months since enrolment, is an
-    argument. On an annual timestep that cap was invisible; on a monthly one it
-    binds, and a plan drawn down too fast in the first months of study is a
-    real outcome the model should be able to produce.
+    The tax-free and taxable portions are determined by the plan's
+    composition, not chosen by the caller. EAP withdrawals require the
+    beneficiary to be enrolled and are capped for an initial window measured
+    in months since enrolment began.
 
     Args:
         state: That beneficiary's plan state.
         requested: Amount wanted this month, ``(n_paths,)``.
         is_eligible_student: Whether the beneficiary is enrolled this month,
             ``(n_paths,)``. Determines whether an EAP is permitted at all.
-        months_since_enrolment: Months since enrolment began, ``(n_paths,)``.
-            Compared against the cap window from ``params``.
+        months_since_enrolment: Months since enrolment began, ``(n_paths,)``,
+            compared against the cap window from ``params``.
         params: The ``resp`` parameter set, supplying the cap and its window.
 
     Returns:

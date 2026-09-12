@@ -4,49 +4,26 @@
 """Scenario -> opening :class:`~engine.core.state.HouseholdState` and
 :class:`~engine.mc.market.MarketInputs`.
 
-The one place a :class:`~engine.scenario.schema.Scenario` — a document, in
-scalar Python values, real dollars of January of its start year except each
-person's prior-year net income, taken as filed — is turned into the
-array-valued state the monthly loop steps forward. Everything here
-is a mapping, not a decision: no balance is projected, no benefit is
-computed, no bracket is consulted. What the scenario states is what the
-opening state holds, broadcast to every path.
+The one place a :class:`~engine.scenario.schema.Scenario` — real dollars of January of its
+start year, except each person's prior-year net income, taken as filed — is turned into the
+array-valued state the monthly loop steps forward. Everything here is a mapping, not a
+decision: no balance is projected, no benefit is computed, no bracket is consulted.
 
-This is the only scenario-to-engine boundary: ``engine.core.step
-.advance_month`` takes no scenario, only the state this module produces. A
-scenario input that is not carried onto some field here is not merely
-unused this issue — it is unreachable by any later one, so every field the
-scenario states is carried, even one no phase reads yet.
+This is the only scenario-to-engine boundary: ``engine.core.step.advance_month`` takes no
+scenario, only the state this module produces, so every field the scenario states is carried
+onto it, even one no phase reads yet. The opening position is always 1 January of
+``scenario.start_year``.
 
-The opening position is always 1 January of ``scenario.start_year``:
-``year=start_year``, ``month=1``, ``month_index=0``.
+:func:`build_market_inputs` maps a scenario's :class:`~engine.scenario.schema.Assumptions` to
+the :class:`~engine.mc.market.MarketInputs` the draws and the step read, in
+``asset_class_names`` order; it validates nothing, since attainability was checked at load.
 
-:func:`build_market_inputs` maps a scenario's
-:class:`~engine.scenario.schema.Assumptions` to the
-:class:`~engine.mc.market.MarketInputs` the draws and the step read, in
-``asset_class_names`` order. It validates nothing: attainability was
-checked when the scenario loaded.
-
-Two things a scenario cannot answer without help are worked out here rather
-than invented:
-
-- **Which policy.** A scenario may carry several; the elections that decide
-  a CPP or OAS start age differ between them, so :func:`build_initial_state`
-  either takes one explicitly or requires there to be exactly one to fall
-  back on.
-- **Month arithmetic.** A pension's start date, a bridge's end age, an
-  RESP's enrolment date, and an employment band's start and end are all
-  given as a calendar year and month, and the state they land in wants a
-  signed month offset from the run's opening. :func:`_month_offset` is that
-  arithmetic. It is a permanent part of this module, not a stand-in for
-  ``engine.core.timeline.month_index``: that function indexes the first
-  axis of the random draws, which has no negative rows, so it rejects a
-  negative result; this one places a calendar date relative to the run's
-  opening, and that date may precede it — a pension already in payment, a
-  bridge that already ended, a subscriber already partway through a
-  programme, an employment band begun years earlier. See ``state.py``'s
-  module docstring for the negative-month-index convention every caller of
-  this function's result inherits.
+Two things worked out here rather than invented: which policy's elections to use when a
+scenario carries more than one (:func:`build_initial_state` requires exactly one, or an
+explicit choice); and month arithmetic, via :func:`_month_offset` — permanently distinct from
+``engine.core.timeline.month_index``, which indexes the draws' first axis and so rejects a
+negative result, where this one places a calendar date that may precede the run's opening. See
+``state.py``'s module docstring for that negative-index convention.
 """
 
 from __future__ import annotations
@@ -94,13 +71,10 @@ __all__ = ["build_initial_state", "build_market_inputs"]
 def _month_offset(base_year: int, year: int, month: int) -> int:
     """Signed month offset from January of ``base_year`` to ``(year, month)``.
 
-    Not ``engine.core.timeline.month_index`` in miniature — see the module
-    docstring for why the two are permanently different functions. A
-    negative result here is an ordinary answer, not a signal to reject: it
-    places a calendar date that precedes the run's opening, which several
-    scenario inputs legitimately do (a pension already in pay, a bridge that
-    already ended, an employment band begun years ago, a student already
-    partway through a programme).
+    Not ``engine.core.timeline.month_index`` in miniature — see the module docstring for why
+    the two are permanently different functions. A negative result is an ordinary answer, not
+    a signal to reject: several scenario inputs legitimately precede the run's opening (a
+    pension already in pay, a bridge that already ended, an employment band begun years ago).
 
     Args:
         base_year: The simulation's first calendar year.
@@ -126,35 +100,26 @@ def build_initial_state(
 ) -> HouseholdState:
     """Build the opening :class:`~engine.core.state.HouseholdState` for a scenario.
 
-    Every balance, room, and ledger field is broadcast from the scenario's
-    scalar to ``(n_paths,)``. Every year-to-date and ``withdrawn_*`` field
-    opens at zero: the run has not accrued anything yet. Nothing here reads
-    ``params/`` and nothing here computes a benefit amount — those happen
-    once the monthly loop starts.
+    Every balance, room, and ledger field is broadcast from the scenario's scalar to
+    ``(n_paths,)``; every year-to-date and ``withdrawn_*`` field opens at zero. Nothing here
+    reads ``params/`` or computes a benefit amount — those happen once the monthly loop starts.
 
     Args:
         scenario: The validated scenario to build from.
-        n_paths: Monte Carlo paths every array opens with. Must be at least
-            one: a zero-length array builds without complaint and then fails
-            much later as a NumPy empty-reduction warning, far from this
-            call and turned into a hard error by this repository's
-            ``filterwarnings = ["error"]``.
-        policy: Which of the scenario's policies to take elections from. If
-            ``None`` and the scenario has exactly one policy, that one is
-            used. If ``None`` and there are several, this raises: the CPP
-            and OAS start ages, the RRIF conversion, and the pension-credit
-            fill differ between policies, and choosing the first silently
-            would build the opening state for the wrong plan.
+        n_paths: Monte Carlo paths every array opens with; must be at least one, since zero
+            builds silently and fails much later, far from this call.
+        policy: Which of the scenario's policies to take elections from. If ``None``, the
+            scenario's one policy is used, or this raises if there are several — the CPP/OAS
+            start ages, RRIF conversion, and pension-credit fill differ between them.
 
     Returns:
         The state as of 1 January of ``scenario.start_year``.
 
     Raises:
-        ValueError: If ``n_paths`` is less than one, or if ``policy`` is
-            ``None`` and the scenario does not have exactly one policy to
-            fall back on. A bridge that would end before its pension starts
-            is rejected earlier, by the schema
-            (``engine.scenario.schema.Person``), so it never reaches here.
+        ValueError: If ``n_paths`` is less than one, or ``policy`` is ``None`` with more
+            than one policy on the scenario. A bridge ending before its pension starts is
+            rejected earlier, by the schema (``engine.scenario.schema.Person``), so it never
+            reaches here.
     """
     if n_paths < 1:
         raise ValueError(f"n_paths must be at least 1, got {n_paths!r}.")

@@ -13,9 +13,7 @@ The design choice that does the actual work here is a negative one: **no lookup
 in this module accepts a default.** ``ParamSet.get`` has no ``default``
 parameter, there is no ``get_or``, and nothing returns ``None`` for an absent
 key. A missing parameter raises :class:`MissingParameterError` naming the file
-and the key path. That turns "we don't have this number yet" from a silent
-plausible-looking result into a loud stop, which is the only way the rule
-survives contact with an agent under time pressure.
+and the key path.
 
 Everything returned is deeply immutable. Parameter objects are loaded once and
 shared across every Monte Carlo path and every policy the optimizer evaluates;
@@ -162,9 +160,8 @@ class ParamSet:
     def number(self, path: str) -> float:
         """Return the value at ``path`` as a float, or raise.
 
-        Booleans are rejected: YAML's ``yes``/``no`` parse as ``bool``, and a
-        bool silently becoming ``1.0`` in a tax calculation is exactly the kind
-        of quiet wrongness this module exists to prevent.
+        Booleans are rejected: YAML's ``yes``/``no`` parse as ``bool``, which
+        would otherwise silently become ``1.0`` in a calculation.
 
         Raises:
             MissingParameterError: If the parameter is absent.
@@ -305,8 +302,7 @@ class ParamYear:
         One file, because they are one program at two stages of life. The file
         keeps them under symmetric ``rrsp:`` and ``rrif:`` keys, so a RRIF
         lookup through this property reads ``rrif.rrif.minimum_factors...``.
-        The doubled segment is deliberate: the alternative was a file named for
-        one program holding two, or an asymmetry between the halves.
+        The doubled segment is deliberate, not a bug.
         """
         return self["rrif"]
 

@@ -3,58 +3,37 @@
 
 """The constant real-terms cost of periodic indexation, and the only route to a dollar.
 
-An engine that works in real dollars and steps annually can treat a fully
-indexed benefit as constant. An engine that steps monthly cannot: an indexed
-amount is fixed in *nominal* terms between adjustment dates, so its real value
-falls a little each month and steps back up on the adjustment date. Averaged
-over the cycle it sits below its published real value, permanently, in the
-direction that flatters the plan.
+An engine that works in real dollars and steps annually can treat a fully indexed benefit as
+constant. An engine that steps monthly cannot: a nominally fixed amount's real value falls
+between adjustment dates and steps back up on each one, averaging below its published real
+value, permanently, in the direction that flatters the plan.
 
-This module models that mean and nothing else. Two consequences follow, and
-both are the point:
+This module models that mean and nothing else:
 
-- **Every function here is independent of the month.** The erosion factor for a
-  schedule is one number per scenario. The monthly loop does not thread an
-  adjustment calendar through anything, and no call site decides when to
-  deflate.
-- **The oscillation around the mean is not modelled.** It is bounded, mean-zero
-  by construction, and smaller than the uncertainty in the inflation
-  assumption it depends on. See ``docs/limitations.md`` L5.
+- Every function here is independent of the month; the erosion factor for a schedule is one
+  number per scenario, computed once.
+- The oscillation around that mean is dropped: it is bounded, mean-zero, and smaller than the
+  uncertainty in the inflation assumption it depends on.
+- The lag between the window an adjustment is computed from and the date it takes effect is also
+  not modelled, but it is not mean-zero: it overstates every indexed amount by a little, in the
+  direction that flatters the plan (``docs/limitations.md`` L5).
 
-Neither is the CPI *lag* modelled. In reality an adjustment is computed from a
-window that closed some months before it takes effect, so the step back up
-restores an earlier window's inflation rather than the months just past. We
-ignore that, which overstates every indexed amount by a little; the direction
-and the reason are recorded in L5.
-
-Unindexed amounts are the other case entirely. An indexed amount's real loss is
-bounded by one cycle; an amount fixed in nominal terms by statute loses ground
-without limit, and over a thirty-year retirement that is the largest real-terms
-effect in the model. :func:`unindexed_factor` is therefore the one function
-here that depends on time.
+Unindexed amounts are different: their real loss is not bounded by one cycle but grows without
+limit over a retirement, the largest real-terms effect in the model. :func:`unindexed_factor` is
+therefore the one function here that depends on time.
 
 The real-terms view
--------------------
+--------------------
 
-:class:`RealParamSet` wraps a :class:`~engine.params.loader.ParamSet` with the
-scenario's inflation rate and is the **only** supported way for engine code to
-reach a dollar amount. Its guarantee is negative, like the loader's: the raw
-accessors it inherits the names of — ``number``, ``numbers``, ``get``,
-``sequence``, ``has`` — refuse a path that any schedule routes, so a dollar
-cannot be read undeflated by forgetting to call the right method. Reading one
-requires :meth:`RealParamSet.amount`, which cannot return an undeflated figure.
+:class:`RealParamSet` wraps a :class:`~engine.params.loader.ParamSet` with the scenario's
+inflation rate and is the **only** supported way for engine code to reach a dollar amount. Its
+guarantee is negative, like the loader's: the raw accessors it inherits the names of refuse a
+routed path, so a dollar cannot be read undeflated by forgetting the right method;
+:meth:`RealParamSet.amount` is the one that cannot return an undeflated figure.
 
-It lives here rather than in ``engine/params/loader.py`` on purpose. The loader
-knows about files: what is on disk, what is missing, and nothing else. An
-inflation rate is a *scenario* assumption, not a tax parameter, and putting a
-class that needs one into ``engine/params/`` would make the transcription layer
-depend on a scenario concept and would hide a modelling decision inside the
-module whose only job is faithful reading.
-
-Which amounts sit on which schedule is declared in each parameter file's
-``indexation`` block, by hand, with a source. Nothing here decides it, and an
-amount whose rule has not been recorded is not indexed "annually by default" —
-it is unrouted, and the run stops.
+Which amounts sit on which schedule is declared in each parameter file's ``indexation`` block,
+by hand, with a source. An amount whose rule has not been recorded is not indexed "annually by
+default" — it is unrouted, and the run stops.
 """
 
 from __future__ import annotations
@@ -125,31 +104,24 @@ class UnroutedParameterError(ParamError):
 def erosion_factor(inflation_rate: float, adjustments_per_year: int) -> float:
     """Mean real value of an amount adjusted ``adjustments_per_year`` times a year.
 
-    With ``P = 12 // adjustments_per_year`` months between adjustments, the
-    amount holds its nominal value for ``m = 0 .. P-1`` months and is worth
-    ``(1 + inflation_rate) ** (-m / 12)`` in real terms in each of them. This
-    returns the mean over the cycle.
-
-    Takes no month and no year. That absence is the simplification: an indexed
-    benefit is a constant in real dollars, just not the constant its published
-    amount suggests. Compute this once per schedule per scenario.
+    With ``P = 12 // adjustments_per_year`` months between adjustments, the amount holds its
+    nominal value for ``m = 0 .. P-1`` months, worth ``(1 + inflation_rate) ** (-m / 12)`` in
+    real terms each month; this returns the mean over the cycle. Takes no month or year: an
+    indexed benefit is a real-dollar constant, just not its published amount. Compute once per
+    schedule per scenario.
 
     Args:
-        inflation_rate: Assumed annual inflation as a bare fraction. A scenario
-            assumption, not a tax parameter.
-        adjustments_per_year: How many times a year the amount is adjusted.
-            Four for a quarterly-indexed benefit, one for an annual one. From
-            ``params/`` via :func:`schedule`.
+        inflation_rate: Assumed annual inflation as a bare fraction.
+        adjustments_per_year: Times a year the amount is adjusted — four for quarterly, one for
+            annual — from ``params/`` via :func:`schedule`.
 
     Returns:
-        A multiplier in ``(0, 1]``. Exactly 1 when inflation is zero, and
-        exactly 1 when ``adjustments_per_year`` is 12, because an amount
-        adjusted every month never spends a month eroding.
+        A multiplier in ``(0, 1]``; exactly 1 at zero inflation or at ``adjustments_per_year ==
+        12``, since a monthly-adjusted amount never spends a month eroding.
 
     Raises:
-        ValueError: If ``adjustments_per_year`` is not positive or does not
-            divide twelve, or if ``inflation_rate`` is at or below -1, which
-            would make the base of the power zero or negative.
+        ValueError: If ``adjustments_per_year`` is not a positive divisor of twelve, or
+            ``inflation_rate`` is at or below -1.
     """
     if adjustments_per_year < 1 or MONTHS_PER_YEAR % adjustments_per_year:
         raise ValueError(

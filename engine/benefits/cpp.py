@@ -25,11 +25,9 @@ from engine.params.loader import ParamSet
 def start_adjustment_factor(start_age_months: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
     """Multiplier applied to the base pension for starting other than at 65.
 
-    Early and late adjustments use different per-month rates, and the
-    adjustment is per *month* away from 65, not per year. On a monthly
-    timeline that precision is now available directly from
-    ``engine.core.timeline.age_in_months`` and there is no reason to round a
-    start age to whole years before it reaches here.
+    Early and late adjustments use different per-month rates; the adjustment
+    is per *month* away from 65, not per year, so a start age must not be
+    rounded to whole years before it reaches here.
 
     Args:
         start_age_months: Age in months at which the pension starts,
@@ -38,9 +36,8 @@ def start_adjustment_factor(start_age_months: ArrayLike, params: ParamSet) -> ND
         params: The ``cpp`` parameter set.
 
     Returns:
-        Multiplier, 1.0 at exactly the standard start age. That age, in
-        months, comes from ``params`` like everything else; do not write
-        the number of months into the implementation.
+        Multiplier, 1.0 at exactly the standard start age, in months, from
+        ``params``.
     """
     raise NotImplementedError
 
@@ -72,12 +69,9 @@ def pension_monthly(
 ) -> NDArray[np.float64]:
     """Monthly CPP payable this month.
 
-    The base pension scaled by the start adjustment, or zero if the pension has
-    not started yet. Unlike the annual version this replaced, the comparison is
-    made here rather than by the caller, because the caller now has the current
-    age in months and the answer is unambiguous: the pension is payable from
-    the month the person reaches ``start_age_months``, not from the January
-    after it.
+    The base pension scaled by the start adjustment, or zero if the pension
+    has not started yet. Payable from the month the person reaches
+    ``start_age_months``, not from the January after it.
 
     Args:
         contributory_history: Fraction of the maximum, in ``[0, 1]``.

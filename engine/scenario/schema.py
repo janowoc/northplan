@@ -6,56 +6,38 @@
 A scenario is the *input* to a run, and everything in it is a statement by the
 person writing the file. Nothing here is a tax rule — those live in ``params/``
 and are read through :mod:`engine.params.loader` — and nothing here is engine
-state. Issue 11's builder turns one of these into the opening
+state. :mod:`engine.core.build` turns one of these into the opening
 :class:`~engine.core.state.HouseholdState`; this module only says what a
 well-formed scenario is and refuses one that is not.
 
-Every model is ``frozen`` and forbids unknown keys, and every mapping is a
-read-only view. Two separate reasons:
-
-- A scenario is loaded once and shared across every Monte Carlo path and every
-  policy the optimizer evaluates, exactly like a parameter set. A mutation
-  anywhere would corrupt a whole run silently.
-- ``extra="forbid"`` turns a misspelled key into a stop rather than a default.
-  The failure this prevents is a real one from this repository's own history: a
-  routing entry reading ``grant.enhaced`` sat in a parameter file until a test
-  went looking for it. A scenario key that is quietly ignored is the same bug
-  with the household's money on the other end — ``survivor_share: 0.75``
-  written as ``survivorship_share`` would silently keep spending at 100% after
-  a death, and nothing in the output would look wrong.
+Every model is ``frozen``, forbids unknown keys, and every mapping is a
+read-only view: a scenario is loaded once and shared across every Monte Carlo
+path and every policy the optimizer evaluates, so a mutation or a silently
+ignored misspelled key would corrupt a whole run without a visible error.
 
 **Dollars are real dollars of January of ``start_year``**, the same convention
-the engine holds everywhere. A balance, a salary, a pension, a spending band
-and an education cost are all stated in that purchasing power; the engine never
-converts them back until display. The one exception is a person's
-``prior_year_net_income``, the figure as reported on that year's return, not
-restated.
+the engine holds everywhere, except a person's ``prior_year_net_income``, taken
+as filed, not restated.
 
 **Amounts are what the household has, not what the rules allow.** Contribution
-room, and the prior year's net income, are scenario inputs because they depend
-on a filing history the model does not have. The schema checks that a number is
+room and prior-year net income are scenario inputs because they depend on a
+filing history the model does not have. The schema checks that a number is
 non-negative and self-consistent; it never checks a number against a statutory
-limit, because the limits live in ``params/`` for a particular year and a
-scenario may legitimately open with room carried forward from years the model
-knows nothing about.
+limit, since those live in ``params/`` for a particular year.
 
-What this module deliberately does **not** validate
----------------------------------------------------
+What this module deliberately does not validate:
 
-- **Statutory ranges for elections.** ``cpp_start_age_years: 55`` loads. The
-  legal window is a parameter, it belongs to a tax year, and checking it here
-  would put a copy of it in a ``.py`` file — the one thing ``CLAUDE.md``
-  forbids outright. The engine reads the bounds from ``params/`` and stops
-  there.
-- **That ``params/<start_year>/`` exists.** A scenario is a document; whether
-  a parameter year has been transcribed is the loader's business, and it
-  raises a message naming the directory a human has to create.
-- **That ``acb <= balance``.** A taxable holding standing at a loss is an
-  ordinary position, not a typo. Only ``acb >= 0`` is required.
-- **That an asset class pays out no more than it earns.** ``interest_yield +
-  dividend_yield + distributed_gains_yield`` may exceed ``real_mean``: a class
-  that distributes more than it returns is losing value, which is a thing
-  portfolios do.
+- **Statutory ranges for elections**, e.g. ``cpp_start_age_years: 55`` loads:
+  the legal window is a parameter belonging to a tax year, and checking it
+  here would put a copy of it in a ``.py`` file.
+- **That ``params/<start_year>/`` exists** — a scenario is a document; whether
+  a parameter year has been transcribed is the loader's business.
+- **That ``acb <= balance``** — a taxable holding at a loss is an ordinary
+  position, not a typo. Only ``acb >= 0`` is required.
+- **That an asset class pays out no more than it earns** —
+  ``interest_yield + dividend_yield + distributed_gains_yield`` may exceed
+  ``real_mean``; a class that distributes more than it returns is losing
+  value, which portfolios do.
 """
 
 from __future__ import annotations
@@ -107,20 +89,15 @@ __all__ = [
     "resolve_policy_path",
 ]
 
-#: Account kinds new money may be contributed to.
-#:
-#: ``cash`` is absent on purpose: cash is the hub every flow passes through,
-#: not a destination a contribution policy chooses. So are ``rrif``, ``lira``
-#: and ``lif``, which cannot receive a contribution at all.
+#: Account kinds new money may be contributed to. ``cash`` is absent: it is the
+#: hub every flow passes through, not a destination. ``rrif``, ``lira`` and
+#: ``lif`` cannot receive a contribution at all.
 CONTRIBUTION_KINDS: Final[frozenset[str]] = frozenset({"rrsp", "tfsa", "taxable", "resp"})
 
-#: Account kinds a withdrawal order may name.
-#:
-#: ``resp`` is absent: an RESP is drawn down by the education window, not by
-#: the household's withdrawal order, and naming it here would describe a
-#: decision the policy does not get to make. ``cash`` is absent for the same
-#: reason as above — spending comes out of cash by construction. ``lira`` is
-#: absent because a LIRA takes no withdrawals — it becomes a LIF, which does.
+#: Account kinds a withdrawal order may name. ``resp`` is absent: drawn down by
+#: the education window, not the withdrawal order. ``cash`` is absent since
+#: spending comes out of it by construction. ``lira`` is absent: it takes no
+#: withdrawals directly, only after becoming a LIF.
 WITHDRAWAL_KINDS: Final[frozenset[str]] = frozenset({"rrsp", "rrif", "lif", "tfsa", "taxable"})
 
 #: Account kinds that hold investments and therefore carry an asset allocation.
@@ -141,11 +118,9 @@ DEFAULT_ALLOCATION: Final[str] = "default"
 TOLERANCE: Final[float] = 1e-9
 
 #: How negative the smallest eigenvalue of the correlation matrix may be.
-#:
-#: Looser than :data:`TOLERANCE` because it is the output of an eigenvalue
-#: decomposition rather than of one addition: a matrix that is positive
-#: semi-definite in exact arithmetic routinely produces an eigenvalue a few
-#: units in the last place below zero.
+#: Looser than :data:`TOLERANCE` since it is an eigenvalue, not a sum: exact
+#: positive semi-definiteness routinely produces an eigenvalue a few units in
+#: the last place below zero.
 PSD_TOLERANCE: Final[float] = 1e-8
 
 _V = TypeVar("_V")
@@ -265,28 +240,23 @@ class DbPension(_Base):
     """A defined-benefit pension one person will receive or is receiving.
 
     Attributes:
-        name: Label for the pension, unique within the person. Reported, and
-            used to tell two pensions apart in output.
+        name: Label for the pension, unique within the person; used to tell
+            two pensions apart in output.
         start_year: Calendar year the pension begins.
-        start_month: Month within that year it begins, 1..12. A pension starts
-            in a month, not on 1 January.
+        start_month: Month within that year it begins, 1..12.
         annual: Real dollars a year at the start date.
-        indexation: ``"full"`` if the pension moves with CPI and is therefore
-            constant in real terms; ``"none"`` if it is fixed in nominal terms
-            and loses real value every month. Required, with no default,
-            because it is the single largest lever on what a DB pension is
-            worth over a thirty-year retirement, and a wrong default would be
-            invisible. Note for anyone editing YAML by hand: ``none`` here is
-            the *string* ``"none"``. PyYAML reads ``null``, ``~`` and an empty
-            value as nothing, but ``none`` as a word.
+        indexation: ``"full"`` if the pension moves with CPI (constant in real
+            terms); ``"none"`` if fixed in nominal terms and eroding. Required,
+            no default, since it is the largest lever on a DB pension's value.
+            In YAML, ``none`` must be the *string* ``"none"`` — PyYAML reads a
+            bare ``null``, ``~``, or empty value as nothing instead.
         bridge_annual: Real dollars a year of a bridge benefit paid on top,
             ending at ``bridge_to_age_years``. Zero if there is none.
         bridge_to_age_years: Age the bridge stops at, typically the age the
             public pension it bridges to begins.
         survivor_share: Fraction of the pension the survivor continues to
-            receive after the member's death. May be zero — a single-life
-            pension is a real product — which is why this is ``[0, 1]`` and
-            not the ``(0, 1]`` that :class:`Spending` uses.
+            receive after the member's death, ``[0, 1]`` (zero allowed, unlike
+            :class:`Spending`'s ``(0, 1]``).
     """
 
     name: str
@@ -510,14 +480,13 @@ class Person(_Base):
     """One adult in the household.
 
     Attributes:
-        id: Stable identifier, unique across every person and beneficiary in
-            the household. Elections and RESP subscriptions name it.
+        id: Stable identifier, unique across every person and beneficiary in the
+            household. Elections and RESP subscriptions name it.
         birth_year: Calendar year of birth.
-        birth_month: Month of birth, 1..12. Required rather than optional: on a
-            monthly timeline the month a person turns 65 decides the month a
-            pension may start, and CPP's adjustment is defined per month away
-            from 65.
-        sex: ``"f"`` or ``"m"``, selecting the life table. A mortality input,
+        birth_month: Month of birth, 1..12. Required, not optional: on a monthly
+            timeline it decides the month a pension may start, and CPP's
+            adjustment is defined per month away from 65.
+        sex: ``"f"`` or ``"m"``, selecting the life table — a mortality input,
             not a demographic statement.
         employment: Bands of employment income, in any order, which must not
             overlap.
@@ -526,12 +495,10 @@ class Person(_Base):
         db_pensions: Defined-benefit pensions, possibly none.
         accounts: Opening balances.
         prior_year_net_income: Net income for the calendar year before
-            ``start_year``, the figure as reported on that year's return (an
-            estimate if it is not yet filed), not restated in start-year
-            dollars — the one amount in a scenario that is not real dollars.
-            Required, with no default: a scenario carries no filing history the
-            model could otherwise derive this from, and zero is a legitimate
-            value the author types.
+            ``start_year``, as reported on that year's return (an estimate if
+            not yet filed) — not restated in start-year dollars, the one amount
+            in a scenario that is not real dollars. Required, no default: zero
+            is a legitimate value the author types.
     """
 
     id: str
@@ -1092,10 +1059,10 @@ class RrifConversion(_Base):
 class ElectionsSpec(_Base):
     """The dated choices a policy makes, per person where they are per person.
 
-    Named ``ElectionsSpec`` rather than ``Elections`` because issue 11 gives
-    the engine a runtime ``Elections`` carrying the same choices *by person
-    index* rather than by id. The builder that converts one into the other
-    imports both, and two classes with one name at that call site is how the
+    Named ``ElectionsSpec`` rather than ``Elections`` because the engine has a
+    runtime ``Elections`` carrying the same choices *by person index* rather
+    than by id. The builder that converts one into the other has both in front
+    of it at the same call site, and two classes with one name there is how the
     conversion gets skipped.
 
     Ages are **not** checked against the statutory windows. Those bounds belong
@@ -1266,7 +1233,7 @@ class Scenario(_Base):
     def _check_every_person_has_a_start_age(self) -> Self:
         """Every person who has a benefit still to start must have an age for it.
 
-        Issue 11 builds a per-person tuple of start ages from these, so a
+        The builder builds a per-person tuple of start ages from these, so a
         person left out has no age at all rather than a default one — and there
         is no default to fall back on, because the start age *is* the decision
         being modelled.

@@ -119,15 +119,13 @@ def marginal_rate(
     """Marginal rate applying to the next dollar of ``income``.
 
     At an exact bracket boundary the *higher* bracket's rate applies, since the
-    next dollar falls into it. Policy code that compares a withdrawal against a
-    bracket edge depends on this convention.
+    next dollar falls into it; policy code comparing a withdrawal against a
+    bracket edge depends on this.
 
-    Below zero income this returns ``rates[0]``, which is NOT the slope of
-    :func:`tax_on_income` there — that function is flat at zero below zero
-    income, so the true rate on the next dollar is zero until income climbs
-    back to it. The two disagree on ``(-inf, 0)`` by design, and a policy
-    pricing a withdrawal for a path whose taxable income has gone negative
-    will charge itself the bottom rate on dollars that are in fact untaxed.
+    Below zero income this returns ``rates[0]``, not the true marginal rate: on
+    ``(-inf, 0)``, :func:`tax_on_income` is flat at zero, so the actual rate
+    there is zero. A policy pricing a withdrawal against negative taxable
+    income will overcharge itself.
 
     Args:
         income: Taxable income, real dollars, shape ``(n_paths,)`` or scalar.
@@ -137,8 +135,7 @@ def marginal_rate(
             ``brackets.rates``. ``len(rates) == len(edges) + 1``.
 
     Returns:
-        Marginal rate, ``float64``, shape broadcast from ``income``. ``nan``
-        where ``income`` is ``nan``, matching :func:`tax_on_income`.
+        Marginal rate, ``float64``, broadcast from ``income``; ``nan`` where ``income`` is.
 
     Raises:
         ValueError: If ``edges`` and ``rates`` differ in length, ``edges`` is
@@ -172,24 +169,21 @@ def room_below_edge(
 
     Args:
         income: Current taxable income, real dollars.
-        edges: Upper bound of every bracket except the last, strictly
-            ascending and positive, from ``params/`` as ``brackets.edges_annual``.
+        edges: Upper bound of every bracket except the last, strictly ascending
+            and positive, from ``params/`` as ``brackets.edges_annual``.
         edge_index: Index into ``edges`` of the ceiling to measure to. Must be
-            non-negative: Python would read -1 as the *top* edge, and a policy
-            computing an index as ``bracket - 1`` lands there for anyone in the
-            bottom bracket, sizing a withdrawal against the wrong ceiling
-            instead of raising.
+            non-negative: Python reads -1 as the *top* edge, so a policy computing
+            ``bracket - 1`` would silently measure the wrong ceiling for anyone in
+            the bottom bracket, instead of raising.
 
     Returns:
         Non-negative headroom, ``float64``, shape broadcast from ``income``.
 
     Raises:
-        IndexError: If ``edge_index`` is not a valid index into ``edges``,
-            including a negative one and any index into an empty (flat-rate)
-            ``edges``.
-        ValueError: If ``edges`` is not strictly ascending, or the first edge
-            is not positive. An unsorted ladder makes "the edge at index i"
-            mean something other than the caller intends.
+        IndexError: If ``edge_index`` is not a valid, non-negative index into
+            ``edges`` (including any index into an empty, flat-rate ``edges``).
+        ValueError: If ``edges`` is not strictly ascending, or the first edge is
+            not positive.
     """
     edges_arr = _validated_edges(edges)
     if not 0 <= edge_index < edges_arr.size:

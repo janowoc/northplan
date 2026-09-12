@@ -5,29 +5,25 @@
 
 Like an RRSP in tax treatment and unlike it in access: withdrawals are barred
 until an unlocking age, and once converted to a LIF there is both a mandatory
-minimum and a jurisdiction-specific *maximum* withdrawal. The maximum is the
-part that distinguishes this from ``rrif.py``.
+minimum and a jurisdiction-specific *maximum* withdrawal — the part that
+distinguishes this from ``rrif.py``.
 
-**The jurisdiction is not the province of residence.** A LIF is governed by the
-pension legislation of the jurisdiction its originating pension was registered
-under. Someone resident in Alberta may hold an Ontario-registered LIF: they draw
-it under Ontario's table and file Alberta income tax. Every function here that
-takes a parameter set takes the *registration* jurisdiction's, reached through
-``ParamYear.jurisdiction`` and named by
-``engine.core.state.LiraState.jurisdiction`` or ``LifState.jurisdiction`` —
-never through ``ParamYear.province(household.province)``. The two coincide for a
-household that never moved, which is why the wrong one is easy to ship.
+**The jurisdiction is not the province of residence.** A LIF is governed by
+the pension legislation of the jurisdiction its originating pension was
+registered under: a household resident in Alberta may hold an
+Ontario-registered LIF, drawn under Ontario's table while filing Alberta
+income tax. Every function here that takes a parameter set takes the
+*registration* jurisdiction's — ``ParamYear.jurisdiction`` keyed by
+``LiraState.jurisdiction`` / ``LifState.jurisdiction`` — never
+``ParamYear.province(household.province)``.
 
 Both the minimum and the maximum are **annual** figures fixed in January from
-the 1 January balance, and both are satisfied or consumed across the months of
-the year. The maximum is the dangerous one: enforced per month it permits
-twelve times what the jurisdiction allows, and nothing in the output looks
-wrong. It is enforced against the year-to-date total.
+the 1 January balance and enforced against the year-to-date total, not a
+single month's amount.
 
-Not every jurisdiction imposes a maximum. Some prescribe a RRIF-like account
-with a minimum and no ceiling, and that is a rule rather than a gap in the
-data. :func:`has_maximum` is what separates the two, so that a jurisdiction
-with no ceiling does not look like one whose table nobody has entered yet.
+Not every jurisdiction imposes a maximum; some prescribe a RRIF-like account
+with a minimum and no ceiling. :func:`has_maximum` is what separates that
+rule from a table nobody has entered yet.
 """
 
 from __future__ import annotations
@@ -68,13 +64,10 @@ def has_maximum(params: ParamSet) -> bool:
     A scalar rule about a jurisdiction, not a per-path quantity, so this
     returns a plain ``bool`` rather than an array.
 
-    Some jurisdictions prescribe a RRIF-like locked-in account with a minimum
-    and no ceiling. Without an explicit flag in ``params``, such a jurisdiction
-    is indistinguishable from one whose maximum table has not been entered
-    yet — both produce a :class:`~engine.params.loader.MissingParameterError`
-    on the table lookup — and the pressure at that moment is to invent a
-    ceiling or to swallow the error. The flag makes "there is no maximum" a
-    statement a human wrote down and verified.
+    Without the flag, a jurisdiction with no ceiling is indistinguishable
+    from one whose maximum table has not been entered yet — both would raise
+    on lookup. The flag makes "there is no maximum" a fact a human verified,
+    not an inference.
 
     Args:
         params: The parameter set of the jurisdiction the account is
@@ -106,10 +99,7 @@ def maximum_withdrawal(
         opening_balance: Balance on 1 January, before growth, ``(n_paths,)``.
         age_at_start_of_year: Age in whole years on 1 January.
         params: The parameter set of the jurisdiction the account is
-            **registered** in — from ``ParamYear.jurisdiction`` keyed by
-            ``LifState.jurisdiction``. Not the household's
-            province of residence, and not the set that
-            ``engine.tax.provincial`` was handed for the same household.
+            **registered** in.
 
     Returns:
         Maximum permitted withdrawal for the year, ``(n_paths,)``.

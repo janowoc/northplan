@@ -52,21 +52,16 @@ def net_income(
 ) -> NDArray[np.float64]:
     """Net income (line 23400), the base for income-tested amounts.
 
-    Line 23400 is net income *before* adjustments; line 23600 subtracts the
-    social benefits repayment from it. This engine computes only the first and
-    tests everything against it (L49).
+    Line 23400 is net income *before* adjustments; line 23600 subtracts the social
+    benefits repayment from it. This engine computes only the first and tests
+    everything against it (L49) — distinct from :func:`taxable_income`, which
+    subtracts further amounts; conflating the two understates the OAS repayment,
+    which is assessed on net income.
 
-    Distinct from :func:`taxable_income`, which subtracts further amounts. The
-    OAS repayment is assessed on net income, so keeping the two apart matters —
-    conflating them understates the repayment. The GIS band indicator does not
-    read this figure at all; it works from the GIS testable basis, which is a
-    different one (``engine/benefits/gis.py``).
-
-    The result outlives the year that produced it: it is stored in
-    ``PersonState.prior_year_net_income``, which the RESP enhanced-grant rate
-    (``grant.enhanced.income_year_offset``) reads the following year. The OAS
-    repayment is assessed on the current year's figure and does not read it
-    back.
+    The result outlives the year: stored in ``PersonState.prior_year_net_income``,
+    read the following year by the RESP enhanced-grant rate
+    (``grant.enhanced.income_year_offset``). The OAS repayment reads only the
+    current year's figure, never this stored one.
 
     Args:
         gross_income: All income sources for the full calendar year, summed,
@@ -101,30 +96,22 @@ def non_refundable_credits(
 ) -> NDArray[np.float64]:
     """Value of federal non-refundable credits.
 
-    Credits reduce tax, not income, and are valued at ``credits.valuation_rate``
-    from ``params``. That rate is read as its own value rather than as
-    ``brackets.rates[0]``: the two coincide today, but they are distinct legal
-    rules and either can change without the other.
-
-    Several credits are themselves income-tested — the age amount is clawed
-    back — so this takes income rather than being a constant.
+    Credits reduce tax, not income, valued at ``credits.valuation_rate`` from
+    ``params`` — read as its own value rather than ``brackets.rates[0]``, since the
+    two are distinct legal rules that can diverge. Several credits are themselves
+    income-tested (the age amount is clawed back), so this takes income rather
+    than being a constant.
 
     Args:
         income: Net income, real dollars, ``(n_paths,)``.
-        age: Age in whole years at the end of the tax year, ``(n_paths,)``,
-            from ``engine.core.timeline.age_at_end_of_year``. Not age in the
-            month the assessment runs, which is the same thing only for a
-            December birthday.
+        age: Age in whole years at the end of the tax year, ``(n_paths,)``, from
+            ``engine.core.timeline.age_at_end_of_year`` — not age at assessment.
         pension_income: Eligible pension income received over the year, for the
             pension income amount.
-        cpp_ei_contributions: CPP and EI contributions actually withheld over
-            the year, ``(n_paths,)``, accumulated across the twelve monthly
-            steps. Unlike the other credits this one is not a fixed amount: it
-            is what the person paid, capped at the statutory maxima in
-            ``params`` under ``contribution_credit``. Contributions stop
-            partway through the year once a ceiling is reached, so a year's
-            figure is not twelve times a month's and the cap belongs here
-            rather than in the monthly accrual.
+        cpp_ei_contributions: CPP and EI contributions actually withheld over the
+            year, ``(n_paths,)``. Not a fixed amount: capped at the statutory
+            maxima under ``contribution_credit``, since contributions stop once a
+            ceiling is reached and a year's figure is not twelve times a month's.
         params: The ``federal`` parameter set for the tax year.
 
     Returns:

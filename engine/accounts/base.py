@@ -42,19 +42,15 @@ class WithdrawalResult:
 
 
 def grow(balance: ArrayLike, monthly_real_return: ArrayLike) -> NDArray[np.float64]:
-    """Apply **one month** of real return to a balance.
-
-    The timestep is a month, so this is a month. The argument is named for the
-    period it covers because the failure mode is silent: passing an annual
-    return here returns a plausible balance that is wrong by an order of
-    magnitude by the end of the first year, and nothing raises.
+    """Apply one month of real return to a balance.
 
     Args:
         balance: Opening balance for the month, real dollars, ``(n_paths,)``.
-        monthly_real_return: Real return for this month as a bare fraction,
-            ``(n_paths,)``. Real, not nominal — see ``engine/__init__.py``.
-            Monthly, not annual — the conversion from an annual assumption
-            happens once, in ``engine.mc.returns.generate``.
+        monthly_real_return: Real, monthly return as a bare fraction,
+            ``(n_paths,)``, converted from an annual assumption once in
+            ``engine.mc.returns.generate``. An annual return passed here is a
+            silent error: the balance comes out wrong by an order of
+            magnitude by year end.
 
     Returns:
         Closing balance for the month, before any contribution or withdrawal.
@@ -84,10 +80,8 @@ def remaining_annual_allowance(
     """How much of an annual limit is left for the rest of the year.
 
     Every annual bound in this package — the LIF maximum, contribution room,
-    the RESP grant maximum — is enforced through this, against the year-to-date
-    total rather than against a single month's amount. Clamping each month
-    separately against an annual limit permits twelve times the limit, and the
-    resulting run looks entirely reasonable.
+    the RESP grant maximum — is enforced through this, against the
+    year-to-date total rather than a single month's amount.
 
     Args:
         annual_limit: The year's limit, fixed in January, ``(n_paths,)``.

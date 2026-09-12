@@ -17,16 +17,11 @@ follow an assessment. That withholding is a refundable prepayment of the
 repayment rather than a separate charge, and it is not modelled (L16, L23).
 
 The ``params/<year>/oas.yaml`` block describing that July-to-June period is
-read by no module here; it is there for a future GIS implementation, which is
-assessed over the period rather than over a calendar year. See
+read by no module here; it is there for a future GIS implementation. See
 ``engine/benefits/__init__.py``, which names the two parameters.
 
-OAS is adjusted quarterly, so in real dollars OAS averages slightly less than
-its published amount — by a constant, every month.
-``engine.core.indexation.erosion_factor`` supplies that constant and the step
-applies it. The amounts here are the published ones, before it. The
-quarter-to-quarter oscillation around that constant is not modelled, and
-neither is the CPI lag; see ``engine/core/indexation.py`` for why.
+OAS is adjusted quarterly; see ``engine/benefits/__init__.py`` for the
+indexation convention and its erosion factor.
 """
 
 from __future__ import annotations
@@ -42,7 +37,7 @@ def deferral_factor(start_age_months: ArrayLike, params: ParamSet) -> NDArray[np
 
     OAS may be deferred but not taken early; the multiplier is 1.0 at the
     earliest eligible age and rises per month of deferral up to the statutory
-    maximum. Per month — which the monthly timeline now supplies directly.
+    maximum.
 
     Args:
         start_age_months: Age in months at which OAS starts, ``(n_paths,)``.

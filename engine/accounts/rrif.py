@@ -4,19 +4,16 @@
 """Registered Retirement Income Fund.
 
 A RRIF has a mandatory minimum withdrawal each year, set by a factor that
-depends on age. Three things about it are easy to get wrong and are fixed here:
+depends on age. Two things about it are easy to get wrong:
 
-- The factor is selected by **age at the start of the year**, not age at year
-  end and not age on the withdrawal date.
-- The minimum is computed on the **opening balance**, on 1 January, before that
-  year's growth. Computing it on a mid-year balance overstates every
-  withdrawal, and on a monthly timestep every month offers a fresh chance to
-  make that mistake.
-- The minimum is an **annual** obligation with a 31 December deadline, not a
-  monthly one. It is fixed in January and satisfied over the months that
-  follow, in whatever pattern the policy chooses; whatever is left in December
-  is forced out by the year-end close. A per-month minimum equal to the annual
-  minimum would take twelve times too much.
+- The factor is selected by **age at the start of the year**, not age at
+  year end or on the withdrawal date.
+- The minimum is computed on the **opening balance**, on 1 January, before
+  that year's growth — never on a mid-year balance.
+
+It is an annual obligation with a 31 December deadline: fixed in January and
+satisfied over the months that follow, in whatever pattern the policy
+chooses, with whatever is left forced out by the year-end close.
 
 Factors come from ``params/{year}/rrif.yaml`` under ``rrif.minimum_factors``.
 That file holds one program at two stages of life — the RRSP that accumulates

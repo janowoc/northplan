@@ -30,34 +30,25 @@ class MarketInputs:
     """A scenario's capital market assumptions, as arrays.
 
     Attributes:
-        asset_class_names: Class names, in the order every array below is
-            indexed by.
-        annual_means: Real annual arithmetic means, bare fractions,
-            ``(n_assets,)``.
+        asset_class_names: Class names, the order every array below is indexed by.
+        annual_means: Real annual arithmetic means, bare fractions, ``(n_assets,)``.
         annual_covariance: Covariance of real annual simple returns,
             ``(n_assets, n_assets)``.
         interest_yields: Annual fraction of balance distributed as interest,
             ``(n_assets,)``.
-        dividend_yields: Annual fraction distributed as dividends,
-            ``(n_assets,)``.
-        distributed_gains_yields: Annual fraction distributed as realized
-            capital gains, ``(n_assets,)``.
-        weights_by_kind: Portfolio weights by account kind, ``(n_assets,)``
-            each. Must contain :data:`DEFAULT_KIND`, which is what an
-            account kind absent from this mapping holds -- a class absent
-            from a particular weight vector holds weight 0.0.
+        dividend_yields: Annual fraction distributed as dividends, ``(n_assets,)``.
+        distributed_gains_yields: Annual fraction distributed as realized capital
+            gains, ``(n_assets,)``.
+        weights_by_kind: Portfolio weights by account kind, ``(n_assets,)`` each.
+            Must contain :data:`DEFAULT_KIND`, held by any account kind absent
+            from this mapping.
         investable_kinds: Account kinds that hold investments.
 
-    Every array field, including every entry of ``weights_by_kind``, is
-    copied and frozen on construction: mutating the caller's original array
-    afterward does not change this object, and this object's own arrays
-    cannot be written to.
-
-    This validates shapes only. It does not check attainability of the
-    moments (checked when the scenario loaded), that weights sum to one, or
-    that ``weights_by_kind`` names only investable kinds -- the schema
-    already checked those, and :func:`engine.mc.returns.generate` re-checks
-    the moments at draw time.
+    Every array field, including each entry of ``weights_by_kind``, is copied and
+    frozen on construction. Shapes only are validated here; attainability of the
+    moments, weights summing to one, and ``weights_by_kind`` naming only
+    investable kinds are the schema's job, already checked when the scenario
+    loaded.
     """
 
     asset_class_names: tuple[str, ...]

@@ -3,7 +3,6 @@
 
 """Brute-force grid search over policy parameters.
 
-Obviously correct and, over a simulator vectorized across paths, fast enough.
 This is the reference every other search method is validated against.
 """
 

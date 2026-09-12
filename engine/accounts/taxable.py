@@ -13,9 +13,9 @@ On a monthly timestep, distributions arrive monthly and accumulate into the
 year-to-date income ledger; the tax on them is assessed once, at the December
 close, and paid in the following year's filing month. Real funds distribute
 monthly, quarterly, or annually depending on the holding, and that schedule is
-not modelled: the assumed yield is spread evenly across the twelve months. That
-is an approximation and it is stated rather than hidden. It affects the timing
-of the ACB increase within a year, not the year's total.
+not modelled: the assumed yield is spread evenly across the twelve months.
+This affects the timing of the ACB increase within a year, not the year's
+total.
 """
 
 from __future__ import annotations
@@ -34,9 +34,7 @@ def monthly_distributions(
     """Interest, dividends, and distributed gains for **one month**.
 
     Taxed in the year received regardless of whether they are withdrawn.
-    Reinvested distributions increase the adjusted cost base, and failing to
-    add them is the classic double-taxation bug in this account type — the
-    monthly timestep gives twelve chances a year to forget it.
+    Reinvested distributions increase the adjusted cost base.
 
     The rate argument is annual because that is how a yield assumption is
     stated; the division to a monthly figure happens here, once, and the name

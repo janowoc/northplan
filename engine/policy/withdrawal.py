@@ -3,18 +3,15 @@
 
 """Decumulation policies: withdrawal order, thresholds, and benefit start ages.
 
-The free variables the optimizer searches for the decumulation use case are the
-account withdrawal order, the income thresholds that govern how much to realize
-each year, and the CPP and OAS start ages.
+The free variables the optimizer searches for the decumulation use case are
+the account withdrawal order, the income thresholds that govern how much to
+realize each year, and the CPP and OAS start ages.
 
 **The bracket-filling trap.** "Withdraw up to the top of a bracket" is an
-*annual* instruction and the loop is monthly. A policy that fills to the ceiling
-in every month withdraws roughly twelve times the intended amount and pushes the
-household into brackets the ceiling was chosen to avoid — while every individual
-month's decision looks correct in isolation. Every threshold in this module is
-therefore measured against year-to-date taxable income and what remains under
-the ceiling for the rest of the year, never against the month alone. This is the
-single most likely bug in the monthly conversion and it is why
+annual instruction; filling to the ceiling every month withdraws roughly
+twelve times the intended amount. Every threshold here is therefore measured
+against year-to-date taxable income and what remains under the ceiling for
+the rest of the year — never against the month alone. This is why
 :func:`fill_to_bracket` takes the year to date rather than a month's income.
 """
 
@@ -38,18 +35,13 @@ class OrderedWithdrawalPolicy:
     up to a target bracket edge from registered accounts, then meet any
     remaining need from the accounts in ``order``.
 
-    The ceiling is expressed as an index into the current year's bracket edges
-    rather than a dollar amount, so it stays meaningful in real terms across
-    years and across parameter updates. It is a ceiling on the *year*, and the
-    policy spreads the room under it across the months that remain.
-
-    How that room is spread is itself a choice the implementation has to make
-    explicitly. Front-loading in January and taking nothing later is a
-    different plan from an even twelfth each month: the two differ in what is
-    invested for how long, in what a mid-year death brings into income, and in
-    how much room is left when a market fall makes a withdrawal expensive.
-    Whatever is chosen is stated in the implementation and tested; it must not
-    be an accident of iteration order.
+    The ceiling is an index into the current year's bracket edges rather than
+    a dollar amount, so it stays meaningful in real terms across years. It
+    bounds the year, and the policy spreads the room under it across the
+    months that remain — how, is an explicit implementation choice
+    (front-loaded vs. an even twelfth changes what is invested for how long,
+    what a mid-year death brings into income, and how much room survives a
+    market fall), stated and tested, not an accident of iteration order.
 
     Attributes:
         order: Account types in withdrawal priority order.

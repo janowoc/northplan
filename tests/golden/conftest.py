@@ -3,23 +3,12 @@
 
 """Shared machinery for the golden test harness.
 
-Everything a golden case file needs turned into a runnable assertion lives
-here, and lives here once, because both ``test_cases.py`` (which discovers the
-real cases under ``tests/golden/cases/``) and ``test_harness.py`` (which
-exercises the discovery and comparison logic against synthetic cases in
-``tmp_path``) need exactly the same behaviour. Neither module re-implements
-any of it.
-
-Nothing in this file ever supplies a tax or benefit number. The four numbers
-in :data:`ROUNDING_TOLERANCES` are comparison tolerances for the test harness
-itself, fixed by the specification this module implements (issue #25, on top
-of issue #3) — not a parameter of the tax system. They describe how a source
-*publishes* a figure (to the cent, to the dollar, to ten dollars, as a
-monthly amount multiplied by twelve), never a bracket, rate, threshold, or
-credit, so they stay here rather than moving under ``params/``, which
-``CLAUDE.md`` reserves for hand-populated tax parameters.
-
-A case file is a human-authored YAML document of the form::
+``test_cases.py`` (real cases under ``tests/golden/cases/``) and
+``test_harness.py`` (synthetic cases in ``tmp_path``) both build on this
+module rather than re-implementing it. The comparison tolerances in
+:data:`ROUNDING_TOLERANCES` describe how a source *publishes* a figure, never
+a tax parameter, so they stay here, not under ``params/``. A case file is a
+human-authored YAML document of the form::
 
     target: some.module.doubles_its_input
     cases:
@@ -33,68 +22,24 @@ A case file is a human-authored YAML document of the form::
           value: 14.0
         rounding: source_rounds_to_cent   # optional, this is the default
 
-(``7.0``/``14.0`` here are placeholders standing in for whatever the target
-actually computes; a real case's numbers come from the source it cites, never
-from this docstring.)
+``source`` and ``checked`` are mandatory — an unrecorded or unchecked golden
+value is exactly the kind of invented number this repository forbids — and
+both are stored on the parsed case even though nothing downstream reads them
+yet, so a field validated once cannot later rot unvalidated.
 
-``source`` and ``checked`` are mandatory on every case: a golden value with no
-record of where it came from or when it was checked is exactly the kind of
-plausible-looking number this repository forbids inventing, and a harness
-that let it through silently would be as bad as inventing one. Both are also
-stored on the parsed :class:`GoldenCase`, even though nothing downstream reads
-them yet — a field that is validated once and then discarded is exactly how a
-later refactor forgets to validate it, which is what happened to ``source``
-the first time round.
+There is no numeric ``tolerance`` field; a case declares ``rounding``
+instead, one of the four members of :data:`ROUNDING_TOLERANCES`, defaulting
+to ``source_rounds_to_cent``. There is no numeric escape hatch — a source
+none of the four describes gets a fifth member added here, in a diff checked
+against the cited source — and an unrecognized field is rejected rather than
+dropped, since a typo'd name is indistinguishable from a deliberate
+omission.
 
-Discovery is strict well beyond ``source`` and ``checked``, and deliberately
-so: every hole here is a way for a case to look green without actually
-asserting anything, which is the one thing a golden test exists to do.
-``name`` must be a non-empty string, unique within its file, because a blank
-or duplicated name breaks the ``<file>::<name>`` id a failure is grepped back
-by. ``source`` must be a non-empty string after stripping whitespace — a bare
-or blank key is the same as no source at all. ``checked`` must be a bare date,
-not a timestamp, and it must not be in the future, for the same reason
-``tests/params/test_param_provenance.py`` rejects a future date on a
-parameter file: a check that has not happened yet is worse than no claim of
-one. ``expected`` must be a non-empty mapping of finite real numbers (not a
-bare scalar, not ``null``, not a boolean, not a string masquerading as one,
-not ``inf`` or ``nan``); ``value`` cannot appear next to a named output,
-because its meaning silently changes when a sibling key is added.
-
-A case has no numeric ``tolerance`` field at all. Instead it may declare
-``rounding``, one of the four members of :data:`ROUNDING_TOLERANCES` — a
-statement of *why* the source is imprecise, not a dial for how imprecise the
-case writer would like the comparison to be. Omitting ``rounding`` means
-``source_rounds_to_cent``, the strictest member, so the current default of
-0.01 is preserved and most cases write nothing. An unrecognised value, a
-non-string value (a number, a list, ``None``, or a bare ``rounding:`` key,
-which parses to ``None``), is rejected at discovery naming the file, the
-case, the offending value, and the four allowed members. A case that still
-sets the old ``tolerance:`` field is rejected too, with a message that names
-``rounding`` as its replacement rather than only listing the allowed fields
-— someone migrating a case needs to be told what to write instead of what
-they wrote. There is deliberately no numeric escape hatch: a source whose
-imprecision none of the four members describes needs a fifth member added
-here, in a diff a reviewer can check against the source, not a bespoke
-tolerance a case writer can quietly inflate.
-
-``inputs`` must be a mapping with string keys. A ``params`` value within it
-must be a mapping with exactly the keys ``year`` (an int) and ``file`` (a
-str) — no more, no fewer. A ``real_params`` value must be a mapping with
-exactly the keys ``year``, ``file``, and ``inflation`` (an int or float, not
-a bool, and finite) — the deflated real-terms view needs a stated inflation
-rate and the harness never assumes one. Both resolve lazily, at run time,
-and a resolved ``real_params`` is handed to its target under the keyword
-``params``, so a case names one or the other in ``inputs``, never both. An
-unrecognized field on a case is rejected rather than silently ignored,
-because a typo'd field name is indistinguishable from a deliberately omitted
-one otherwise. And every file
-actually found under ``cases/`` — recursively, so a subdirectory is not a
-place to hide from discovery — must be a case file (``.yaml``/``.yml``,
-matched case-sensitively) or ``.gitkeep``; anything else is a stray file
-rather than a silently-ignored one. Every one of these is raised as
-:class:`GoldenCaseError` naming the file and the case, at discovery time, so
-a malformed case file cannot even reach collection — never mind a run.
+A ``params`` input resolves to a plain parameter set and a ``real_params``
+input, which also states an inflation rate, to a real-dollar view — either
+way handed to the target under the keyword ``params``, so a case names one
+or the other, never both. Every violation raises :class:`GoldenCaseError` at
+discovery, naming the file and case.
 """
 
 from __future__ import annotations
@@ -153,8 +98,7 @@ CASES_DIR: Path = Path(__file__).parent / "cases"
 #: Wrapped in :class:`types.MappingProxyType`: a case file can never reach
 #: this table, but an imported target module could otherwise mutate it at
 #: import time and silently widen every case discovered afterwards — exactly
-#: the kind of widening route this module exists to close. See finding 5,
-#: issue #25 review round 2.
+#: the kind of widening route this module exists to close.
 ROUNDING_TOLERANCES: Mapping[str, float] = types.MappingProxyType({
     # Half the last displayed digit is 0.005; 0.01 leaves room for float
     # representation.
@@ -221,8 +165,7 @@ def _rounding_id_suffix(rounding: str) -> str:
     :func:`run_case`'s named-output failure label, so that a loosened case's
     suffix always lands at the very end of whatever is being reported —
     after a named output's ``[output_name]``, not wedged in front of it —
-    rather than each call site rendering it in a different place. See
-    finding 7, issue #25 review round 2.
+    rather than each call site rendering it in a different place.
     """
     suffix = _ROUNDING_ID_SUFFIXES.get(rounding)
     return "" if suffix is None else f" ({suffix})"
@@ -273,8 +216,7 @@ class GoldenCase:
             property, not a constructor argument: storing it as an
             independent field would leave a way to construct a
             ``GoldenCase`` whose ``tolerance`` disagrees with its declared
-            ``rounding``, which is the exact inconsistency this issue exists
-            to make unrepresentable. See finding 4, issue #25 review round 2.
+            ``rounding``.
     """
 
     file: Path
@@ -415,10 +357,9 @@ def _parse_checked(path: Path, name: str, value: Any) -> dt.date:
 def _validate_expected(path: Path, name: str, expected: Any) -> None:
     """Validate a case's ``expected``: a non-empty mapping of finite real numbers.
 
-    See the module docstring for why each of these is checked: an empty,
-    absent, non-numeric, or non-finite ``expected`` is a case that either
-    asserts nothing or can never truthfully pass, and both report green (or
-    silently vacuous) if let through.
+    An empty, absent, non-numeric, or non-finite ``expected`` is a case that
+    either asserts nothing or can never truthfully pass, and both report
+    green (or silently vacuous) if let through.
     """
     if not isinstance(expected, Mapping):
         raise GoldenCaseError(
@@ -964,9 +905,9 @@ def run_case(case: GoldenCase) -> None:
         # Deliberately not `f"{case.id}[{output_name}]"`: case.id already
         # carries the rounding suffix, which would then land *before*
         # `[output_name]` instead of at the end, reading confusingly
-        # (`name (dollar)[output]`) — see finding 7, issue #25 review round
-        # 2. Rebuilding the label from the base name keeps `[output_name]`
-        # adjacent to the name it qualifies, with the suffix trailing both.
+        # (`name (dollar)[output]`). Rebuilding the label from the base name
+        # keeps `[output_name]` adjacent to the name it qualifies, with the
+        # suffix trailing both.
         label = (
             f"{case.file.stem}::{case.name}[{output_name}]"
             f"{_rounding_id_suffix(case.rounding)}"

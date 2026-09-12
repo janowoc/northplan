@@ -21,8 +21,6 @@ def success_probability(result: SimulationResult) -> float:
     """Fraction of paths that never deplete.
 
     Reduces over the path axis after collapsing years with "ever depleted".
-    A blunt objective — it treats running out in year 2 the same as year 30 —
-    and it is here as a reference point, not a recommendation.
 
     Args:
         result: Output of one policy evaluation.
@@ -48,9 +46,7 @@ def median_terminal_wealth(result: SimulationResult) -> float:
 def certainty_equivalent_spending(result: SimulationResult, risk_aversion: float) -> float:
     """Constant real spending level equivalent in utility to the distribution.
 
-    Prices the whole distribution rather than one quantile of it, so a policy
-    is not rewarded for a fat tail bought with a bad floor. The recommended
-    default objective for the readiness and decumulation use cases.
+    Prices the whole distribution rather than one quantile of it.
 
     Args:
         result: Output of one policy evaluation.

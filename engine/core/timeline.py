@@ -3,27 +3,20 @@
 
 """Month arithmetic for the simulation timeline.
 
-The monthly loop needs a small amount of calendar reasoning, and it needs
-exactly one copy of it. Two modules that each work out "which tax year is this
-month in" will eventually disagree by one month, and the disagreement will show
-up as a benefit that starts a month early on some paths.
+The monthly loop needs a small amount of calendar reasoning, in exactly one place: two
+independent copies would eventually disagree by a month.
 
 Conventions fixed here:
 
 - ``month`` is ``1..12`` for January through December. There is no month zero.
-- A *month index* is the number of whole months since the start of the
-  simulation, counting from zero. It is what indexes the first axis of the
-  random draws.
-- A *tax year* is a calendar year. Canada does not offer individuals anything
-  else.
-- Age is carried in months. Whole years are derived from it, never stored
-  alongside it, so the two cannot drift apart.
+- A *month index* is whole months since the start of the simulation, counting from zero; it
+  indexes the first axis of the random draws.
+- A *tax year* is a calendar year. Canada does not offer individuals anything else.
+- Age is carried in months; whole years are derived from it, never stored alongside it.
 
-Statutory dates are not written into this file. The month a return is due, the
-month a benefit year starts, and the months a benefit is indexed in are rules
-that a human verified, so they arrive from ``params/`` like every other rule.
-``MONTHS_PER_YEAR`` is the Gregorian calendar, not a tax parameter, and is the
-only number here.
+Statutory dates (a filing month, a benefit-year start, an indexation schedule) are not written
+into this file — they arrive from ``params/`` like every other verified rule.
+``MONTHS_PER_YEAR`` is the Gregorian calendar, not a tax parameter, and is the only number here.
 """
 
 from __future__ import annotations
@@ -64,19 +57,13 @@ def month_index(year: int, month: int, base_year: int) -> int:
 def year_month(index: int, base_year: int) -> tuple[int, int]:
     """Calendar date ``index`` months after January of ``base_year``.
 
-    Defined on every integer ``index``, not only the non-negative ones
-    :func:`month_index` produces: it is the inverse of :func:`month_index`
-    only on that non-negative half, where ``month_index`` has no negative
-    rows to be the inverse of. A negative ``index`` is deliberately still
-    answered rather than rejected, because it is the ordinary convention
-    ``engine/core/state.py`` documents for a month index that predates the
-    run — a pension already in payment, a bridge that already ended, an
-    employment band begun years earlier — and those states need a way back
-    to a calendar date as much as an ordinary one does.
+    Defined on every integer, not only the non-negative ones :func:`month_index` produces —
+    it inverts that function only on the non-negative half. A negative ``index`` is answered
+    rather than rejected: it is the convention ``engine/core/state.py`` documents for a month
+    index that predates the run.
 
     Args:
-        index: Month index, zero in January of ``base_year``. May be
-            negative.
+        index: Month index, zero in January of ``base_year``. May be negative.
         base_year: The simulation's first calendar year.
 
     Returns:
@@ -102,10 +89,8 @@ def age_in_months(
 ) -> int:
     """Age in whole months at the start of ``(year, month)``.
 
-    Whole months completed, so a person born in June is 0 months old for all of
-    June and 1 month old in July. CPP's start adjustment is defined per month
-    away from 65 and reads this directly; converting to years first and back
-    loses the precision the adjustment is made of.
+    Whole months completed: a person born in June is 0 months old all of June, 1 month old in
+    July. CPP's start adjustment is defined per month away from 65 and reads this directly.
 
     Args:
         birth_year: Calendar year of birth.
@@ -127,11 +112,8 @@ def age_in_years(
 ) -> int:
     """Age in whole years at the start of ``(year, month)``.
 
-    Age on the birthday, which is what benefit eligibility keys off. This is
-    *not* the "age at the end of the tax year" that some tax credits use, and
-    it is not the "age at the start of the year" the RRIF factor uses. Those
-    two have their own helpers below precisely so a call site has to say which
-    it means.
+    Age on the birthday, what benefit eligibility keys off — *not* "age at the end of the tax
+    year" or "age at the start of the year", which have their own helpers below.
     """
     return age_in_months(birth_year, birth_month, year, month) // MONTHS_PER_YEAR
 
@@ -168,8 +150,7 @@ def is_year_start(month: int) -> bool:
 def is_filing_month(month: int, params: ParamSet) -> bool:
     """Whether a balance owing for the prior tax year comes due this month.
 
-    The month comes from ``params``, not from this file: a filing deadline is a
-    statutory rule and gets a verification row like any other.
+    The month comes from ``params``, not from this file: a filing deadline is a statutory rule.
 
     Args:
         month: Current month, ``1..12``.

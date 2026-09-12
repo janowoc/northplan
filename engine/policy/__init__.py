@@ -5,24 +5,14 @@
 
 A policy is a small set of numbers plus the rules that turn state into
 decisions. The optimizer searches the numbers; the rules are fixed code. A
-policy is asked to decide once a *month*.
+policy is asked to decide once a month.
 
-**The constraint that makes any of this meaningful:** a policy function may
-read only what is knowable at that simulated moment — current balances, current
-ages, income recognised so far this year, realized history, and the current
-year's parameters. It may never read a future return, a future balance, a
-terminal value, or any array sliced past the current month index.
+A policy function may read only what is knowable at that simulated
+moment — current balances, ages, realized history, and this year's
+parameters — never a future return or balance, and never this year's total
+income before December: year to date is the only income figure it may read.
 
-A policy that peeks produces a plan nobody can follow, and it will look
-excellent. That failure mode is silent, which is why the verifier checks for it
-specifically. The monthly timestep gives it a new disguise: "this year's
-income" is knowable in December and unknowable in January, and a policy that
-uses the year's total in any earlier month is clairvoyant even though it never
-touches a future array. Year to date is the only income figure a policy may
-read.
-
-**The other monthly hazard is scale.** Contribution room, withdrawal ceilings,
-grant maxima, and LIF maxima are annual quantities. Applied per month without
-tracking what the year has already used, each of them permits twelve times what
-it should, and the run that results is internally consistent and wrong.
+Annual quantities — contribution room, withdrawal ceilings, grant maxima,
+LIF maxima — must be checked against the year-to-date total, not applied
+per month against the annual figure.
 """

@@ -69,16 +69,13 @@ def contribute(
 def withdraw(balance: ArrayLike, requested: ArrayLike) -> WithdrawalResult:
     """Withdraw from an RRSP. The full amount is taxable income.
 
-    Withholding tax at source *is* relevant on a monthly timestep, because it
-    changes when cash leaves rather than only how much: it is remitted in the
-    month of the withdrawal and reduces the balance owing settled in the
-    following year's filing month. This function returns the gross withdrawal;
-    the step applies the withholding and records it in ``remitted_ytd``.
-
-    The withholding rate is banded by the size of the individual withdrawal, so
-    two withdrawals of half the amount are not equivalent to one of the whole —
-    a distinction a monthly timestep makes reachable and an annual one hid. The
-    bands are in the ``rrif`` parameter set under ``rrsp.withholding``.
+    Withholding tax at source is remitted in the month of withdrawal and
+    reduces the balance owing settled in the following year's filing month;
+    this function returns the gross withdrawal, and the step applies the
+    withholding and records it in ``remitted_ytd``. The withholding rate is
+    banded by the size of the individual withdrawal — two withdrawals of
+    half the amount are not equivalent to one of the whole — from the
+    ``rrif`` parameter set under ``rrsp.withholding``.
 
     Args:
         balance: Balance at the start of this month, ``(n_paths,)``.
@@ -98,8 +95,6 @@ def must_convert_to_rrif(age_at_end_of_year: ArrayLike, params: ParamSet) -> NDA
     age, whatever month their birthday falls in, so this is tested against age
     at year end and the conversion is applied by the year-end close. The
     converted plan's first minimum is fixed the following January.
-
-    The conversion age is a parameter, not a literal.
 
     Args:
         age_at_end_of_year: Age in whole years on 31 December, ``(n_paths,)``.
