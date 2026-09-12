@@ -1,85 +1,281 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Total household tax: federal plus provincial, across all persons.
+"""Household tax assessment: the pension-splitting election and the OAS repayment.
 
-The single entry point the year-end close calls, once per simulated year, on
-income accumulated over that year's twelve monthly steps. Household-level
-elections that cannot be evaluated one person at a time — pension income
-splitting above all — belong here, not in ``federal`` or ``provincial``.
+The single entry point the December close calls, once per simulated year, on
+income accumulated over that year's twelve monthly steps.
+``household_assessment`` owns the household-level election that cannot be
+evaluated one person at a time — pension income splitting — and assesses
+every person at the elected split. The OAS repayment lives here too, as a
+line within each person's :class:`Assessment`: there is no separate
+``engine.tax.oas`` module.
 """
 
 from __future__ import annotations
 
+import dataclasses
+from dataclasses import dataclass
+from typing import Final
+
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
-from engine.core.state import IncomeLedger
-from engine.params.loader import ParamYear
+from engine.core.indexation import RealParamSet, RealParamYear
+from engine.core.state import HouseholdState, IncomeLedger
+from engine.core.timeline import age_at_end_of_year as _age_at_end_of_year
+from engine.tax import federal, provincial
+
+#: Resolution of the pension-split search. Not a tax parameter: the statutory
+#: rule is the maximum share in params/, and this is how finely the engine
+#: looks between zero and it (docs/limitations.md L51).
+GRID_STEP: Final[float] = 0.05
 
 
-def person_tax(
-    person_income: IncomeLedger,
-    province: str,
-    params: ParamYear,
+@dataclass(frozen=True, slots=True)
+class Assessment:
+    """One person's tax assessment for a calendar year, at some elected split.
+
+    A return value, not carried state: unlike ``engine.core.state`` classes
+    this is not passed through ``engine.core.state.freeze`` and has no
+    ``__post_init__``. ``net_income`` is the split-adjusted line 23400 the
+    OAS repayment and the age amount were both tested against.
+
+    Attributes:
+        federal: Federal tax payable after credits, ``(n_paths,)``.
+        provincial: Provincial tax payable after credits, ``(n_paths,)``.
+        oas_repayment: OAS recovery tax for the year, ``(n_paths,)``.
+        total: ``federal + provincial + oas_repayment``.
+        net_income: Net income at the elected split, ``(n_paths,)``.
+    """
+
+    federal: NDArray[np.float64]
+    provincial: NDArray[np.float64]
+    oas_repayment: NDArray[np.float64]
+    total: NDArray[np.float64]
+    net_income: NDArray[np.float64]
+
+
+def oas_repayment(
+    net_income_before_repayment: ArrayLike,
+    oas_received: ArrayLike,
+    params: RealParamSet,
+    january_month_index: int,
 ) -> NDArray[np.float64]:
-    """Total income tax for one person: federal plus provincial, after credits.
+    """OAS recovery tax for the year.
+
+    This is the current year's return line only, never a prior year's: it is
+    computed once at the December close on this year's net income, which
+    already includes this year's OAS (L23).
 
     Args:
-        person_income: That person's income components accumulated over the
-            full calendar year.
-        province: Two-letter province code, e.g. ``"ab"``.
-        params: Loaded parameters for the tax year.
+        net_income_before_repayment: Net income for the year, real dollars.
+        oas_received: Gross OAS received in the same calendar year.
+        params: The ``oas`` parameter set for the tax year.
+        january_month_index: Month index of January of the tax year.
 
     Returns:
-        Combined tax payable, ``(n_paths,)``.
+        Repayment owed, non-negative, capped at ``oas_received``.
     """
-    raise NotImplementedError
+    threshold = params.annual_amount("recovery_tax.threshold_annual", january_month_index)
+    rate = params.number("recovery_tax.rate")
+    net_income_arr = np.asarray(net_income_before_repayment, dtype=np.float64)
+    oas_arr = np.asarray(oas_received, dtype=np.float64)
+    return np.asarray(
+        np.minimum(rate * np.clip(net_income_arr - threshold, 0, None), oas_arr),
+        dtype=np.float64,
+    )
 
 
-def household_tax(
-    household_income: tuple[IncomeLedger, ...],
+def person_assessment(
+    ledger: IncomeLedger,
+    age_at_end_of_year: ArrayLike,
+    transfer_in: ArrayLike,
+    transfer_out: ArrayLike,
     province: str,
-    params: ParamYear,
-) -> NDArray[np.float64]:
-    """Total income tax across every person in the household.
+    params: RealParamYear,
+    january_month_index: int,
+) -> Assessment:
+    """One person's federal and provincial assessment, including the OAS repayment.
 
-    Applies household-level elections before summing per-person tax. Pension
-    income splitting is chosen to minimise combined tax, which is a joint
-    optimisation over both persons and cannot be done per-person.
+    Taxable income equals net income (L14), so ``gross_tax`` is called on net
+    income directly. ``oas_received`` is not an argument: it is always
+    ``ledger.oas``. The eligible pension income transferred carries its share
+    of the pension income credit eligibility with it, which is what
+    ``eligible_pension_income - transfer_out + transfer_in`` does below.
 
     Args:
-        household_income: Income components for every person, accumulated over
-            the full calendar year.
-        province: Two-letter province code.
-        params: Loaded parameters for the tax year.
+        ledger: This person's income components, accumulated over the year.
+        age_at_end_of_year: Age in whole years on 31 December.
+        transfer_in: Split-eligible pension income received from the other
+            spouse, ``(n_paths,)`` or scalar. 0 for no split.
+        transfer_out: Split-eligible pension income given to the other
+            spouse, same shape. 0 for no split.
+        province: Two-letter province code of residence.
+        params: Every parameter file for the tax year, in real dollars.
+        january_month_index: Month index of January of the tax year.
 
     Returns:
-        Combined household tax payable, ``(n_paths,)``.
+        This person's :class:`Assessment` at the given transfer.
     """
-    raise NotImplementedError
+    fed = params.federal
+    prov = params.province(province)
+    net = federal.net_income(ledger, fed, transfer_in, transfer_out)
+    epi = (
+        federal.eligible_pension_income(ledger, age_at_end_of_year, fed)
+        - np.asarray(transfer_out, dtype=np.float64)
+        + np.asarray(transfer_in, dtype=np.float64)
+    )
+    fed_tax = federal.net_tax(
+        federal.gross_tax(net, fed, january_month_index),
+        federal.non_refundable_credits(
+            net,
+            age_at_end_of_year,
+            epi,
+            ledger.cpp_base_contributions,
+            ledger.ei_premiums,
+            ledger.eligible_dividends,
+            fed,
+            january_month_index,
+        ),
+    )
+    prov_tax = provincial.net_tax(
+        provincial.gross_tax(net, prov, january_month_index),
+        provincial.non_refundable_credits(
+            net,
+            age_at_end_of_year,
+            epi,
+            ledger.cpp_base_contributions,
+            ledger.ei_premiums,
+            ledger.eligible_dividends,
+            prov,
+            fed,
+            january_month_index,
+        ),
+    )
+    repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
+    return Assessment(
+        federal=fed_tax,
+        provincial=prov_tax,
+        oas_repayment=repay,
+        total=fed_tax + prov_tax + repay,
+        net_income=net,
+    )
 
 
-def optimal_pension_split(
-    household_income: tuple[IncomeLedger, ...],
-    province: str,
-    params: ParamYear,
-) -> NDArray[np.float64]:
-    """Fraction of eligible pension income to transfer to the lower earner.
+#: Fields of :class:`Assessment`, in the order every stack below is built in.
+#: Derived from the dataclass itself rather than hand-copied, so it cannot
+#: drift from ``Assessment``'s actual fields.
+_ASSESSMENT_FIELDS: Final[tuple[str, ...]] = tuple(f.name for f in dataclasses.fields(Assessment))
 
-    Bounded by the statutory maximum share. Chosen to minimise combined
-    household tax for the year being closed only — this is a within-year
-    election, not a multi-year optimisation, and must not consider future
-    years. Made once, at the year-end close, on the completed year; not
-    recomputed monthly as income accrues.
+
+def _stack_all(assessments: list[Assessment]) -> dict[str, NDArray[np.float64]]:
+    """Every field of a list of candidate ``Assessment``s, each stacked once.
+
+    One ``(n_candidates, n_paths)`` array per field, built once regardless of
+    how many times a caller needs to read from it — the ``argmin`` over
+    ``"total"`` and the later gather by ``best`` both read this same dict.
+    """
+    return {
+        field: np.stack([getattr(assessment, field) for assessment in assessments], axis=0)
+        for field in _ASSESSMENT_FIELDS
+    }
+
+
+def _select(
+    stacked: dict[str, NDArray[np.float64]], best: NDArray[np.intp], idx: NDArray[np.intp]
+) -> Assessment:
+    return Assessment(**{field: stacked[field][best, idx] for field in _ASSESSMENT_FIELDS})
+
+
+def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[Assessment, ...]:
+    """Assess every person in the household, at the tax-minimising pension split.
+
+    Elects pension income splitting to minimise ``sum(a.total for a in
+    result)``, per path — a within-year election on the completed year, which
+    must not consider future years (L15). The search is a grid of resolution
+    :data:`GRID_STEP` between zero and the statutory maximum share from
+    params/, plus the maximum itself (L51); it does not search every real
+    fraction. A household of one skips the search and elects zero.
 
     Args:
-        household_income: Income components for every person, accumulated over
-            the full calendar year.
-        province: Two-letter province code.
-        params: Loaded parameters for the tax year.
+        state: Household state at the December close.
+        params: Every parameter file for the tax year, in real dollars.
 
     Returns:
-        Transfer fraction in ``[0, statutory maximum]``, ``(n_paths,)``.
+        One :class:`Assessment` per person, in ``state.persons`` order, at
+        the elected split.
+
+    Raises:
+        ValueError: If ``state.persons`` holds neither one nor two people —
+            the only household sizes this model assesses.
     """
-    raise NotImplementedError
+    january_month_index = state.month_index - (state.month - 1)
+    ages = tuple(
+        _age_at_end_of_year(person.birth_year, person.birth_month, state.year)
+        for person in state.persons
+    )
+
+    if len(state.persons) == 1:
+        person = state.persons[0]
+        zero = np.zeros(state.n_paths, dtype=np.float64)
+        return (
+            person_assessment(
+                person.income, ages[0], zero, zero, state.province, params, january_month_index
+            ),
+        )
+
+    if len(state.persons) != 2:
+        raise ValueError(
+            f"household_assessment takes a household of one or two persons, "
+            f"got {len(state.persons)}."
+        )
+
+    person0, person1 = state.persons
+    age0, age1 = ages
+    fed = params.federal
+    epi0 = federal.eligible_pension_income(person0.income, age0, fed)
+    epi1 = federal.eligible_pension_income(person1.income, age1, fed)
+
+    maximum_share = fed.number("pension_splitting.maximum_transfer_share")
+    magnitudes: list[float] = []
+    k = 0
+    while k * GRID_STEP < maximum_share:
+        magnitudes.append(k * GRID_STEP)
+        k += 1
+    magnitudes.append(maximum_share)
+
+    fractions: list[float] = [*magnitudes, *(-m for m in magnitudes[1:])]
+
+    both_alive = person0.alive & person1.alive
+    zeros = np.zeros(state.n_paths, dtype=np.float64)
+
+    assessments0: list[Assessment] = []
+    assessments1: list[Assessment] = []
+    for fraction in fractions:
+        if fraction >= 0:
+            transfer = np.where(both_alive, fraction * epi0, 0.0)
+            t_in0, t_out0 = zeros, transfer
+            t_in1, t_out1 = transfer, zeros
+        else:
+            transfer = np.where(both_alive, -fraction * epi1, 0.0)
+            t_in0, t_out0 = transfer, zeros
+            t_in1, t_out1 = zeros, transfer
+        assessments0.append(
+            person_assessment(
+                person0.income, age0, t_in0, t_out0, state.province, params, january_month_index
+            )
+        )
+        assessments1.append(
+            person_assessment(
+                person1.income, age1, t_in1, t_out1, state.province, params, january_month_index
+            )
+        )
+
+    stacked0 = _stack_all(assessments0)
+    stacked1 = _stack_all(assessments1)
+    totals = stacked0["total"] + stacked1["total"]
+    best = np.argmin(totals, axis=0)
+    idx = np.arange(state.n_paths)
+
+    return (_select(stacked0, best, idx), _select(stacked1, best, idx))

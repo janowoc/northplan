@@ -3,21 +3,16 @@
 
 """Federal income tax.
 
-Annual, and called once per simulated year from the year-end close in
-``engine/core/step.py``. Every income argument below is a **full calendar
-year's** figure, accumulated over twelve monthly steps in an
-``engine.core.state.IncomeLedger``. Handing one of these a single
-month's income yields a small number at a low marginal rate and no error.
+Annual, called once per simulated year from the December close
+(``engine/core/step.py::close_year``). Every function takes an
+``engine.core.state.IncomeLedger`` — one person's income components
+accumulated over twelve monthly steps — and a ``federal``
+``engine.core.indexation.RealParamSet``. Income figures returned are the
+full calendar year's, never one month's.
 
-Parameters come from ``params/{year}/federal.yaml``. Nothing numeric lives in
-this file — including the filing month, which is a statutory rule and is read
-from the same place.
-
-That file holds income tax and nothing else. The registered account rules that
-once shared it now live one program per file: ``rrif.yaml`` (RRSP and RRIF),
-``tfsa.yaml``, ``resp.yaml``. What stays here is what the Income Tax Act sets
-Canada-wide — brackets, credits, the treatment of investment income, and the
-maximum CPP and EI contributions the contribution credit is capped at.
+Parameters come from ``params/2026/federal.yaml``. Nothing numeric lives in
+this file. ``net_income`` is line 23400 (L49): the engine's one net-income
+figure, never adjusted downward afterward.
 """
 
 from __future__ import annotations
@@ -25,112 +20,255 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from engine.params.loader import ParamSet
+from engine.core.indexation import RealParamSet
+from engine.core.state import IncomeLedger
+from engine.tax import brackets
 
 
-def taxable_income(
-    gross_income: ArrayLike,
-    deductions: ArrayLike,
+def total_income(
+    ledger: IncomeLedger,
+    params: RealParamSet,
+    transfer_in: ArrayLike,
+    transfer_out: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Taxable income: gross less deductions, floored at zero.
+    """Total income for the year, adjusted for the pension-splitting election.
+
+    Not line 15000 once a split is elected: in reality the transfer is a
+    deduction and an inclusion (lines 21000 and 11600), and this nets both into
+    the total. The difference never reaches tax, since :func:`net_income` is
+    the only consumer and taxable income equals net income (L14), but an
+    income-tested rule wanting a pre-election figure must not read this.
 
     Args:
-        gross_income: All income sources for the full calendar year, summed,
-            real dollars, ``(n_paths,)``.
-        deductions: RRSP contributions made over the year and other
-            above-the-line deductions.
+        ledger: This person's income components, accumulated over the year.
+        params: The ``federal`` parameter set for the tax year.
+        transfer_in: Split-eligible pension income received from the other
+            spouse, dollars, ``(n_paths,)`` or scalar. 0 for no split.
+        transfer_out: Split-eligible pension income given to the other
+            spouse, same shape. 0 for no split.
 
     Returns:
-        Taxable income for the year, non-negative.
+        Total income, real dollars, shape broadcast from the arguments.
     """
-    raise NotImplementedError
+    gross_up_rate = params.number("investment_income.eligible_dividend_gross_up_rate")
+    inclusion_rate = params.number("investment_income.capital_gains_inclusion_rate")
+    total = (
+        ledger.employment
+        + ledger.cpp
+        + ledger.oas
+        + ledger.db_pension
+        + ledger.rrsp_withdrawals
+        + ledger.rrif_lif_withdrawals
+        + ledger.interest
+        + ledger.eligible_dividends * (1 + gross_up_rate)
+        + ledger.capital_gains * inclusion_rate
+        + ledger.resp_accumulated_income
+        + np.asarray(transfer_in, dtype=np.float64)
+        - np.asarray(transfer_out, dtype=np.float64)
+    )
+    return np.asarray(total, dtype=np.float64)
 
 
 def net_income(
-    gross_income: ArrayLike,
-    deductions: ArrayLike,
+    ledger: IncomeLedger,
+    params: RealParamSet,
+    transfer_in: ArrayLike,
+    transfer_out: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Net income (line 23400), the base for income-tested amounts.
+    """Net income (line 23400): total income less this model's only deductions.
 
-    Line 23400 is net income *before* adjustments; line 23600 subtracts the social
-    benefits repayment from it. This engine computes only the first and tests
-    everything against it (L49) — distinct from :func:`taxable_income`, which
-    subtracts further amounts; conflating the two understates the OAS repayment,
-    which is assessed on net income.
-
-    The result outlives the year: stored in ``PersonState.prior_year_net_income``,
-    read the following year by the RESP enhanced-grant rate
-    (``grant.enhanced.income_year_offset``). The OAS repayment reads only the
-    current year's figure, never this stored one.
+    Floored at zero once, here, after the pension-splitting transfers — there
+    is no second floor anywhere downstream. Nothing is ever subtracted back
+    out of this figure: the OAS repayment does not reduce it (L49), and this
+    is the model's single net-income figure rather than the two the Act
+    distinguishes (L14).
 
     Args:
-        gross_income: All income sources for the full calendar year, summed,
-            real dollars, ``(n_paths,)``.
-        deductions: Deductions allowed in arriving at net income.
+        ledger: This person's income components, accumulated over the year.
+        params: The ``federal`` parameter set for the tax year.
+        transfer_in: Split-eligible pension income received, see
+            :func:`total_income`.
+        transfer_out: Split-eligible pension income given, see
+            :func:`total_income`.
 
     Returns:
-        Net income for the year, non-negative.
+        Net income, real dollars, non-negative.
     """
-    raise NotImplementedError
+    gross = total_income(ledger, params, transfer_in, transfer_out)
+    net = gross - ledger.rrsp_deductions - ledger.cpp_enhanced_contributions
+    return np.asarray(np.clip(net, 0, None), dtype=np.float64)
 
 
-def gross_tax(income: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
+def taxable_income(
+    ledger: IncomeLedger,
+    params: RealParamSet,
+    transfer_in: ArrayLike,
+    transfer_out: ArrayLike,
+) -> NDArray[np.float64]:
+    """Taxable income: an alias for :func:`net_income`, not a second computation.
+
+    The two concepts coincide only because RRSP contributions and the
+    enhanced CPP contribution are this model's only deductions (L14). A call
+    site uses this name to say which concept it means.
+
+    Args: as :func:`net_income`.
+
+    Returns:
+        Same value as :func:`net_income`.
+    """
+    return net_income(ledger, params, transfer_in, transfer_out)
+
+
+def gross_tax(
+    taxable: ArrayLike,
+    params: RealParamSet,
+    january_month_index: int,
+) -> NDArray[np.float64]:
     """Federal tax before credits.
 
     Args:
-        income: Taxable income, real dollars, ``(n_paths,)`` or scalar.
+        taxable: Taxable income, real dollars, ``(n_paths,)`` or scalar.
         params: The ``federal`` parameter set for the tax year.
+        january_month_index: Month index of January of the tax year.
 
     Returns:
         Federal tax before non-refundable credits.
     """
-    raise NotImplementedError
+    edges = params.annual_amounts("brackets.edges_annual", january_month_index)
+    rates = params.numbers("brackets.rates")
+    return brackets.tax_on_income(taxable, edges, rates)
 
 
 def non_refundable_credits(
-    income: ArrayLike,
-    age: ArrayLike,
-    pension_income: ArrayLike,
-    cpp_ei_contributions: ArrayLike,
-    params: ParamSet,
+    net_income: ArrayLike,
+    age_at_end_of_year: ArrayLike,
+    eligible_pension_income: ArrayLike,
+    cpp_base_contributions: ArrayLike,
+    ei_premiums: ArrayLike,
+    eligible_dividends: ArrayLike,
+    params: RealParamSet,
+    january_month_index: int,
 ) -> NDArray[np.float64]:
-    """Value of federal non-refundable credits.
+    """Value of federal non-refundable credits, in dollars of tax reduced.
 
-    Credits reduce tax, not income, valued at ``credits.valuation_rate`` from
-    ``params`` — read as its own value rather than ``brackets.rates[0]``, since the
-    two are distinct legal rules that can diverge. Several credits are themselves
-    income-tested (the age amount is clawed back), so this takes income rather
-    than being a constant.
+    ``valuation_rate * (basic personal + age + pension + CPP + EI) +
+    dividend tax credit``. The dividend tax credit is NOT scaled by
+    ``valuation_rate``: ``eligible_dividend_credit_rate_of_gross_up`` is
+    already a credit rate in dollars of tax, valued against the gross-up
+    amount (``investment_income.eligible_dividend_gross_up_rate`` times the
+    dividend), not the dividend or the grossed-up dividend.
 
     Args:
-        income: Net income, real dollars, ``(n_paths,)``.
-        age: Age in whole years at the end of the tax year, ``(n_paths,)``, from
-            ``engine.core.timeline.age_at_end_of_year`` — not age at assessment.
-        pension_income: Eligible pension income received over the year, for the
-            pension income amount.
-        cpp_ei_contributions: CPP and EI contributions actually withheld over the
-            year, ``(n_paths,)``. Not a fixed amount: capped at the statutory
-            maxima under ``contribution_credit``, since contributions stop once a
-            ceiling is reached and a year's figure is not twelve times a month's.
+        net_income: Net income, real dollars.
+        age_at_end_of_year: Age in whole years on 31 December, from
+            ``engine.core.timeline.age_at_end_of_year``.
+        eligible_pension_income: Eligible pension income for the pension
+            income amount, see :func:`eligible_pension_income`.
+        cpp_base_contributions: This year's CPP base-tier contributions.
+        ei_premiums: This year's EI premiums.
+        eligible_dividends: Pre-gross-up eligible dividends, the same figure
+            :func:`total_income` grosses up.
         params: The ``federal`` parameter set for the tax year.
+        january_month_index: Month index of January of the tax year.
 
     Returns:
-        Total credit value in dollars of tax reduced.
+        Total credit value, real dollars.
     """
-    raise NotImplementedError
+    valuation_rate = params.number("credits.valuation_rate")
+    basic_personal_amount = params.annual_amount(
+        "credits.basic_personal_amount_annual", january_month_index
+    )
+
+    eligibility_age = params.number("credits.age_amount.eligibility_age_years")
+    age_amount = params.annual_amount("credits.age_amount.amount_annual", january_month_index)
+    reduction_threshold = params.annual_amount(
+        "credits.age_amount.reduction_threshold_annual", january_month_index
+    )
+    reduction_rate = params.number("credits.age_amount.reduction_rate")
+
+    net_income_arr = np.asarray(net_income, dtype=np.float64)
+    age_arr = np.asarray(age_at_end_of_year)
+    age_amount_allowed = np.where(
+        age_arr >= eligibility_age,
+        np.clip(
+            age_amount - reduction_rate * np.clip(net_income_arr - reduction_threshold, 0, None),
+            0,
+            None,
+        ),
+        0.0,
+    )
+
+    pension_income_amount = params.annual_amount(
+        "credits.pension_income_amount_annual", january_month_index
+    )
+    pension_amount_allowed = np.clip(
+        np.minimum(np.asarray(eligible_pension_income, dtype=np.float64), pension_income_amount),
+        0,
+        None,
+    )
+
+    cpp_maximum = params.annual_amount(
+        "contribution_credit.cpp_maximum_annual", january_month_index
+    )
+    cpp_allowed = np.clip(
+        np.minimum(np.asarray(cpp_base_contributions, dtype=np.float64), cpp_maximum), 0, None
+    )
+
+    ei_maximum = params.annual_amount("contribution_credit.ei_maximum_annual", january_month_index)
+    ei_allowed = np.clip(np.minimum(np.asarray(ei_premiums, dtype=np.float64), ei_maximum), 0, None)
+
+    gross_up_rate = params.number("investment_income.eligible_dividend_gross_up_rate")
+    credit_rate_of_gross_up = params.number(
+        "investment_income.eligible_dividend_credit_rate_of_gross_up"
+    )
+    dividend_tax_credit = (
+        np.asarray(eligible_dividends, dtype=np.float64) * gross_up_rate * credit_rate_of_gross_up
+    )
+
+    ordinary = (
+        basic_personal_amount
+        + age_amount_allowed
+        + pension_amount_allowed
+        + cpp_allowed
+        + ei_allowed
+    )
+    return np.asarray(valuation_rate * ordinary + dividend_tax_credit, dtype=np.float64)
 
 
-def net_tax(
-    taxable: ArrayLike,
-    credits: ArrayLike,
-) -> NDArray[np.float64]:
+def net_tax(gross: ArrayLike, credits: ArrayLike) -> NDArray[np.float64]:
     """Federal tax after non-refundable credits, floored at zero.
 
     Args:
-        taxable: Output of :func:`gross_tax`.
+        gross: Output of :func:`gross_tax`.
         credits: Output of :func:`non_refundable_credits`.
 
     Returns:
         Federal tax payable, non-negative.
     """
-    raise NotImplementedError
+    net = np.asarray(gross, dtype=np.float64) - np.asarray(credits, dtype=np.float64)
+    return np.asarray(np.clip(net, 0, None), dtype=np.float64)
+
+
+def eligible_pension_income(
+    ledger: IncomeLedger,
+    age_at_end_of_year: ArrayLike,
+    params: RealParamSet,
+) -> NDArray[np.float64]:
+    """Income eligible for the pension income amount and for splitting.
+
+    Always the DB pension; RRIF/LIF withdrawals only from the year the
+    recipient turns ``eligible_pension_income.rrif_minimum_age_years`` by
+    year end. Never CPP, OAS, or RRSP withdrawals.
+
+    Args:
+        ledger: This person's income components, accumulated over the year.
+        age_at_end_of_year: Age in whole years on 31 December.
+        params: The ``federal`` parameter set for the tax year.
+
+    Returns:
+        Eligible pension income, real dollars, non-negative.
+    """
+    min_age = params.number("eligible_pension_income.rrif_minimum_age_years")
+    age_arr = np.asarray(age_at_end_of_year)
+    result = ledger.db_pension + np.where(age_arr >= min_age, ledger.rrif_lif_withdrawals, 0.0)
+    return np.asarray(result, dtype=np.float64)

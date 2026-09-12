@@ -175,6 +175,15 @@ year end, up to the statutory share, elected once at the December close to
 minimise combined household tax including OAS repayments. Not modelled: CPP
 pension sharing, spousal RRSPs.
 
+**L51. Pension split search resolution.** In reality the transferred amount is
+any amount up to the statutory share, and the tax-minimising choice is a point
+on a piecewise-linear frontier. We evaluate transfer fractions on a grid of
+0.05 in each direction, plus the maximum share itself, and take the best of
+them per path. Direction: conservative — the grid's best is never better than
+the true optimum, so household tax is overstated, by at most the curvature of
+the objective across one grid step. Lives in
+`engine/tax/combined.py::household_assessment`.
+
 **L16. Withholding.** RRSP withdrawals and RRIF withdrawals above the minimum
 are withheld at the banded rates in `params/2026/rrif.yaml` and remitted in
 the month. Employment and DB pension income are withheld at an approximation
@@ -183,7 +192,23 @@ month's amount, divided by twelve. CPP and OAS are paid gross, which is the
 default in reality. The balance settles from cash in the filing month; a
 refund arrives the same way. Not modelled: instalments, and the July-to-June
 OAS recovery withholding, which is a refundable prepayment of the repayment
-assessed on the return. Lives in `engine/core/step.py`.
+assessed on the return. Lives in `engine/tax/withholding.py`, to be called by
+`engine/core/step.py`.
+
+Three further approximations inside the payroll estimate, and they do not all
+run the same way. It is computed per income source, so a person with both
+employment income and a DB pension is given the full basic personal amount and
+the full age amount against each: direction, under-withholds. Against that, it
+carries no pension income amount, since it is told only whether the source is
+employment: direction, over-withholds on a DB pension. And it is computed on
+gross annualised income with no deductions of any kind — no RRSP deduction, no
+enhanced CPP contribution, no second-tier CPP contribution, since only the
+first-tier base contribution is derived and that one is a credit rather than a
+deduction: direction, over-withholds, the same way as the second and so adding
+to it rather than cancelling it. None of the three changes the assessment, and
+so none changes lifetime tax; all three change when the cash moves, which is
+what a policy reading the cash balance between the accrual month and the filing
+month sees.
 
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
