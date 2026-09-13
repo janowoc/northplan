@@ -35,7 +35,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 12 | Timeline arithmetic and mortality | agent | 4, 11 | death months geometric on a synthetic table |
 | 13 | Monthly return draws and mortality uniforms | agent | — | twelve months compound to the annual spec |
 | 14 | Tax engine: federal, Alberta, household assessment, withholding | agent | 6, 8, 9, 11, 30, 32, 33, 34 | structural tests pass; no undeflated dollar read |
-| 15 | Golden tax cases from an external calculator | human | 3, 14 | cases pass or bugs filed |
+| 15 | Golden tax cases from an external calculator | human | 3, 14, 39 | cases pass or bugs filed |
 | 16 | Benefits and income: CPP, OAS, DB pension, employment, GIS metric | agent | 6, 8, 11, 14, 30, 32, 33 | structural tests pass; refusal gone |
 | 17 | Golden benefit cases from published tables | human | 3, 16 | cases pass or bugs filed |
 | 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11, 29, 32, 33 | every annual limit year-to-date aware |
@@ -59,6 +59,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 36 | Death, the terminal return, and the result object (month step, part three) | agent | 35 | estate after tax finite after the second death, NaN before |
 | 37 | taxes_benefits.md §10.2: the July-to-June OAS withholding instruction | human | — | prose only; nothing tells the engine to model a monthly withholding |
 | 38 | Loaders: a non-UTF-8 file fails naming the file | agent | — | a Windows-1252 file raises the loader's malformed-file error, naming it |
+| 39 | Golden harness: a whole parameter year, and a target shim | agent | 3, 14, 32 | a case can name `golden.targets.person_assessment` |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -131,6 +132,19 @@ one file saved in another encoding fails every load of its year without
 naming the file. It depends on nothing and sits straight after 32: ahead of
 33, which works in `engine/scenario/`, and ahead of 34, which trims the
 docstrings it edits.
+
+Issue 39 came out of preparing the cases for 15. Issue 15's specification
+targets `engine.tax.combined.person_assessment` "or a thin wrapper the harness
+README describes", and no such wrapper exists: the harness resolves one
+parameter file where that function takes a whole year, and no case file can
+build the `IncomeLedger` it also takes. So 15 cannot be started, and 39 sits
+between 14 and 15 for that reason. It is deliberately two small changes in two
+places rather than one: resolving a whole parameter year is the harness's own
+axis and goes in `conftest.py`, while constructing an engine state object is
+not, and goes in a shim under `tests/golden/` where its defaults are visible
+Python rather than a rule buried in the harness. Nothing under `engine/`
+changes. Issue 17 needs none of it — every function in `engine/benefits/` is
+already scalars plus one parameter file — so 39 blocks 15 alone.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
