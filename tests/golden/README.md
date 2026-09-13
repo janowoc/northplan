@@ -63,6 +63,75 @@ otherwise report green having checked no number at all, and a case expecting
 `inf` would report green off an overflowing target via `inf == approx(inf)`,
 so both are rejected at discovery.
 
+## Parameter inputs: `params`, `real_params`, `real_params_year`
+
+Three input names are special, and a case names exactly one of them —
+naming two of them fails at discovery, naming both keys; naming all three
+fails too, naming all three.
+
+- `params: {year, file}` resolves to the real, hand-populated parameter set
+  — `load_year(year, ...)[file]` — for a target that reads one file at its
+  published, undeflated values.
+- `real_params: {year, file, inflation}` resolves to that same file's
+  deflated real-terms view (`engine.core.indexation.RealParamSet`) —
+  `real_year(load_year(year, ...), inflation)[file]`.
+- `real_params_year: {year, inflation}` — one file shallower, with no `file`
+  key — resolves to the *whole* tax year's real-terms view
+  (`engine.core.indexation.RealParamYear`) —
+  `real_year(load_year(year, ...), inflation)` — for a target that reaches
+  more than one parameter set itself, such as both `federal` and a province.
+
+All three resolve under the keyword `params`, because an engine function
+names its primary parameter-set argument `params`. `inflation` is an int or a
+float, a bare fraction — `0.02` for 2%, never `2` — and there is no default
+for it on either real-terms kind: the human states it explicitly in every
+case, `0.0` for a source that is a nominal calculator. A bool and a
+non-finite value (`.nan`, `.inf`, `-.inf`) are rejected at discovery. The
+range check on the inflation rate itself — at or below -1 — is not done at
+discovery: it is `engine.core.indexation`'s own check, raised at run time,
+so that rule has a single owner.
+
+## Target shims: `tests/golden/targets.py`
+
+`target` in a case file is a dotted path to any importable callable, so a
+case can also name a function in `tests/golden/targets.py` —
+`golden.targets.<name>` — rather than an engine function directly. A shim
+exists for exactly one reason: the real target's argument cannot be written
+as a YAML mapping, because it is a constructed engine type rather than a
+number, a string, or one of the three parameter-input kinds above.
+`engine.tax.combined.person_assessment` is the first example: its `ledger`
+argument is an `engine.core.state.IncomeLedger`, a frozen dataclass of
+fifteen arrays, which a case file has no way to build.
+
+A shim is pure construction and nothing else: it takes plain keyword
+arguments, builds the engine value the real target wants, and calls that
+target unchanged. It contains no arithmetic operator and no conditional —
+checkable at a glance, since the whole point of a shim is that a reviewer
+can see it computes nothing. Every per-path numeric argument becomes a
+one-path `(1,)` array, since every carried engine array is `(n_paths,)`,
+via `np.asarray([value], dtype=np.float64)`. There is no type check on that
+conversion, because a shim contains no conditional to perform one: numpy's
+own conversion decides which mistake raises and which one converts
+silently, and this list is not exhaustive. Raises: a non-numeric string, a
+mapping, a date. Converts silently: a quoted numeric string such as
+`"60000"` becomes `60000.0`; a bool becomes `1.0` or `0.0`; a YAML null
+becomes `NaN`. A null usually makes the compared output `NaN` too and fails
+the case loudly — but a null in a field that never reaches the compared
+output passes silently, e.g. `remitted` on `person_assessment`, which the
+engine function never reads, or `cpp_base_contributions` or `ei_premiums`
+in a case whose `expected` compares only `net_income`. A null
+`age_at_end_of_year` is subtler still: every use of age in `engine/tax/` is
+a comparison, and `NaN >= x` is `False`, so the result is a finite number
+computed as if the person were under the age threshold — not `NaN` — and it
+too can pass silently. The case author writes plain unquoted numbers, same
+as with any other target.
+
+A shim is added only when a YAML mapping genuinely cannot express an
+argument the real target needs — it is not a place to make an ordinary call
+site more convenient. A case for a function that needs one names
+`golden.targets.<name>`; every other case names the engine function it is
+testing directly.
+
 ## Tolerance is derived from a declared `rounding`, not written by hand
 
 Comparison uses `pytest.approx(abs=tolerance)`, but a case never writes
@@ -118,29 +187,14 @@ meant (`inputs: [x: 7.0]` instead of `inputs: {x: 7.0}`) is a small, easy
 slip and is caught here rather than dying inside the target call with no
 file or case named.
 
-Two input names are special. An input named `params` is a mapping with
-exactly the keys `year` (an int) and `file` (a string) — no more, no fewer,
-so a typo one level into `inputs` (`provice` for `province`) is caught at
-discovery exactly as loudly as a typo at the case level — and the harness
-resolves it to the real, hand-populated parameter set —
-`load_year(year, ...)[file]` — so a case can exercise a function against
-`params/2026/federal.yaml` without the case file repeating any of its
-numbers.
-
-An input named `real_params` is the same idea for the deflated real-terms
-parameter view (`engine.core.indexation.RealParamSet`), with one more
-required key: `real_params` is a mapping with exactly `year`, `file`, and
-`inflation` — an int or float bare fraction, e.g. `0.0` for a source that is
-a nominal calculator. There is no default for `inflation`: the human states
-it explicitly in every case, and the harness never assumes a rate. It
-resolves to `real_year(load_year(year, ...), inflation)[file]`, and — unlike
-`params` — is handed to the target under the keyword `params`, not
-`real_params`, because every engine function names its parameter-set
-argument `params`. A case therefore names `params` or `real_params` in
-`inputs`, never both; naming both fails at discovery, since they would
-otherwise claim the same argument. The range check on the inflation rate
-itself — at or below -1 — is not done here: it is `engine.core.indexation`'s
-own check, raised at run time, so that rule has a single owner.
+An input named `params` must be a mapping with exactly its keys — `year` (an
+int) and `file` (a string) — no more, no fewer, so a typo one level into
+`inputs` (`provice` for `province`) is caught at discovery exactly as loudly
+as a typo at the case level. The same exact-keys rule holds for
+`real_params` (`year`, `file`, `inflation`) and `real_params_year` (`year`,
+`inflation`). See "Parameter inputs" above for what each of the three
+resolves to, why all three are handed to the target under the keyword
+`params`, and the rules around `inflation`.
 
 A worked example, using obviously synthetic numbers rather than a real tax
 value — this is not a shape any real case in this repository should take,

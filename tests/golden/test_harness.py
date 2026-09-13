@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from engine.core.indexation import RealParamSet, erosion_factor
+from engine.core.indexation import RealParamSet, RealParamYear, erosion_factor
 from engine.params.loader import ParamFileMissingError, ParamSet, ParamYearMissingError
 
 from .conftest import (
@@ -42,6 +42,7 @@ from .conftest import (
     resolve_inputs,
     resolve_params,
     resolve_real_params,
+    resolve_real_params_year,
     resolve_target,
     run_case,
     to_float,
@@ -75,6 +76,16 @@ def read_basic_amount_annual(params: RealParamSet) -> float:
     that the number itself means anything.
     """
     return params.annual_amount("credits.basic_amount_annual", 0)
+
+
+def read_basic_amount_annual_from_year(params: RealParamYear) -> float:
+    """Same idea as :func:`read_basic_amount_annual`, but for a whole tax year.
+
+    Exercises that a ``real_params_year`` input reaches a target as the
+    keyword ``params``, resolved to a :class:`RealParamYear` rather than one
+    file's :class:`RealParamSet`.
+    """
+    return params.federal.annual_amount("credits.basic_amount_annual", 0)
 
 
 #: The synthetic tax year the ``real_params`` self-tests load, kept out of the
@@ -1230,6 +1241,312 @@ cases:
     assert "real_params missing inflation reaches nothing" in message
     assert str(path) in message
     assert "exactly the keys" in message
+
+
+# --- real_params_year: {year, inflation}, one file shallower than real_params -
+
+
+def test_real_params_year_spec_with_an_extra_file_key_fails_discovery(tmp_path: Path) -> None:
+    """``real_params_year`` has no ``file``: it resolves a whole year, not one file."""
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: real_params_year spec has a file key
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: {{year: 2026, file: federal, inflation: 0.0}}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "real_params_year spec has a file key" in message
+    assert str(path) in message
+    assert "exactly the keys" in message
+
+
+def test_real_params_year_spec_missing_inflation_fails_discovery(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: real_params_year spec is missing inflation
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: {{year: 2026}}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "real_params_year spec is missing inflation" in message
+    assert str(path) in message
+    assert "exactly the keys" in message
+
+
+def test_real_params_year_spec_with_a_boolean_year_fails_discovery(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: real_params_year year is a boolean
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: {{year: true, inflation: 0.0}}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "real_params_year year is a boolean" in message
+    assert str(path) in message
+    assert "must be an int" in message
+
+
+@pytest.mark.parametrize(
+    ("label", "raw_inflation", "expected_phrase"),
+    [
+        ("a string", '"2%"', "must be an int or a float"),
+        ("a boolean", "true", "must be an int or a float"),
+        ("nan", ".nan", "NaN"),
+        ("infinite", ".inf", "which is infinite"),
+    ],
+)
+def test_real_params_year_spec_with_an_invalid_inflation_fails_discovery(
+    tmp_path: Path, label: str, raw_inflation: str, expected_phrase: str
+) -> None:
+    name = f"real_params_year inflation is {label}"
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: {name}
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: {{year: 2026, inflation: {raw_inflation}}}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert name in message
+    assert str(path) in message
+    assert expected_phrase in message
+
+
+def test_real_params_year_spec_not_a_mapping_fails_discovery(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: real_params_year spec is a plain number
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: 2026
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "real_params_year spec is a plain number" in message
+    assert str(path) in message
+    assert "which must be a mapping with exactly the keys ['inflation', 'year']" in message
+
+
+def test_real_params_year_spec_with_an_inflation_too_large_for_a_float_fails_discovery(
+    tmp_path: Path,
+) -> None:
+    """A 400-digit YAML integer makes ``math.isfinite`` raise ``OverflowError``, not answer False."""
+    huge = "9" * 400
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: real_params_year inflation overflows a float
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      real_params_year: {{year: 2026, inflation: {huge}}}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert "real_params_year inflation overflows a float" in message
+    assert str(path) in message
+    assert "too large to represent as a float" in message
+
+
+# --- naming more than one of params / real_params / real_params_year ----------
+
+_SPEC_SNIPPETS = {
+    "params": "{year: 2026, file: federal}",
+    "real_params": "{year: 2026, file: federal, inflation: 0.0}",
+    "real_params_year": "{year: 2026, inflation: 0.0}",
+}
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("params", "real_params"),
+        ("params", "real_params_year"),
+        ("real_params", "real_params_year"),
+    ],
+)
+def test_naming_two_parameter_inputs_fails_discovery_naming_both_keys(
+    tmp_path: Path, first: str, second: str
+) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: names two parameter inputs
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      {first}: {_SPEC_SNIPPETS[first]}
+      {second}: {_SPEC_SNIPPETS[second]}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"has both {first!r} and {second!r} in 'inputs'" in message
+    assert repr("names two parameter inputs") in message
+
+
+def test_naming_all_three_parameter_inputs_fails_discovery_naming_all_three(
+    tmp_path: Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: names all three parameter inputs
+    source: "synthetic"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+      params: {_SPEC_SNIPPETS["params"]}
+      real_params: {_SPEC_SNIPPETS["real_params"]}
+      real_params_year: {_SPEC_SNIPPETS["real_params_year"]}
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "has 'params', 'real_params' and 'real_params_year' in 'inputs'" in message
+    assert "has both" not in message
+    assert "never both" not in message
+    assert repr("names all three parameter inputs") in message
+
+
+def test_real_params_year_case_reaches_annual_amount_at_zero_inflation(
+    tmp_path: Path, synthetic_params_root: Path
+) -> None:
+    """The success criterion: a synthetic case reaches the whole-year real-terms view and passes."""
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    _write(
+        cases_dir,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.read_basic_amount_annual_from_year
+cases:
+  - name: real_params_year reaches annual_amount at zero inflation
+    source: "synthetic unit test, not a real calculator"
+    checked: 2026-01-01
+    inputs:
+      real_params_year: {{year: {_SYNTHETIC_REAL_PARAMS_YEAR}, inflation: 0.0}}
+    expected:
+      value: 1000.0
+""",
+    )
+
+    cases = discover_cases(cases_dir)
+
+    assert len(cases) == 1
+    run_case(cases[0])  # must not raise
+
+
+def test_resolve_real_params_year_returns_the_stated_rate_and_the_cached_raw_year(
+    synthetic_params_root: Path,
+) -> None:
+    """``.inflation_rate`` is the case's own stated rate, and ``.raw`` is the cached ``ParamYear``.
+
+    ``.raw`` identity, not just equality, proves this reuses
+    ``_load_year_cached`` rather than reading the year a second time.
+    """
+    rate = 0.25
+    result = resolve_real_params_year({"year": _SYNTHETIC_REAL_PARAMS_YEAR, "inflation": rate})
+
+    assert isinstance(result, RealParamYear)
+    assert result.inflation_rate == rate
+    assert result.raw is _load_year_cached(_SYNTHETIC_REAL_PARAMS_YEAR)
 
 
 # --- rounding validation and derivation ---------------------------------------

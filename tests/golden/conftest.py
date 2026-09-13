@@ -27,19 +27,19 @@ value is exactly the kind of invented number this repository forbids — and
 both are stored on the parsed case even though nothing downstream reads them
 yet, so a field validated once cannot later rot unvalidated.
 
-There is no numeric ``tolerance`` field; a case declares ``rounding``
-instead, one of the four members of :data:`ROUNDING_TOLERANCES`, defaulting
-to ``source_rounds_to_cent``. There is no numeric escape hatch — a source
-none of the four describes gets a fifth member added here, in a diff checked
-against the cited source — and an unrecognized field is rejected rather than
-dropped, since a typo'd name is indistinguishable from a deliberate
-omission.
+There is no numeric ``tolerance`` field; a case declares ``rounding`` instead,
+one of the four members of :data:`ROUNDING_TOLERANCES`, defaulting to
+``source_rounds_to_cent``. There is no numeric escape hatch — a source none of
+the four describes gets a fifth member added here, in a diff checked against
+the cited source — and an unrecognized field is rejected rather than dropped,
+since a typo'd name is indistinguishable from a deliberate omission.
 
-A ``params`` input resolves to a plain parameter set and a ``real_params``
-input, which also states an inflation rate, to a real-dollar view — either
-way handed to the target under the keyword ``params``, so a case names one
-or the other, never both. Every violation raises :class:`GoldenCaseError` at
-discovery, naming the file and case.
+A ``params`` input resolves to a plain parameter set; ``real_params`` (stating
+an inflation rate too) to one file's real-dollar view; and
+``real_params_year`` (one file shallower, just ``year`` and ``inflation``) to
+the *whole* tax year's real-dollar view. All three go under the keyword
+``params``, so a case names exactly one; every malformed spec raises
+:class:`GoldenCaseError` at discovery, naming the file and case.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ import numpy as np
 import pytest
 import yaml
 
-from engine.core.indexation import RealParamSet, real_year
+from engine.core.indexation import RealParamSet, RealParamYear, real_year
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamSet, ParamYear, load_year
 
 __all__ = [
@@ -71,6 +71,7 @@ __all__ = [
     "resolve_inputs",
     "resolve_params",
     "resolve_real_params",
+    "resolve_real_params_year",
     "resolve_target",
     "run_case",
     "to_float",
@@ -157,6 +158,11 @@ _PARAMS_SPEC_KEYS = frozenset({"year", "file"})
 #: harness never assumes one. See ``_validate_real_params_spec``.
 _REAL_PARAMS_SPEC_KEYS = frozenset({"year", "file", "inflation"})
 
+#: Keys a ``real_params_year`` input spec must have — ``real_params`` without
+#: ``file``: this resolves an entire ``RealParamYear``, every file for the
+#: year, not one file picked out of it. See ``_validate_real_params_year_spec``.
+_REAL_PARAMS_YEAR_SPEC_KEYS = frozenset({"year", "inflation"})
+
 
 def _rounding_id_suffix(rounding: str) -> str:
     """The ``" (suffix)"`` text appended to an id for a non-default ``rounding``.
@@ -194,15 +200,18 @@ class GoldenCase:
             currently read by anything — see the module docstring.
         checked: The date it was checked. Recorded, not currently read by
             anything either.
-        inputs: Raw keyword arguments as written in the YAML. ``params`` and
-            ``real_params`` entries are resolved lazily, at run time, by
-            :func:`resolve_inputs` — not here, so that discovery does not
-            itself need to read parameter files from disk. A ``real_params``
-            entry resolves to a
-            :class:`~engine.core.indexation.RealParamSet` and is passed to
-            the target under the keyword ``params``; a case naming both
-            ``params`` and ``real_params`` fails at discovery instead, since
-            both would claim the same argument.
+        inputs: Raw keyword arguments as written in the YAML. ``params``,
+            ``real_params``, and ``real_params_year`` entries are resolved
+            lazily, at run time, by :func:`resolve_inputs` — not here, so
+            that discovery does not itself need to read parameter files from
+            disk. A ``real_params`` entry resolves to a
+            :class:`~engine.core.indexation.RealParamSet` and a
+            ``real_params_year`` entry to a
+            :class:`~engine.core.indexation.RealParamYear`; both are passed
+            to the target under the keyword ``params``, same as ``params``
+            itself. A case names exactly one of the three; naming more than
+            one fails at discovery instead, since they would claim the same
+            argument.
         expected: Either ``{"value": <number>}`` or a mapping of output name
             to expected number. Never empty — see :func:`discover_cases`.
         rounding: The declared reason the source is imprecise — one of the
@@ -421,13 +430,52 @@ def _parse_rounding(path: Path, name: str, raw_rounding: Any) -> str:
     return raw_rounding
 
 
-def _validate_year_and_file(path: Path, name: str, key: str, spec: Mapping[str, Any]) -> None:
-    """Validate the ``year``/``file`` pair common to both ``params`` and ``real_params``."""
+def _validate_year(path: Path, name: str, key: str, spec: Mapping[str, Any]) -> None:
+    """Validate a spec's ``year``: an int, not a bool. Shared by every spec kind that has one."""
     year = spec["year"]
     if isinstance(year, bool) or not isinstance(year, int):
         raise GoldenCaseError(
             f"{path}: case {name!r} has {key}.year = {year!r}, which must be an int."
         )
+
+
+def _validate_inflation(path: Path, name: str, key: str, spec: Mapping[str, Any]) -> None:
+    """Validate a spec's ``inflation``: an int or float, not a bool, and finite.
+
+    Shared by ``real_params`` and ``real_params_year``. There is no default:
+    a case states ``inflation`` explicitly, ``0.0`` for a nominal source.
+    ``.nan``/``.inf``/``-.inf`` are rejected, and an int literal too large to
+    convert to a float (``math.isfinite`` raising ``OverflowError`` rather
+    than answering ``False``) is rejected too.
+    """
+    inflation = spec["inflation"]
+    if isinstance(inflation, bool) or not isinstance(inflation, (int, float)):
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which must "
+            f"be an int or a float. There is no default; state 0.0 explicitly for a "
+            f"source that is a nominal calculator."
+        )
+    try:
+        finite = math.isfinite(inflation)
+    except OverflowError:
+        # An int literal too large to convert to float (e.g. a 400-digit
+        # number) makes math.isfinite raise rather than answer False.
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is too "
+            f"large to represent as a float. A golden case must state a finite "
+            f"inflation rate."
+        ) from None
+    if not finite:
+        kind = "NaN" if math.isnan(inflation) else "infinite"
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is "
+            f"{kind}. A golden case must state a finite inflation rate."
+        )
+
+
+def _validate_year_and_file(path: Path, name: str, key: str, spec: Mapping[str, Any]) -> None:
+    """Validate the ``year``/``file`` pair common to both ``params`` and ``real_params``."""
+    _validate_year(path, name, key, spec)
     file = spec["file"]
     if not isinstance(file, str):
         raise GoldenCaseError(
@@ -471,29 +519,25 @@ def _validate_real_params_spec(path: Path, name: str, key: str, spec: Any) -> No
             f"with exactly the keys {sorted(_REAL_PARAMS_SPEC_KEYS)}."
         )
     _validate_year_and_file(path, name, key, spec)
-    inflation = spec["inflation"]
-    if isinstance(inflation, bool) or not isinstance(inflation, (int, float)):
+    _validate_inflation(path, name, key, spec)
+
+
+def _validate_real_params_year_spec(path: Path, name: str, key: str, spec: Any) -> None:
+    """Validate a ``real_params_year`` input spec's shape, without resolving it.
+
+    ``real_params`` without ``file``: this resolves an entire
+    :class:`~engine.core.indexation.RealParamYear`, every file for the year,
+    not one file picked out of it. ``year`` and ``inflation`` are each
+    validated exactly as they are on ``real_params`` — see
+    :func:`_validate_year` and :func:`_validate_inflation`.
+    """
+    if not isinstance(spec, Mapping) or set(spec) != _REAL_PARAMS_YEAR_SPEC_KEYS:
         raise GoldenCaseError(
-            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which must "
-            f"be an int or a float. There is no default; state 0.0 explicitly for a "
-            f"source that is a nominal calculator."
+            f"{path}: case {name!r} has {key!r} = {spec!r}, which must be a mapping "
+            f"with exactly the keys {sorted(_REAL_PARAMS_YEAR_SPEC_KEYS)}."
         )
-    try:
-        finite = math.isfinite(inflation)
-    except OverflowError:
-        # An int literal too large to convert to float (e.g. a 400-digit
-        # number) makes math.isfinite raise rather than answer False.
-        raise GoldenCaseError(
-            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is too "
-            f"large to represent as a float. A golden case must state a finite "
-            f"inflation rate."
-        ) from None
-    if not finite:
-        kind = "NaN" if math.isnan(inflation) else "infinite"
-        raise GoldenCaseError(
-            f"{path}: case {name!r} has {key}.inflation = {inflation!r}, which is "
-            f"{kind}. A golden case must state a finite inflation rate."
-        )
+    _validate_year(path, name, key, spec)
+    _validate_inflation(path, name, key, spec)
 
 
 def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any]:
@@ -502,11 +546,12 @@ def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any
     A list under ``inputs`` (``[x: 7.0]`` instead of ``{x: 7.0}``, an easy
     slip) dies inside ``target(**kwargs)`` with a bare ``TypeError`` naming
     neither file nor case; this catches it here instead. Any ``params`` entry
-    is additionally checked by :func:`_validate_params_spec`, and any
-    ``real_params`` entry by :func:`_validate_real_params_spec`. Naming both
-    is rejected here too: both resolve to the same target keyword, ``params``
-    — see :func:`resolve_inputs` — so a case with both would be claiming that
-    argument twice.
+    is additionally checked by :func:`_validate_params_spec`, any
+    ``real_params`` entry by :func:`_validate_real_params_spec`, and any
+    ``real_params_year`` entry by :func:`_validate_real_params_year_spec`.
+    Naming two or three of them is rejected here too: all resolve to the same
+    target keyword, ``params`` — see :func:`resolve_inputs` — so a case
+    naming more than one would be claiming that argument twice.
     """
     if raw_inputs is None:
         raw_inputs = {}
@@ -515,16 +560,29 @@ def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any
             f"{path}: case {name!r} has 'inputs' = {raw_inputs!r}, which must be a "
             f"mapping with string keys."
         )
-    if "params" in raw_inputs and "real_params" in raw_inputs:
+    present = [key for key in ("params", "real_params", "real_params_year") if key in raw_inputs]
+    if len(present) == 3:
         raise GoldenCaseError(
-            f"{path}: case {name!r} has both 'params' and 'real_params' in 'inputs'. "
-            f"Both resolve to the target's 'params' keyword argument, so a case "
-            f"names one or the other, never both."
+            f"{path}: case {name!r} has 'params', 'real_params' and 'real_params_year' "
+            f"in 'inputs'. All three resolve to the target's 'params' keyword argument, "
+            f"so a case names exactly one of them."
+        )
+    if len(present) == 2:
+        a, b = present
+        raise GoldenCaseError(
+            f"{path}: case {name!r} has both {a!r} and {b!r} in 'inputs'. 'params', "
+            f"'real_params' and 'real_params_year' all resolve to the target's "
+            f"'params' keyword argument, so a case names exactly one of them, never "
+            f"both."
         )
     if "params" in raw_inputs:
         _validate_params_spec(path, name, "params", raw_inputs["params"])
     if "real_params" in raw_inputs:
         _validate_real_params_spec(path, name, "real_params", raw_inputs["real_params"])
+    if "real_params_year" in raw_inputs:
+        _validate_real_params_year_spec(
+            path, name, "real_params_year", raw_inputs["real_params_year"]
+        )
     return raw_inputs
 
 
@@ -758,12 +816,31 @@ def resolve_real_params(spec: Mapping[str, Any]) -> RealParamSet:
     return real_year(_load_year_cached(spec["year"]), float(spec["inflation"]))[spec["file"]]
 
 
+def resolve_real_params_year(spec: Mapping[str, Any]) -> RealParamYear:
+    """Resolve a case's ``real_params_year: {year, inflation}`` input to a
+    :class:`~engine.core.indexation.RealParamYear`.
+
+    One file shallower than :func:`resolve_real_params`: the whole tax year,
+    in real dollars, rather than one file picked out of it — for a target
+    that reaches more than one parameter set itself, e.g.
+    ``engine.tax.combined.person_assessment``. Reuses the same
+    :func:`_load_year_cached` cache.
+
+    Raises:
+        ParamYearMissingError: If ``spec["year"]`` has no parameter files.
+        ValueError: If ``spec["inflation"]`` is at or below -1 — see
+            :func:`~engine.core.indexation.real_year`.
+    """
+    return real_year(_load_year_cached(spec["year"]), float(spec["inflation"]))
+
+
 def resolve_inputs(raw_inputs: Mapping[str, Any]) -> dict[str, Any]:
     """Turn a case's raw ``inputs`` mapping into real keyword arguments.
 
     A ``real_params`` entry resolves through :func:`resolve_real_params` and
-    is stored under the key ``"params"``, not ``"real_params"`` — see the
-    module docstring on why a case names one or the other, never both.
+    a ``real_params_year`` entry through :func:`resolve_real_params_year`;
+    both are stored under the key ``"params"``, not their own name — see the
+    module docstring on why a case names exactly one of the three.
     """
     resolved: dict[str, Any] = {}
     for key, value in raw_inputs.items():
@@ -771,6 +848,8 @@ def resolve_inputs(raw_inputs: Mapping[str, Any]) -> dict[str, Any]:
             resolved["params"] = resolve_params(value)
         elif key == "real_params":
             resolved["params"] = resolve_real_params(value)
+        elif key == "real_params_year":
+            resolved["params"] = resolve_real_params_year(value)
         else:
             resolved[key] = value
     return resolved
@@ -875,15 +954,17 @@ def run_case(case: GoldenCase) -> None:
         TypeError: If a result cannot be interpreted as a number (see
             :func:`to_float`).
         ValueError: Two distinct causes: a result is a multi-element array
-            (see :func:`to_float`), or a ``real_params`` input names an
-            inflation rate at or below -1 (raised by
-            ``engine.core.indexation``, via :func:`resolve_real_params`).
-        ParamError: From resolving a ``params`` or ``real_params`` input (see
-            :func:`resolve_params`, :func:`resolve_real_params`): the year or
-            file it names does not exist, any file in that year's directory
-            is malformed, or — for ``real_params`` — the named file's
-            ``indexation`` block is malformed. The loader's own errors all
-            subclass it.
+            (see :func:`to_float`), or a ``real_params``/``real_params_year``
+            input names an inflation rate at or below -1 (raised by
+            ``engine.core.indexation``, via :func:`resolve_real_params` or
+            :func:`resolve_real_params_year`).
+        ParamError: From resolving a ``params``, ``real_params``, or
+            ``real_params_year`` input (see :func:`resolve_params`,
+            :func:`resolve_real_params`, :func:`resolve_real_params_year`):
+            the year or file it names does not exist, any file in that
+            year's directory is malformed, or — for ``real_params``/
+            ``real_params_year`` — a file's ``indexation`` block is
+            malformed. The loader's own errors all subclass it.
         Exception: Whatever ``case.target`` itself raises, uncaught — a golden
             case is not responsible for turning the target's own failures
             into anything friendlier.

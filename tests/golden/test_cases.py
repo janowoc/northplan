@@ -4,11 +4,11 @@
 """Discover and run every human-written case under ``tests/golden/cases/``.
 
 All the interesting logic — parsing a case file, validating that ``source``
-and ``checked`` are present, resolving ``params`` and ``real_params`` inputs,
-comparing a result — lives in ``conftest.py`` and is exercised directly by
-``test_harness.py``. This module's only job is to point that machinery at the
-real cases directory and turn what it finds into one parametrized test per
-case.
+and ``checked`` are present, resolving ``params``, ``real_params``, and
+``real_params_year`` inputs, comparing a result — lives in ``conftest.py``
+and is exercised directly by ``test_harness.py``. This module's only job is
+to point that machinery at the real cases directory and turn what it finds
+into one parametrized test per case.
 
 ``pyproject.toml`` marks an empty ``parametrize`` list as a collection failure
 (``empty_parameter_set_mark = "fail_at_collect"``), because a suite whose
