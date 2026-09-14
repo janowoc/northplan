@@ -61,6 +61,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 38 | Loaders: a non-UTF-8 file fails naming the file | agent | — | a Windows-1252 file raises the loader's malformed-file error, naming it |
 | 39 | Golden harness: a whole parameter year, and a target shim | agent | 3, 14, 32 | a case can name `golden.targets.person_assessment` |
 | 40 | Refuse at load a CPP or OAS start age the rules do not allow | agent | 10, 16 | an out-of-window or past start age is refused at load, naming person and policy; L53 replaced |
+| 41 | `PensionState` refuses a nonzero bridge with no end month | agent | 11 | a bridge with no end month raises naming the pension; a zeroed bridge with one is accepted |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -155,6 +156,15 @@ The window lives in `params/`, which the scenario schema never reads, so the
 refusal needs the scenario and its parameter year together. It sits straight
 after 16, whose clipping it makes unreachable, and ahead of 19, whose run
 entry calls it, and of 20, whose grid over start ages has to respect it.
+
+Issue 41 came out of the ultrareview of 16. `db_pension_monthly` pays a bridge
+only when it has an end month, and nothing in `PensionState` stops a bridge
+amount from arriving without one, so the bridge would vanish without an error.
+No scenario reaches that today, because the schema and the builder both pair
+the fields, but the month step will build pension states of its own. The check
+is one-way, so the zeroed-bridge copy 19 builds for the survivor share stays
+legal. It sits straight after 40 and ahead of 19, the first code that
+constructs a `PensionState` outside the builder.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
