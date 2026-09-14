@@ -16,7 +16,8 @@
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/benefits/cpp.py
+# Read by: engine/benefits/cpp.py, engine/benefits/employment.py (contributions),
+#          engine/tax/withholding.py (contributions, first tier)
 #
 # NOTE ON AGES. Every age here is in MONTHS, because the start adjustment is
 # defined per month away from the standard age and engine/core/timeline.py
@@ -82,11 +83,13 @@ pension:
   maximum_at_standard_age_annual: 18091.80      # used in consistency tests, never by the step
 
 # --- Contributions ----------------------------------------------------------
-# Read by nothing today. engine/benefits/cpp.py takes contributory_history as a
-# caller-supplied fraction, so the benefit side never touches these. They are
-# here for the ACCUMULATION side: a working household pays CPP contributions,
-# which reduce cash available to save and generate a federal credit
-# (federal.yaml, credits, currently unmodelled).
+# Read by engine/benefits/employment.py::cpp_contributions_monthly, and by
+# engine/tax/withholding.py for the first-tier base contribution in the payroll
+# estimate. engine/benefits/cpp.py takes contributory_history as a
+# caller-supplied fraction, so the pension side never touches these. A working
+# household pays CPP contributions on all employment income at every age
+# (L21); they reduce cash available to save, the base part earns a credit
+# (federal.yaml, contribution_credit), and the enhanced part is a deduction (L14).
 #
 # Two earnings tiers, each with its own ceiling and rate.
 

@@ -23,7 +23,7 @@
 # Read by: engine/tax/federal.py, engine/core/timeline.py (is_filing_month),
 #          engine/accounts/taxable.py (investment_income), engine/tax/provincial.py (non_refundable_credits),
 #          engine/tax/combined.py (pension_splitting)
-#          ei: issue 16 will add employment income - no module yet
+#          engine/benefits/employment.py (ei), engine/tax/withholding.py (ei)
 
 # --- Calendar rules ---------------------------------------------------------
 # Statutory, and parameters like any other: engine/core/timeline.py reads them
@@ -104,8 +104,8 @@ credits:
 #
 # The maxima live here, not in cpp.yaml, because they are Income Tax Act
 # ceilings on a credit and apply Canada-wide. EI has no parameter file of its
-# own and needs none for this: the maximum is the only EI figure the model
-# reads.
+# own: the premium rate and maximum insurable earnings sit in the ei block
+# below, read by engine/benefits/employment.py::ei_premium_monthly.
 #
 # Contributions stop partway through the year once a ceiling is reached, so a
 # year's figure is not twelve times a month's. Cap at the annual assessment,

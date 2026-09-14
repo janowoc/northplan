@@ -17,7 +17,7 @@
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
 # Read by: engine/benefits/oas.py, engine/benefits/gis.py,
-#          engine/tax/combined.py (recovery_tax) — issue 14 adds oas_repayment, no module yet
+#          engine/tax/combined.py::oas_repayment (recovery_tax)
 #
 # Ages are in MONTHS — the deferral increment is per month, and the age band
 # step-up happens in the month the threshold is reached.
@@ -49,7 +49,7 @@ benefit_year:
 # without a code change. Keyed by the name
 # engine.core.indexation.schedule(name, params) is called with.
 
-# OAS is guaranteed to never decrease - this should be modeled in the engine, not here.
+# OAS is guaranteed never to decrease. Under constant real modelling the rule has no effect and is not coded (L24).
 
 indexation:
   # pension and gis run on the same quarterly cadence today and are still two entries;
@@ -106,7 +106,7 @@ recovery_tax:
   rate: 0.15                         # recovered per dollar of net income above the threshold
 
 # --- GIS --------------------------------------------------------------------
-# Read by engine/benefits/gis.py. Non-taxable, and reduced against a different
+# Read by engine/benefits/gis.py::in_band, an exposure indicator, not a GIS calculation (L2). Non-taxable, and reduced against a different
 # income base than the recovery tax uses — the testable basis is combined
 # across a couple and is not net income.
 
