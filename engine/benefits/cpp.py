@@ -142,7 +142,7 @@ def pension_monthly(
     factor = start_adjustment_factor(effective_start, params)
     started = current_age_months >= effective_start
     result = np.where(started, base * factor, 0.0)
-    return np.broadcast_to(result, benefit.monthly_amount.shape).astype(np.float64).copy()
+    return np.broadcast_to(result, benefit.monthly_amount.shape).astype(np.float64)
 
 
 def survivor_pension_monthly(

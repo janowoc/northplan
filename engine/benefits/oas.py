@@ -176,7 +176,7 @@ def gross_pension_monthly(
     factor = deferral_factor(effective_start, params)
     started = current_age_months >= effective_start
     result = np.where(started, max_at_current * factor, 0.0)
-    return np.broadcast_to(result, benefit.monthly_amount.shape).astype(np.float64).copy()
+    return np.broadcast_to(result, benefit.monthly_amount.shape).astype(np.float64)
 
 
 def gross_pension_annual(
