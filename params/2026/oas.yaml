@@ -91,7 +91,7 @@ pension:
 # 2026-09-04 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html
     - from_age_months: 780
       maximum_monthly: 751.97
-    - from_age_months: 900
+    - from_age_months: 901      # 2026-09-13 Increase is in month *following* your 75th birthday
       maximum_monthly: 827.17
 
 # --- Recovery tax (clawback) ------------------------------------------------

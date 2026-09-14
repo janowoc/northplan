@@ -234,10 +234,13 @@ survivors under 65, small.
 contributions made while receiving CPP, the disability pension, the death
 benefit, credit splitting.
 
-**L21. CPP contributions after pension start.** In reality a working
-pensioner under 70 keeps contributing unless they opt out. We stop
-contributions at pension start. Direction: slightly optimistic on cash,
-slightly conservative on pension.
+**L21. CPP contributions.** In reality a worker contributes on employment
+income until 70, except that one aged 65 to 70 who is receiving their CPP
+pension may elect to stop. We take contributions on all employment income at
+every age. Direction: conservative on cash for anyone who would elect to
+stop, or who works past 70. The post-retirement benefit those contributions
+earn is not modelled (L20), which is conservative on pension. Lives in
+`engine/benefits/employment.py`.
 
 **L22. OAS residence.** In reality full OAS needs forty years of residence
 after 18. We assume every person qualifies in full. Direction: optimistic for
@@ -249,6 +252,24 @@ owing. See L16 for the withholding that is not modelled.
 
 **L24. OAS never decreases.** In reality a quarterly adjustment is floored at
 zero. Under constant real modelling the rule has no effect and is not coded.
+
+**L52. Amounts already in pay are not eroded.** In reality a CPP or OAS
+pension in pay, and a DB pension indexed to prices, is fixed in nominal terms
+between adjustments and loses real value until the next one, as a published
+maximum does. We pay the amount the scenario states, in January dollars of
+the start year, unchanged every month apart from the OAS age-band step-up;
+the erosion factor reaches only amounts read from `params/` (L5). Direction:
+optimistic, by one erosion factor per schedule, larger for CPP (adjusted
+annually) than for OAS (quarterly). Lives in `engine/benefits/cpp.py::pension_monthly`,
+`oas.py::gross_pension_monthly`, `pension.py::db_pension_monthly`.
+
+**L53. Benefit start ages outside the window or already past.** In reality
+an unstarted CPP or OAS pension can be backdated only a limited time, and an
+age outside the statutory window cannot be elected. We start each at the
+later of the elected age and the person's age when the run opens, clipped to
+the window in `params/`, and pay no back payment. Direction: conservative
+for an election already past; neutral otherwise. Lives in
+`engine/benefits/cpp.py::pension_monthly` and `oas.py::gross_pension_monthly`.
 
 ## Registered accounts
 

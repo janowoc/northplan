@@ -1,28 +1,31 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Guaranteed Income Supplement — **not modelled**, and a tripwire that says so.
+"""Guaranteed Income Supplement — **not modelled**; this computes an exposure indicator instead.
 
 GIS is income-tested, non-taxable, and reduced against a different income
 base than the OAS recovery tax uses. None of that is populated:
 ``params/{year}/oas.yaml`` carries ``gis.modelled: false`` and nothing else.
 
-This module computes no supplement. Instead it refuses to answer for a
-household whose income falls in the band where an unmodelled GIS would
-change the result — treating it as zero would silently understate income
-exactly where it matters most, and bias the drawdown question this engine
-exists to answer: GIS is clawed back against registered withdrawals, so a
-model without it cannot see the marginal rate that makes early RRSP
-drawdown attractive.
+This module computes no supplement. It reports whether a household's testable
+income — net income less OAS received, annual, current year — falls in the
+band where an unmodelled GIS would begin to matter, so the caller can report
+the fraction of path-years in band (L2). Treating GIS as zero everywhere would
+silently understate income exactly where it matters most, and would hide the
+marginal rate that makes early registered drawdown attractive to a low-income
+household. An earlier version of this module stopped the whole run the moment
+any single path reached the band; that meant the lower tail of an ordinary
+Monte Carlo run — the part a retirement plan exists to be read for — refused
+most modest households outright. Reporting the exposure instead keeps the
+answer and makes the exposure visible rather than silencing it.
 
-The refusal thresholds sit below the published GIS cut-offs on purpose: they
-are a conservative band around where GIS would begin to matter, not a GIS
+The band thresholds sit below the published GIS cut-offs on purpose: they are
+a conservative band around where GIS would begin to matter, not a GIS
 calculation, and must not be read as one.
 
 When GIS is implemented: the schema is already written up in
 ``params/gis_not_implemented.yaml``; move it under ``params/{year}/``,
-populate it, flip ``modelled`` to true, and replace
-:func:`check_within_scope` with the real calculation.
+populate it, and flip ``modelled`` to true.
 
 Parameters from ``params/{year}/oas.yaml`` under ``gis``.
 """
@@ -32,21 +35,12 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from engine.params.loader import ParamSet
+from engine.core.indexation import RealParamSet
 
-__all__ = ["GisWouldApplyError", "check_within_scope", "is_modelled", "refusal_threshold"]
-
-
-class GisWouldApplyError(RuntimeError):
-    """A household's income reaches the band where an unmodelled GIS matters.
-
-    Deliberately not a :class:`~engine.params.loader.ParamError`: nothing is
-    missing from ``params/``. The parameters are complete and say GIS is
-    unmodelled. What is out of range is the household, not the params.
-    """
+__all__ = ["band_threshold_annual", "in_band", "is_modelled"]
 
 
-def is_modelled(params: ParamSet) -> bool:
+def is_modelled(params: RealParamSet) -> bool:
     """Whether GIS is modelled at all for this parameter year.
 
     Args:
@@ -70,8 +64,10 @@ def is_modelled(params: ParamSet) -> bool:
     return modelled
 
 
-def refusal_threshold(has_spouse: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
-    """Annual testable income below which this engine refuses to answer.
+def band_threshold_annual(
+    has_spouse: ArrayLike, january_month_index: int, params: RealParamSet
+) -> NDArray[np.float64]:
+    """Annual testable income threshold that bounds the reporting band.
 
     Two thresholds, selected per path by marital status, because the couple
     figure is measured against *combined* income and is not twice the single
@@ -79,9 +75,10 @@ def refusal_threshold(has_spouse: ArrayLike, params: ParamSet) -> NDArray[np.flo
 
     Args:
         has_spouse: Whether the recipient has a spouse or common-law partner,
-            ``(n_paths,)`` or scalar. Read for the month being checked: a
+            ``(n_paths,)`` or scalar. Read for the year being checked: a
             spouse's death moves a household onto the single threshold from
-            that month.
+            that year.
+        january_month_index: Month index of January of the year being checked.
         params: The ``oas`` parameter set.
 
     Returns:
@@ -90,59 +87,54 @@ def refusal_threshold(has_spouse: ArrayLike, params: ParamSet) -> NDArray[np.flo
     Raises:
         MissingParameterError: If either threshold is absent.
     """
-    single = params.number("gis.band_thresholds.single_testable_income_annual")
-    couple = params.number("gis.band_thresholds.couple_combined_testable_income_annual")
-    return np.where(np.asarray(has_spouse, dtype=bool), couple, single).astype(np.float64)
+    single = params.annual_amount(
+        "gis.band_thresholds.single_testable_income_annual", january_month_index
+    )
+    couple = params.annual_amount(
+        "gis.band_thresholds.couple_combined_testable_income_annual", january_month_index
+    )
+    return np.asarray(
+        np.where(np.asarray(has_spouse, dtype=bool), couple, single), dtype=np.float64
+    )
 
 
-def check_within_scope(
-    testable_income_annual: ArrayLike,
+def in_band(
+    net_income: ArrayLike,
+    oas_received: ArrayLike,
     has_spouse: ArrayLike,
-    params: ParamSet,
-) -> None:
-    """Stop the run if any path reaches the band where GIS would matter.
+    january_month_index: int,
+    params: RealParamSet,
+) -> NDArray[np.bool_]:
+    """Whether a household's testable income sits in the unmodelled-GIS band.
 
-    A no-op when GIS is modelled, and when every path sits clear of the
-    threshold. Otherwise it raises. **Any path, not most**: a single path in
-    the GIS band means the distribution's lower tail — the part a retirement
-    plan is read for — is wrong.
-
-    Call this once per benefit year against projected annual income for that
-    year, before any policy decision reads the result; calling it monthly
-    would compare a monthly figure to an annual threshold and refuse every
-    household.
+    All-false when :func:`is_modelled` is true: the exposure indicator has
+    nothing to report once GIS is actually computed elsewhere. Otherwise
+    compares ``net_income - oas_received`` to :func:`band_threshold_annual`,
+    inclusive at the threshold. The caller is expected to count only
+    path-years in which at least one living household member receives OAS —
+    L2's "living pensioner" — since a household with no one drawing OAS is
+    not exposed to GIS at all.
 
     Args:
-        testable_income_annual: Projected annual income for the benefit year, on
-            the GIS testable basis — combined across the couple where there is
-            one, matching whichever threshold applies. ``(n_paths,)``.
-        has_spouse: Marital status per path, ``(n_paths,)`` or scalar.
+        net_income: Annual net income for the year, real dollars. For a
+            couple the caller passes the combined figure; this function does
+            not sum across a household.
+        oas_received: Annual gross OAS received for the year, real dollars,
+            on the same combined-or-not basis as ``net_income``.
+        has_spouse: Whether the recipient has a spouse or common-law partner,
+            ``(n_paths,)`` or scalar.
+        january_month_index: Month index of January of the year being checked.
         params: The ``oas`` parameter set.
 
-    Raises:
-        GisWouldApplyError: If any path's income is at or below its threshold.
-        MissingParameterError: If ``gis.modelled`` or either threshold is absent.
+    Returns:
+        ``(n_paths,)`` (or the broadcast shape of the inputs) boolean array.
     """
     if is_modelled(params):
-        return
+        shape = np.broadcast(
+            np.asarray(net_income), np.asarray(oas_received), np.asarray(has_spouse)
+        ).shape
+        return np.zeros(shape, dtype=np.bool_)
 
-    income, threshold = np.broadcast_arrays(
-        np.asarray(testable_income_annual, dtype=np.float64),
-        refusal_threshold(has_spouse, params),
-    )
-    breaching = income <= threshold
-    if not breaching.any():
-        return
-
-    n_breaching = int(breaching.sum())
-    n_paths = int(income.size)
-    lowest = float(income[breaching].min())
-    raise GisWouldApplyError(
-        f"{n_breaching} of {n_paths} paths have testable income at or below the "
-        f"GIS refusal threshold (lowest {lowest:,.0f}, threshold "
-        f"{float(np.min(threshold[breaching])):,.0f}). GIS is not modelled for this "
-        f"parameter year, and for these households it would materially change the "
-        f"answer — omitting it understates income and hides the clawback that drives "
-        f"the drawdown decision. Populate params/gis_not_implemented.yaml, move it "
-        f"under params/{{year}}/, and set gis.modelled: true."
-    )
+    testable = np.asarray(net_income, dtype=np.float64) - np.asarray(oas_received, dtype=np.float64)
+    threshold = band_threshold_annual(has_spouse, january_month_index, params)
+    return np.asarray(testable <= threshold, dtype=np.bool_)

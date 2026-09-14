@@ -25,11 +25,11 @@ appears, something has gone wrong.
 ## Status
 
 The parameter files for 2026 are populated and structurally tested. The
-loader, the scenario schema and loader, all of `engine/tax/`, and all of
-`engine/core/` and `engine/mc/` apart from the monthly step and the run loop
-are implemented. Accounts, the benefit calculations other than the GIS
-metric, the step, the loop, the policies and the optimizer are still stubs
-carrying their specification as a docstring. The build order is
+loader, the scenario schema and loader, all of `engine/tax/`, all of
+`engine/benefits/`, and all of `engine/core/` and `engine/mc/` apart from the
+monthly step and the run loop are implemented. Accounts, the step, the loop,
+the policies and the optimizer are still stubs carrying their specification
+as a docstring. The build order is
 `docs/roadmap.md`; each step is a GitHub issue. Known simplifications are
 listed in `docs/limitations.md`, and a change that adds one adds its entry
 there.
