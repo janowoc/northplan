@@ -60,6 +60,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 37 | taxes_benefits.md §10.2: the July-to-June OAS withholding instruction | human | — | prose only; nothing tells the engine to model a monthly withholding |
 | 38 | Loaders: a non-UTF-8 file fails naming the file | agent | — | a Windows-1252 file raises the loader's malformed-file error, naming it |
 | 39 | Golden harness: a whole parameter year, and a target shim | agent | 3, 14, 32 | a case can name `golden.targets.person_assessment` |
+| 40 | Refuse at load a CPP or OAS start age the rules do not allow | agent | 10, 16 | an out-of-window or past start age is refused at load, naming person and policy; L53 replaced |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -145,6 +146,15 @@ not, and goes in a shim under `tests/golden/` where its defaults are visible
 Python rather than a rule buried in the harness. Nothing under `engine/`
 changes. Issue 17 needs none of it — every function in `engine/benefits/` is
 already scalars plus one parameter file — so 39 blocks 15 alone.
+
+Issue 40 came out of designing 16. The benefit functions take a start age
+that is out of the statutory window, or already past when the run opens, and
+quietly replace it with the nearest one they can pay, recorded as L53. That
+keeps a run from stopping inside the loop but lets a typo through unreported.
+The window lives in `params/`, which the scenario schema never reads, so the
+refusal needs the scenario and its parameter year together. It sits straight
+after 16, whose clipping it makes unreachable, and ahead of 19, whose run
+entry calls it, and of 20, whose grid over start ages has to respect it.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and

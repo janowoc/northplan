@@ -30,7 +30,7 @@ REPO = "janowoc/northplan"
 #: they were completed. Append new issues where they belong, not at the end.
 EXECUTION_ORDER = [
     1, 2, 3, 25, 4, 26, 5, 27, 9, 6, 28, 7, 8, 10, 11, 12, 13,
-    30, 31, 37, 32, 38, 33, 29, 34, 14, 39, 15, 16, 17, 18, 19, 35, 36, 20, 21, 22, 23, 24,
+    30, 31, 37, 32, 38, 33, 29, 34, 14, 39, 15, 16, 40, 17, 18, 19, 35, 36, 20, 21, 22, 23, 24,
 ]
 
 LIST_ITEM = re.compile(r"^(\s*)(- \[ \] |- |\d+\. )(.*)$")
