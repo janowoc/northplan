@@ -13,10 +13,13 @@ Every dollar amount arrives through a :class:`~engine.core.indexation.RealParamS
 which already applies the erosion factor for CPP's annual adjustment cycle; a
 function here never multiplies by it again. An amount already in pay when the
 scenario starts carries no erosion factor at all — it is the January
-start-year figure the scenario states, unchanged every month (L52). A start
-age outside the statutory window, or already past when the run opens, is
-clipped and started at the later of the election and the age at open, with no
-back payment (L53).
+start-year figure the scenario states, unchanged every month (L52). The
+elected start age a policy states is checked at load against the window
+and the person's age in whole years at the opening
+(``engine/scenario/start_ages.py``, L54); an election equal to the
+person's age in whole years at the opening starts the pension at the
+opening. The clip below still bounds any value that has not been through
+that check.
 """
 
 from __future__ import annotations

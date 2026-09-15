@@ -21,6 +21,7 @@ from engine.benefits.cpp import (
 )
 from engine.core.indexation import erosion_factor, real_year, schedule
 from engine.core.state import BenefitState
+from engine.core.timeline import MONTHS_PER_YEAR
 from engine.params.loader import load_year
 
 JANUARY = 0
@@ -133,6 +134,30 @@ def test_pension_monthly_election_already_past_starts_at_month_zero(cpp) -> None
     result = pension_monthly(benefit, age_at_open, 0, cpp)
     expected = base_pension_monthly(1.0, 0, cpp) * start_adjustment_factor(age_at_open, cpp)
     assert result == pytest.approx(expected)
+
+
+def test_pension_monthly_election_at_whole_year_age_uses_factor_at_opening(cpp) -> None:
+    """Elected k years at age k years 11 months: paid from month 0 at the factor at opening.
+
+    The factor is unchanged at month 5. This case matters because
+    ``engine.scenario.start_ages.check_start_ages`` accepts it.
+    """
+    standard = int(cpp.number("start_age.standard_months"))
+    latest = int(cpp.number("start_age.latest_months"))
+    assert standard % MONTHS_PER_YEAR == 0
+    k = standard // MONTHS_PER_YEAR
+    age_at_open = k * MONTHS_PER_YEAR + (MONTHS_PER_YEAR - 1)
+    assert age_at_open <= latest
+
+    benefit = _benefit_elected(k * MONTHS_PER_YEAR)
+
+    at_month_zero = pension_monthly(benefit, age_at_open, 0, cpp)
+    expected_zero = base_pension_monthly(1.0, 0, cpp) * start_adjustment_factor(age_at_open, cpp)
+    assert at_month_zero == pytest.approx(expected_zero)
+
+    at_month_five = pension_monthly(benefit, age_at_open + 5, 5, cpp)
+    expected_five = base_pension_monthly(1.0, 5, cpp) * start_adjustment_factor(age_at_open, cpp)
+    assert at_month_five == pytest.approx(expected_five)
 
 
 def test_pension_monthly_past_latest_at_open_not_in_pay_uses_latest_factor(cpp) -> None:

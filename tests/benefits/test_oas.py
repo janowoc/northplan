@@ -21,6 +21,7 @@ from engine.benefits.oas import (
 )
 from engine.core.indexation import erosion_factor, real_year, schedule
 from engine.core.state import BenefitState
+from engine.core.timeline import MONTHS_PER_YEAR
 from engine.params.loader import MalformedParamFileError, load_year
 
 JANUARY = 0
@@ -121,6 +122,51 @@ def test_elected_already_past_starts_at_month_zero_with_age_at_open_deferral(oas
     result = gross_pension_monthly(benefit, age_at_open, 0, oas)
     band0, _ = _band_maxima(oas, 0)
     expected = band0 * deferral_factor(age_at_open, oas)
+    assert result == pytest.approx(expected)
+
+
+def test_elected_at_whole_year_age_uses_deferral_factor_at_opening(oas) -> None:
+    """Elected k years at age k years 11 months: paid from month 0 at the deferral at opening.
+
+    The deferral factor is unchanged at month 5. This case matters because
+    ``engine.scenario.start_ages.check_start_ages`` accepts it.
+    """
+    earliest = oas.number("start_age.earliest_months")
+    assert earliest % MONTHS_PER_YEAR == 0
+    k = int(earliest) // MONTHS_PER_YEAR
+    age_at_open = k * MONTHS_PER_YEAR + (MONTHS_PER_YEAR - 1)
+    assert age_at_open + 5 < _second_band_from_age(oas)  # band 0 throughout
+
+    benefit = _benefit_elected(k * MONTHS_PER_YEAR)
+
+    band0_at_zero, _ = _band_maxima(oas, 0)
+    at_month_zero = gross_pension_monthly(benefit, age_at_open, 0, oas)
+    expected_zero = band0_at_zero * deferral_factor(age_at_open, oas)
+    assert at_month_zero == pytest.approx(expected_zero)
+
+    band0_at_five, _ = _band_maxima(oas, 5)
+    at_month_five = gross_pension_monthly(benefit, age_at_open + 5, 5, oas)
+    expected_five = band0_at_five * deferral_factor(age_at_open, oas)
+    assert at_month_five == pytest.approx(expected_five)
+
+
+def test_elected_above_latest_is_clipped_and_started_at_latest(oas) -> None:
+    """An election above the latest start age is clipped to it and paid from month 0.
+
+    A person at the latest age at opening is paid at the latest factor.
+    """
+    latest = oas.number("start_age.latest_months")
+    assert latest % MONTHS_PER_YEAR == 0
+    latest_int = int(latest)
+    assert latest_int < _second_band_from_age(oas)  # band 0
+
+    elected = latest_int + MONTHS_PER_YEAR  # unchecked; the clip must still bound it
+    benefit = _benefit_elected(elected)
+    band0, _ = _band_maxima(oas, 0)
+    expected = band0 * deferral_factor(latest_int, oas)
+    assert expected > 0.0  # a zero result must not pass this test by accident
+
+    result = gross_pension_monthly(benefit, latest_int, 0, oas)
     assert result == pytest.approx(expected)
 
 

@@ -30,6 +30,8 @@ What this module deliberately does not validate:
 - **Statutory ranges for elections**, e.g. ``cpp_start_age_years: 55`` loads:
   the legal window is a parameter belonging to a tax year, and checking it
   here would put a copy of it in a ``.py`` file.
+  ``engine/scenario/start_ages.py::check_start_ages`` checks them, against
+  the parameter year, once a scenario is paired with one.
 - **That ``params/<start_year>/`` exists** — a scenario is a document; whether
   a parameter year has been transcribed is the loader's business.
 - **That ``acb <= balance``** — a taxable holding at a loss is an ordinary
@@ -1067,7 +1069,8 @@ class ElectionsSpec(_Base):
 
     Ages are **not** checked against the statutory windows. Those bounds belong
     to a tax year and live in ``params/``; a copy of them here would be an
-    invented parameter.
+    invented parameter. ``engine/scenario/start_ages.py::check_start_ages``
+    checks them, against the parameter year.
 
     Attributes:
         cpp_start_age_years: Age each person starts CPP, keyed by person id.

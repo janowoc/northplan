@@ -263,13 +263,24 @@ optimistic, by one erosion factor per schedule, larger for CPP (adjusted
 annually) than for OAS (quarterly). Lives in `engine/benefits/cpp.py::pension_monthly`,
 `oas.py::gross_pension_monthly`, `pension.py::db_pension_monthly`.
 
-**L53. Benefit start ages outside the window or already past.** In reality
-an unstarted CPP or OAS pension can be backdated only a limited time, and an
-age outside the statutory window cannot be elected. We start each at the
-later of the elected age and the person's age when the run opens, clipped to
-the window in `params/`, and pay no back payment. Direction: conservative
-for an election already past; neutral otherwise. Lives in
-`engine/benefits/cpp.py::pension_monthly` and `oas.py::gross_pension_monthly`.
+**L54. A benefit start already past when the run opens.** In reality an
+unstarted CPP or OAS pension can be backdated a limited time, with a back
+payment. We refuse an elected start age below the person's age in whole
+years at the run's opening (1 January of `start_year`), along with any start
+age outside the window in `params/` and any OAS in pay for someone younger
+than its earliest start age. An election equal to the person's age in whole
+years at the opening starts the pension at the opening, at their age in
+months then, capped at the latest start age, with no back payment. A person
+whose age in whole years at the opening is above the latest start age, and
+whose benefit is not yet in pay, has no valid election; the scenario must
+state that benefit as in pay. Direction: neither optimistic nor conservative
+for a refused scenario, which produces no wrong number — the cost is
+expressiveness. Either way for an election that starts at the opening: it
+forgoes any back payment but pays the adjustment for the later start for
+life, and which is worth more depends on survival. Lives in
+`engine/scenario/start_ages.py::check_start_ages`, and in
+`engine/benefits/cpp.py::pension_monthly` and
+`oas.py::gross_pension_monthly` for the start at the opening.
 
 ## Registered accounts
 

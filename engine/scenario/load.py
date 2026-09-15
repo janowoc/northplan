@@ -50,7 +50,7 @@ __all__ = [
 
 
 class ScenarioError(Exception):
-    """Base class for every failure raised while loading a scenario."""
+    """Base class for failures loading a scenario or checking it against its params."""
 
 
 class ScenarioFileMissingError(ScenarioError):

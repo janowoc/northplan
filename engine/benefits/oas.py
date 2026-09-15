@@ -29,7 +29,9 @@ already in pay carries that step-up as a ratio, exact because it is the same
 step-up that produced the published maxima, and no erosion factor, since the
 factor cancels in the ratio (L52); an amount not yet in pay starts at the
 later of the elected age and the age when the run opens, clipped to the
-statutory window (L53). Amounts come through the real view
+statutory window; the election itself was checked at load against the
+window and the person's age in whole years
+(``engine/scenario/start_ages.py``, L54). Amounts come through the real view
 (:class:`~engine.core.indexation.RealParamSet`), which already applies OAS's
 quarterly erosion factor (L5, L24, L52).
 """
@@ -136,8 +138,8 @@ def gross_pension_monthly(
     band maximum at the age the run opened, not eroded since the erosion
     factor cancels out of the ratio (L52). Elected: the band maximum at the
     effective start age (the later of the election and the age at open,
-    clipped to the statutory window, L53) times :func:`deferral_factor`, from
-    the effective start month.
+    clipped to the statutory window; the election was checked at load, L54)
+    times :func:`deferral_factor`, from the effective start month.
 
     Args:
         benefit: This person's OAS standing.
