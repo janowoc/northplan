@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: the OAS recovery tax for the year, assessed at the December close
+# on THIS calendar year's net income (L23), capped at the OAS received in the
+# same year. net_income_before_repayment is the figure the return already
+# includes that OAS in.
+
+# min(0.15 * max(0, net_income - threshold), oas_received)
+# The threshold for 2026 is 95323
+# 2026-09-16 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html
+
+target: engine.tax.combined.oas_repayment
+cases:
+  - name: below the threshold, nothing repaid
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html"
+    checked: 2026-09-16
+    inputs:
+      net_income_before_repayment: 80000.0
+      oas_received: 9000.0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 0.0 # 80,000 < 95323
+
+  - name: partial repayment at 120000
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html"
+    checked: 2026-09-16
+    inputs:
+      net_income_before_repayment: 120000.0
+      oas_received: 9000.0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 3701.55 # (120000 - 95323) * 0.15
+
+  - name: fully clawed back at 250000
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/recovery-tax.html"
+    checked: 2026-09-16
+    inputs:
+      net_income_before_repayment: 250000.0
+      oas_received: 9000.0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 9000 # 250,000 > 161,088

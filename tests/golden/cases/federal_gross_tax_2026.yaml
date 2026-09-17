@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: federal tax BEFORE non-refundable credits, on taxable income.
+# TaxTips' detailed calculator reports this as its own line, above the credits
+# line — that is the figure to copy here, not "total tax".
+#
+# inflation: 0.0 makes the erosion factor exactly 1, so the engine reads
+# params/2026/federal.yaml's published amounts unchanged and a nominal 2026
+# calculator's answer applies. january_month_index: 0 is January of the
+# scenario's start year; with inflation 0.0 its value cannot matter.
+target: engine.tax.federal.gross_tax
+cases:
+  - name: first bracket, 58523
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 58523.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 8193.22   # 58523 * 0.14
+
+  - name: second bracket, 117045
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 117045.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 20190.23  # 8193.22 + (117045 - 58523) * 0.205
+
+  - name: fourth bracket, 258482
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 258482.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 59275.11  # 36932.93 + (258482 - 181440) * 0.29

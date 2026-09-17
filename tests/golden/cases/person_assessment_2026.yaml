@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: one person's whole federal + Alberta return, through the shim added
+# by issue #39. The shim takes the fifteen IncomeLedger fields as plain
+# numbers; ANY FIELD A CASE LEAVES OUT IS 0.0. So a case names every income
+# and contribution the calculator was given, and nothing it wasn't.
+#
+# Named outputs, all in dollars for the year:
+#   federal        federal tax after non-refundable credits
+#   provincial     Alberta tax after non-refundable credits
+#   oas_repayment  OAS recovery tax (L23: this year's net income)
+#   total          the sum of the three
+#   net_income     line 23400 — the one line every calculator shows; check it
+#                  first, since a mismatch here explains every other mismatch
+# Delete any output line the source does not report, rather than guessing it.
+#
+# Write numbers unquoted. A quoted "60000" or a bare `interest:` (null) is
+# converted silently, not rejected — see tests/golden/README.md, "shim".
+#
+# Traps, each a place a calculator models something this engine does not:
+#   - Canada employment amount (L11): calculators apply it to any employment
+#     income; the engine does not. A case with employment > 0 will differ on
+#     `federal` by that credit's value. Use a calculator that lets you turn it
+#     off, or drop `federal` and `total` from that case and keep the rest.
+#   - CPP and EI on employment: a calculator derives them from salary; the
+#     shim does not. Copy the calculator's own figures into
+#     cpp_base_contributions, cpp_enhanced_contributions and ei_premiums.
+#   - Basic personal amount clawback (L12) and every other deduction or credit
+#     outside L11/L14: keep incomes where they cannot apply.
+#   - OAS repayment does not reduce net income here (L49).
+#   - Pension splitting: transfer_in and transfer_out stay 0 (issue #21).
+target: golden.targets.person_assessment
+cases:
+  # The cleanest possible return: one income type with no credit of its own,
+  # no payroll deductions, no age-related amounts.
+  - name: interest only, 60000, age 45
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      interest: 60000.0
+      age_at_end_of_year: 45
+      province: ab
+      real_params_year: {year: 2026, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      federal: 6193
+      provincial: 2978
+      oas_repayment: 0
+      total: 9171
+      net_income: 60000
+    rounding: source_rounds_to_dollar
+
+  # Employment income. Read the Canada employment amount trap above before
+  # filling this in. Three of the contribution lines are are the calculator's outputs,
+  # copied in as inputs, and the case does not run meaningfully until they are replaced.
+  - name: employment 100000 with payroll contributions, age 45
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      employment: 100000.0
+      cpp_base_contributions: 3519      # FILLED Line 30800
+      cpp_enhanced_contributions: 1127  # FILLED Line 22215
+      ei_premiums: 1123                 # FILLED Line 31200
+      age_at_end_of_year: 45
+      province: ab
+      real_params_year: {year: 2026, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      provincial: 6470
+      net_income: 98873
+    rounding: source_rounds_to_dollar
+
+  # A retiree: age amount, pension income amount on the RRIF withdrawal
+  # (eligible from the age in federal.yaml's eligible_pension_income block),
+  # no OAS repayment expected at this income.
+  - name: retiree with CPP, OAS and RRIF, age 70
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      cpp: 12000.0
+      oas: 9000.0
+      rrif_lif_withdrawals: 30000.0
+      age_at_end_of_year: 70
+      province: ab
+      real_params_year: {year: 2026, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      federal: 3364
+      provincial: 1656
+      oas_repayment: 0
+      total: 5019
+      net_income: 51000
+    rounding: source_rounds_to_dollar
+
+  # A high-income retiree, meant to land partway through the OAS clawback.
+  # Check that it does against oas.yaml's threshold before trusting the case;
+  # the age amount is fully ground down here too.
+  - name: DB pension 120000 with OAS, age 70
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      db_pension: 120000.0
+      oas: 9000.0
+      age_at_end_of_year: 70
+      province: ab
+      real_params_year: {year: 2026, inflation: 0.0}
+      january_month_index: 0
+    expected:
+# TODO: These cannot be tested until L49 is resolved.
+#      federal: 19402
+#      provincial: 9209
+      oas_repayment: 5052
+#      total: 33662
+      net_income: 129000  # Line 23400
+    rounding: source_rounds_to_dollar
+
+  # Investment income: the eligible-dividend gross-up and credit, and the
+  # capital gains inclusion rate. Enter the ACTUAL dividend and the WHOLE gain;
+  # the engine grosses up and includes. A calculator that asks for the
+  # taxable amounts wants the other figures — check which it asks for.
+  - name: eligible dividends 40000 and capital gains 20000, age 45
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      eligible_dividends: 40000.0
+      capital_gains: 20000.0
+      age_at_end_of_year: 45
+      province: ab
+      real_params_year: {year: 2026, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      federal: 0
+      provincial: 0
+      oas_repayment: 0
+      total: 0
+      net_income: 65200

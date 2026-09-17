@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# see federal_gross_tax_2026.yaml. Same three incomes, Alberta tax
+# before credits, from params/2026/ab.yaml.
+target: engine.tax.provincial.gross_tax
+cases:
+  - name: first bracket, 61200
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 61200.0
+      real_params: {year: 2026, file: ab, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 4896.00  # 61200 * 0.08
+
+  - name: second bracket, 154259
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 154259.0
+      real_params: {year: 2026, file: ab, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 14201.90  # 4896 + (154259 - 61200) * 0.10
+
+  - name: fourth bracket, 246813
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/individuals/tax-rates-brackets/current-year.html"
+    checked: 2026-09-16
+    inputs:
+      taxable: 246813.0
+      real_params: {year: 2026, file: ab, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 25925.40  # 17904.14 + (246813 - 185111) * 0.13

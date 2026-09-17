@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: the VALUE of the federal non-refundable credits, in dollars of tax
+# reduced — not the sum of the credit amounts. TaxTips reports this as its
+# "non-refundable tax credits" line; the dividend tax credit is included and
+# is NOT multiplied by the 15% valuation rate.
+#
+# Each case names its contributions explicitly rather than letting a
+# calculator derive them from employment income, so that what is being
+# checked is this function's arithmetic and not a payroll estimate.
+target: engine.tax.federal.non_refundable_credits
+cases:
+  # Basic personal amount alone: nothing else is claimed.
+  - name: basic personal amount only, age 45
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      net_income: 100000.0
+      age_at_end_of_year: 45
+      eligible_pension_income: 0.0
+      cpp_base_contributions: 0.0
+      ei_premiums: 0.0
+      eligible_dividends: 0.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 2303.28  # 16452 * 0.14
+
+  # Age amount in full (net income below its reduction threshold) plus the
+  # pension income amount, capped at the statutory maximum.
+  - name: age amount and pension income amount at 70
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      net_income: 50000.0
+      age_at_end_of_year: 70
+      eligible_pension_income: 20000.0
+      cpp_base_contributions: 0.0
+      ei_premiums: 0.0
+      eligible_dividends: 0.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 3797.50  # (16452 + 8673 + 2000) * 0.14
+    rounding: source_rounds_to_dollar
+
+  # Age amount partly ground down by the income test.
+  - name: age amount reduced at 70
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      net_income: 55000.0
+      age_at_end_of_year: 70
+      eligible_pension_income: 0.0
+      cpp_base_contributions: 0.0
+      ei_premiums: 0.0
+      eligible_dividends: 0.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 3412.50  # (16452 + 7923) * 0.14
+    rounding: source_rounds_to_dollar
+
+  # Dividend tax credit on top of the basic personal amount. The 10000 here
+  # is the PRE-gross-up eligible dividend, the same figure total_income
+  # grosses up.
+  - name: eligible dividend tax credit, age 45
+    source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
+    checked: 2026-09-16
+    inputs:
+      net_income: 100000.0
+      age_at_end_of_year: 45
+      eligible_pension_income: 0.0
+      cpp_base_contributions: 0.0
+      ei_premiums: 0.0
+      eligible_dividends: 10000.0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+      january_month_index: 0
+    expected:
+      value: 4376.01  # 2303.28 + 2072.73
+    rounding: source_rounds_to_dollar

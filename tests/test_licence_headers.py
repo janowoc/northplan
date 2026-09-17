@@ -38,7 +38,10 @@ IN_SCOPE_NAMES = frozenset({"Dockerfile"})
 #: and a header would give them content, which is the one thing they must not
 #: have. The two ignore files do support ``#`` comments — that is not the
 #: reason — but they are build and tooling configuration rather than source,
-#: and the human decided in issue 26 that they carry no notice.
+#: and the human decided in issue 26 that they carry no notice. The golden
+#: source workbook is an ODF package — a zip — and any text prepended to it
+#: stops it being one; its licence travels with the repository it is only
+#: ever read from.
 EXEMPT = frozenset(
     {
         "LICENSE",
@@ -47,6 +50,7 @@ EXEMPT = frozenset(
         "scenarios/.gitkeep",
         "tests/characterization/.gitkeep",
         "tests/golden/cases/.gitkeep",
+        "tests/golden/sources/2026.ods",
     }
 )
 
@@ -180,7 +184,7 @@ def test_every_in_scope_file_carries_the_licence_header() -> None:
 def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
     """The set of unlicensed files is a written decision, not a side effect.
 
-    Spelled out against a literal so that quietly adding a seventh exemption to
+    Spelled out against a literal so that quietly adding another exemption to
     silence the test above fails here instead. Each is also required to exist:
     an exemption for a deleted file is stale, and a stale list is how a real
     file later ends up matching one by accident.
@@ -192,6 +196,7 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
         "scenarios/.gitkeep",
         "tests/characterization/.gitkeep",
         "tests/golden/cases/.gitkeep",
+        "tests/golden/sources/2026.ods",
     }
 
     assert agreed == EXEMPT, (
@@ -206,10 +211,10 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
         "else later:\n" + "\n".join(absent)
     )
 
+    # Read as bytes: one exemption is a binary ODF package, and decoding it as
+    # text raises before the assertion it is here to satisfy.
     annotated = sorted(
-        path
-        for path in EXEMPT
-        if "SPDX-" in (REPO_ROOT / path).read_text(encoding="utf-8")
+        path for path in EXEMPT if b"SPDX-" in (REPO_ROOT / path).read_bytes()
     )
     assert not annotated, (
         "These files are listed as exempt but carry SPDX text anyway, so the "
