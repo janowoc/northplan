@@ -325,8 +325,10 @@ class PensionState:
             (on no indexation schedule, so no erosion factor applies), decaying under
             ``engine.core.indexation.unindexed_factor`` otherwise.
         indexed, bridge_monthly, bridge_end_month_index: Whether the pension moves with CPI
-            (``False`` means fixed in nominal terms); the bridge paid on top through the end
-            index (zero/``None`` if none, else the last month paid, inclusive; may be negative).
+            (``False`` means fixed in nominal terms); the bridge paid on top, and the last
+            month it is paid, inclusive. The end index may be negative, like any month index.
+            A ``None`` end index means no bridge and requires ``bridge_monthly`` zero on every
+            path; a zeroed bridge with the end index left in place is allowed.
         survivor_share: Fraction the survivor keeps after death, ``[0, 1]``. Not per-path.
     """
 
@@ -340,6 +342,13 @@ class PensionState:
 
     def __post_init__(self) -> None:
         _freeze_fields(self, "monthly_amount", "bridge_monthly")
+        if self.bridge_end_month_index is None and not np.all(self.bridge_monthly == 0.0):
+            raise ValueError(
+                f"pension {self.name!r}: bridge_end_month_index is None (nothing "
+                "ends the bridge) but bridge_monthly is nonzero on at least one "
+                "path. A bridge with no end month is never paid; the end month is "
+                "the last month paid, inclusive, and a nonzero bridge requires one."
+            )
 
 
 @dataclass(frozen=True, slots=True)

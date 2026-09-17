@@ -128,14 +128,14 @@ def _employment_band(*, from_month_index: int = -12, to_month_index: int = 60) -
     )
 
 
-def _pension() -> PensionState:
+def _pension(*, bridge: float = 0.0, bridge_end_month_index: int | None = None) -> PensionState:
     return PensionState(
         name="employer",
         monthly_amount=_zeros(),
         start_month_index=12,
         indexed=False,
-        bridge_monthly=_zeros(),
-        bridge_end_month_index=None,
+        bridge_monthly=np.full(N_PATHS, bridge, dtype=np.float64),
+        bridge_end_month_index=bridge_end_month_index,
         survivor_share=0.6,
     )
 
@@ -465,6 +465,48 @@ class TestLifOpenedYearInvariant:
     def test_opened_year_none_with_nonzero_balance_fails(self) -> None:
         with pytest.raises(ValueError, match="opened_year"):
             _lif(balance=1.0, jurisdiction="ab", opened_year=None)
+
+
+class TestPensionBridgeEndInvariant:
+    def test_bridge_end_month_index_none_with_nonzero_bridge_on_one_path_fails(self) -> None:
+        bridge = _zeros()
+        bridge[-1] = 200.0  # nonzero on the last path only
+        with pytest.raises(ValueError, match="bridge_end_month_index") as excinfo:
+            PensionState(
+                name="employer",
+                monthly_amount=_zeros(),
+                start_month_index=12,
+                indexed=False,
+                bridge_monthly=bridge,
+                bridge_end_month_index=None,
+                survivor_share=0.6,
+            )
+        assert "employer" in str(excinfo.value)
+
+    def test_bridge_end_month_index_none_and_zero_bridge_is_fine(self) -> None:
+        _pension(bridge=0.0, bridge_end_month_index=None)
+
+    def test_bridge_end_month_index_set_and_nonzero_bridge_is_fine(self) -> None:
+        _pension(bridge=200.0, bridge_end_month_index=48)
+
+    def test_bridge_end_month_index_set_and_zero_bridge_is_fine(self) -> None:
+        # The #19 DB survivor share at first death: a copy of the deceased's
+        # PensionState with the bridge zeroed and the end month left in place.
+        _pension(bridge=0.0, bridge_end_month_index=48)
+
+    def test_bridge_end_month_index_none_with_a_negative_bridge_fails(self) -> None:
+        # The invariant is nonzero, not positive. Narrowing it to a positive
+        # bridge would leave this case silently legal and never paid.
+        with pytest.raises(ValueError, match="bridge_end_month_index"):
+            _pension(bridge=-200.0, bridge_end_month_index=None)
+
+    def test_updated_into_a_nonzero_bridge_with_no_end_month_fails(self) -> None:
+        # The month step's route into this state, which is the one issue 41 names.
+        with pytest.raises(ValueError, match="bridge_end_month_index"):
+            updated(
+                _pension(bridge=0.0, bridge_end_month_index=None),
+                bridge_monthly=np.full(N_PATHS, 200.0),
+            )
 
 
 class TestDeathConsistency:
