@@ -62,6 +62,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 39 | Golden harness: a whole parameter year, and a target shim | agent | 3, 14, 32 | a case can name `golden.targets.person_assessment` |
 | 40 | Refuse at load a CPP or OAS start age the rules do not allow | agent | 10, 16 | an out-of-window or past start age is refused at load, naming person and policy; L53 replaced |
 | 41 | `PensionState` refuses a nonzero bridge with no end month | agent | 11 | a bridge with no end month raises naming the pension; a zeroed bridge with one is accepted |
+| 42 | Deduct the OAS repayment: line 23600 as well as line 23400 | agent | 14 | gross tax and the age amount are computed on net income less the repayment; L49 is gone |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -165,6 +166,16 @@ the fields, but the month step will build pension states of its own. The check
 is one-way, so the zeroed-bridge copy 19 builds for the survivor share stays
 legal. It sits straight after 40 and ahead of 19, the first code that
 constructs a `PensionState` outside the builder.
+
+Issue 42 came out of the first golden case written against the tax engine. The
+engine computes one net income per person and taxes it, where the return
+computes line 23400, deducts the OAS recovery tax at line 23500, and taxes what
+is left. L49 recorded that as a simplification costing the age amount and the
+RESP grant rate; it never said taxable income, which is where almost all of the
+money is. A retiree with a $120,000 pension and $9,000 of OAS is assessed
+$1,818 too much. It sits straight after 41 and ahead of 35, whose December
+close stores the figure it splits in two, and ahead of 21, whose splitting
+search minimises a total this changes.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
