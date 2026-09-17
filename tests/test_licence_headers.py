@@ -34,9 +34,8 @@ IN_SCOPE_NAMES = frozenset({"Dockerfile"})
 #: Paths, relative to the repository root, that deliberately carry no header.
 #:
 #: ``LICENSE`` is the FSF's own text, which carries its own copyright notice
-#: and must not be annotated. The ``.gitkeep`` files are empty by definition
-#: and a header would give them content, which is the one thing they must not
-#: have. The two ignore files do support ``#`` comments — that is not the
+#: and must not be annotated. A ``.gitkeep`` is empty by definition and a
+#: header would give it content, which is the one thing it must not have. The two ignore files do support ``#`` comments — that is not the
 #: reason — but they are build and tooling configuration rather than source,
 #: and the human decided in issue 26 that they carry no notice. The golden
 #: source workbook is an ODF package — a zip — and any text prepended to it
@@ -47,9 +46,7 @@ EXEMPT = frozenset(
         "LICENSE",
         ".gitignore",
         ".dockerignore",
-        "scenarios/.gitkeep",
         "tests/characterization/.gitkeep",
-        "tests/golden/cases/.gitkeep",
         "tests/golden/sources/2026.ods",
     }
 )
@@ -193,9 +190,7 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
         "LICENSE",
         ".gitignore",
         ".dockerignore",
-        "scenarios/.gitkeep",
         "tests/characterization/.gitkeep",
-        "tests/golden/cases/.gitkeep",
         "tests/golden/sources/2026.ods",
     }
 
