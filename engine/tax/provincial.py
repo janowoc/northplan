@@ -10,8 +10,9 @@ verification row, not new code. Parameters come from
 
 Alberta assesses the federal taxable income: this file computes provincial
 tax **on the federal income figure**, taken as an argument. It never defines
-total, net, taxable, or eligible pension income itself — there is one income
-figure per person per year and ``engine.tax.federal`` owns it.
+total, net, taxable, or eligible pension income itself — it is handed line
+23600 in the annual assessment, or the annualised single-source approximation
+in the monthly withholding estimate (L16).
 
 The province's parameter file also carries the LIF maximum withdrawal rules
 that ``engine/accounts/lira.py`` reads, since those are provincially set.
@@ -41,11 +42,13 @@ def gross_tax(
     params: RealParamSet,
     january_month_index: int,
 ) -> NDArray[np.float64]:
-    """Provincial tax before credits, on the federal taxable income.
+    """Provincial tax before credits, on the federal income figure.
 
     Args:
-        taxable: Federal taxable income, real dollars, ``(n_paths,)`` or
-            scalar.
+        taxable: The federal income figure the brackets are applied to — line
+            23600 in the annual assessment, or the annualised single-source
+            approximation in the monthly withholding estimate (L16), real
+            dollars, ``(n_paths,)`` or scalar.
         params: The province's parameter set for the tax year.
         january_month_index: Month index of January of the tax year.
 
@@ -75,7 +78,10 @@ def non_refundable_credits(
     credit rates — none of it derivable from the federal file.
 
     Args:
-        net_income: Federal net income, real dollars.
+        net_income: The income the credits are tested against — line 23600 in
+            the annual assessment, or the annualised single-source
+            approximation in the monthly withholding estimate (L16), real
+            dollars.
         age_at_end_of_year: Age in whole years on 31 December.
         eligible_pension_income: Eligible pension income for the pension
             income amount.

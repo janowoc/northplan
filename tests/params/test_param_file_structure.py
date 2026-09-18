@@ -338,6 +338,35 @@ def test_oas_age_bands_ascend_from_the_earliest_start_age(year: ParamYear) -> No
     )
 
 
+def test_oas_recovery_tax_cannot_produce_a_negative_taxable_income(year: ParamYear) -> None:
+    """``rate`` below one and ``threshold_annual`` above zero, or nothing floors line 23600.
+
+    ``engine.tax.federal.taxable_income`` applies no floor at zero: its
+    docstring places the whole guarantee on its one real caller,
+    ``engine.tax.combined.person_assessment``, which pairs a net income with
+    the repayment ``engine.tax.combined.oas_repayment`` computed from it.
+    The repayment is a fraction below one of the excess of net income over a
+    positive threshold, capped at the OAS received, so whenever it is non-zero it is
+    strictly less than net income, and it is zero otherwise; either way the
+    subtraction cannot go negative. A rate above one breaks that argument,
+    and a negative threshold breaks it too, by making the excess larger than
+    net income itself.
+
+    The assertions below are the exact conditions
+    ``engine.tax.federal.taxable_income``'s docstring states — "a fraction
+    below one" of the excess over "a positive threshold" — so relaxing either
+    to its non-strict form would falsify that docstring even though the
+    output would stay non-negative: a rate of exactly one still repays at
+    most the excess, and a zero threshold is still safe while the rate is
+    below one. Keep both strict.
+    """
+    oas = year["oas"]
+    rate = oas.number("recovery_tax.rate")
+    threshold = oas.number("recovery_tax.threshold_annual")
+    assert rate < 1.0, f"oas: recovery_tax.rate is {rate:g}, not below 1.0."
+    assert threshold > 0.0, f"oas: recovery_tax.threshold_annual is {threshold:g}, not positive."
+
+
 def test_resp_enhanced_grant_table_is_a_descending_rate_table(year: ParamYear) -> None:
     """One more rate than cut-off, cut-offs ascending, and rates that never rise.
 

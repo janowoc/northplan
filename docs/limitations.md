@@ -147,27 +147,27 @@ hundred dollars a year.
 **L13. Alternative minimum tax.** Not modelled. Bites only on very large
 capital gains or donations in one year.
 
-**L14. Net income and taxable income.** In reality the two differ by several
-deductions. We take RRSP contributions and the enhanced CPP contribution as
-the only deductions, so the two coincide, and net income for the OAS
-repayment and the age amount includes OAS itself as the rules require.
-
-**L49. One net income figure, not two.** In reality the OAS repayment is tested
-against line 23400, net income *before* adjustments, while the age amount and
-the RESP enhanced-grant rate use line 23600, which subtracts line 23500 — the
-social benefits repayment: EI benefits repaid, the OAS repayment itself, and
-net federal supplements. We compute one figure per person per year, total
-income less deductions, and test everything against it. That figure is line
-23400: nothing is ever subtracted back out of it. Of the three components of
-line 23500 only the OAS repayment can be non-zero in this engine — EI is
-carried as premiums paid and never as benefits received (L39), and net federal
-supplements are GIS and the Allowances, which are not modelled (L2) — so the
-two lines differ by the repayment alone, and only for a person who owes one.
-Direction: pessimistic for that person, whose age amount and enhanced-grant
-rate are tested against an income higher than the statutory one by the amount
-of the repayment. Taking line 23600 as the single figure instead would be the
-worse error, since the repayment would then reduce the base it is computed
-from. Lives in `engine/tax/federal.py`.
+**L14. Net income and taxable income.** In reality several deductions separate
+total income from net income, and a further Division C computation separates
+net income from taxable income; we model only two deductions from total
+income — RRSP contributions and the enhanced CPP contribution — and no
+Division C computation. Line 23600 is line 23400 less line 23500, the social
+benefits repayment: the parts repaid of the OAS pension (line 11300), of EI
+and other benefits (line 11900), and of net federal supplements (line 14600).
+Of those three only the OAS repayment can be non-zero here — EI is carried as
+premiums paid and never as benefits received (L39),
+and net federal supplements are GIS and the Allowances, which are not
+modelled (L2) — so the two lines differ by the OAS repayment alone, and only
+for a person who owes one. Line 26000 equals line 23600 since no Division C
+deduction is modelled. The repayment is tested against line 23400; the tax
+brackets and the age amount are applied to line 23600, as is the RESP
+enhanced-grant rate through `PersonState.prior_year_net_income`. Gross OAS
+enters both lines as income, as the rules require; what separates them is the
+repayment deducted at line 23500, not a different treatment of the pension
+itself. Direction: conservative — the omitted deductions and the missing
+Division C computation overstate taxable income, so the engine's tax comes
+out too high. Lives in `engine/tax/federal.py`, `engine/tax/combined.py`,
+`engine/benefits/employment.py`, `params/2026/cpp.yaml`.
 
 **L15. Pension income splitting.** Modelled to the federal rule: DB pension
 income at any age, RRIF and LIF income from the year the transferor is 65 at
@@ -247,8 +247,9 @@ after 18. We assume every person qualifies in full. Direction: optimistic for
 anyone who does not. Lives in `params/2026/oas.yaml`.
 
 **L23. OAS repayment.** Assessed at the December close on the current year's
-net income, capped at the OAS received that year, and settled with the balance
-owing. See L16 for the withholding that is not modelled.
+net income before the repayment (line 23400), capped at the OAS received that
+year, and settled with the balance owing. See L16 for the withholding that is
+not modelled.
 
 **L24. OAS never decreases.** In reality a quarterly adjustment is floored at
 zero. Under constant real modelling the rule has no effect and is not coded.

@@ -109,13 +109,14 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        splitting and assesses every person at the elected split together, since
        the election is chosen by minimising the assessment it is part of. The
        OAS repayment is a line within that assessment, computed on this year's
-       net income (which itself includes this year's OAS), and capped at the OAS
-       received this year.
+       net income before the repayment (line 23400, which itself includes this
+       year's OAS), and capped at the OAS received this year.
     4. Assessment less ``remitted_ytd`` becomes ``balance_owing`` (or a refund),
        settled in next year's filing month.
-    5. Store this year's net income in ``prior_year_net_income``, read by next
-       year's RESP enhanced-grant rate; the OAS repayment is not stored here, it is
-       assessed in item 3.
+    5. Store this year's net income after the social benefits repayment (line
+       23600, ``Assessment.net_income_after_repayment``) in ``prior_year_net_income``,
+       read by next year's RESP enhanced-grant rate; the OAS repayment is not
+       stored here, it is assessed in item 3.
     6. Append the year to ``history``.
 
     Args:

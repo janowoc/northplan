@@ -496,11 +496,11 @@ class Person(_Base):
         oas: What is known about their OAS, if it is already in pay.
         db_pensions: Defined-benefit pensions, possibly none.
         accounts: Opening balances.
-        prior_year_net_income: Net income for the calendar year before
-            ``start_year``, as reported on that year's return (an estimate if
-            not yet filed) — not restated in start-year dollars, the one amount
-            in a scenario that is not real dollars. Required, no default: zero
-            is a legitimate value the author types.
+        prior_year_net_income: Net income (line 23600) for the calendar year
+            before ``start_year``, as reported on that year's return (an
+            estimate if not yet filed) — not restated in start-year dollars,
+            the one amount in a scenario that is not real dollars. Required,
+            no default: zero is a legitimate value the author types.
     """
 
     id: str

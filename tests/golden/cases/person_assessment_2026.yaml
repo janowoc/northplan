@@ -13,6 +13,7 @@
 #   total          the sum of the three
 #   net_income     line 23400 — the one line every calculator shows; check it
 #                  first, since a mismatch here explains every other mismatch
+#   net_income_after_repayment  line 23600
 # Delete any output line the source does not report, rather than guessing it.
 #
 # Write numbers unquoted. A quoted "60000" or a bare `interest:` (null) is
@@ -28,7 +29,6 @@
 #     cpp_base_contributions, cpp_enhanced_contributions and ei_premiums.
 #   - Basic personal amount clawback (L12) and every other deduction or credit
 #     outside L11/L14: keep incomes where they cannot apply.
-#   - OAS repayment does not reduce net income here (L49).
 #   - Pension splitting: transfer_in and transfer_out stay 0 (issue #21).
 target: golden.targets.person_assessment
 cases:
@@ -107,11 +107,10 @@ cases:
       real_params_year: {year: 2026, inflation: 0.0}
       january_month_index: 0
     expected:
-# TODO: These cannot be tested until L49 is resolved.
-#      federal: 19402
-#      provincial: 9209
+      federal: 19402
+      provincial: 9209
       oas_repayment: 5052
-#      total: 33662
+      total: 33662
       net_income: 129000  # Line 23400
     rounding: source_rounds_to_dollar
 

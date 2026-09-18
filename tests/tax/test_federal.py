@@ -173,12 +173,16 @@ def test_net_income_floored_at_zero(fed) -> None:
     np.testing.assert_allclose(result, [0.0])
 
 
-def test_taxable_income_is_an_alias_for_net_income(fed) -> None:
+def test_taxable_income_equals_net_income_at_zero_repayment(fed) -> None:
     ledger = _ledger(employment=50_000.0, rrsp_deductions=5_000.0)
-    np.testing.assert_allclose(
-        federal.taxable_income(ledger, fed, 0.0, 0.0),
-        federal.net_income(ledger, fed, 0.0, 0.0),
-    )
+    net = federal.net_income(ledger, fed, 0.0, 0.0)
+    np.testing.assert_allclose(federal.taxable_income(net, 0.0), net)
+
+
+def test_taxable_income_subtracts_the_oas_repayment(fed) -> None:
+    ledger = _ledger(employment=50_000.0, rrsp_deductions=5_000.0)
+    net = federal.net_income(ledger, fed, 0.0, 0.0)
+    np.testing.assert_allclose(federal.taxable_income(net, 1_234.0), net - 1_234.0)
 
 
 def test_total_income_grosses_up_dividends_and_includes_capital_gains(fed) -> None:
@@ -276,6 +280,13 @@ def test_gross_tax_returns_float64_scalar_and_array(fed) -> None:
 def test_net_tax_returns_float64_scalar_and_array() -> None:
     scalar = federal.net_tax(100.0, 40.0)
     array = federal.net_tax(np.array([100.0, 200.0]), np.array([40.0, 300.0]))
+    assert scalar.dtype == np.float64 and scalar.shape == ()
+    assert array.dtype == np.float64 and array.shape == (2,)
+
+
+def test_taxable_income_returns_float64_scalar_and_array() -> None:
+    scalar = federal.taxable_income(100.0, 40.0)
+    array = federal.taxable_income(np.array([100.0, 200.0]), np.array([40.0, 300.0]))
     assert scalar.dtype == np.float64 and scalar.shape == ()
     assert array.dtype == np.float64 and array.shape == (2,)
 

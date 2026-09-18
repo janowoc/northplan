@@ -38,7 +38,7 @@ from engine.core.state import (
 )
 from engine.core.timeline import age_at_end_of_year
 from engine.params.loader import load_year
-from engine.tax import federal
+from engine.tax import federal, provincial
 from engine.tax.combined import (
     GRID_STEP,
     Assessment,
@@ -271,6 +271,30 @@ def test_assessment_oas_repayment_capped_at_oas_received(params) -> None:
     result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
 
     np.testing.assert_allclose(result.oas_repayment, income.oas)
+    assert np.all(result.net_income_after_repayment >= 0.0)
+
+
+def test_assessment_net_income_after_repayment_is_zero_with_no_income(params) -> None:
+    """Pins the net_income == 0 edge: repayment is zero, equal to net income, not below it."""
+    n = 1
+    income = _ledger(n)
+    result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.net_income == 0.0)
+    assert np.all(result.oas_repayment == 0.0)
+    assert np.all(result.net_income_after_repayment == 0.0)
+
+
+def test_assessment_net_income_after_repayment_equals_net_income_at_the_threshold(params) -> None:
+    threshold = params.oas.annual_amount("recovery_tax.threshold_annual", JANUARY)
+    n = 1
+    oas_received = 5_000.0
+    income = _ledger(n, employment=threshold - oas_received, oas=oas_received)
+    result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    np.testing.assert_allclose(result.net_income, threshold)
+    assert np.all(result.oas_repayment == 0.0)
+    np.testing.assert_allclose(result.net_income_after_repayment, result.net_income)
 
 
 def test_assessment_net_income_unchanged_by_a_binding_repayment(params) -> None:
@@ -278,11 +302,203 @@ def test_assessment_net_income_unchanged_by_a_binding_repayment(params) -> None:
     income = _ledger(n, employment=200_000.0, oas=100.0)
     result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
 
-    # The repayment binds (see the cap test above), but L49 says net income
-    # (line 23400) is never adjusted for it: it must equal the figure
-    # federal.net_income computes directly, with no split.
+    # The repayment binds (see the cap test above), but net income (line 23400)
+    # is never adjusted for it: it must equal the figure federal.net_income
+    # computes directly, with no split. Line 23600 is what does subtract it —
+    # see net_income_after_repayment below.
     expected_net_income = federal.net_income(income, params.federal, 0.0, 0.0)
     np.testing.assert_allclose(result.net_income, expected_net_income)
+
+
+def test_assessment_taxes_net_income_after_the_repayment(params) -> None:
+    # The bug this issue fixes: gross_tax and the age amount were evaluated on
+    # net income (line 23400) rather than net income less the OAS repayment
+    # (line 23600). Built entirely from the engine's own functions, so it
+    # would have caught the bug the worked figures in the issue describe.
+    n = 1
+    age = 66
+    income = _ledger(n, employment=200_000.0, oas=100.0)
+    result = person_assessment(income, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.oas_repayment > 0.0)
+    base = result.net_income - result.oas_repayment
+    epi = federal.eligible_pension_income(income, age, params.federal)
+
+    expected_federal = federal.net_tax(
+        federal.gross_tax(base, params.federal, JANUARY),
+        federal.non_refundable_credits(
+            base,
+            age,
+            epi,
+            income.cpp_base_contributions,
+            income.ei_premiums,
+            income.eligible_dividends,
+            params.federal,
+            JANUARY,
+        ),
+    )
+    expected_provincial = provincial.net_tax(
+        provincial.gross_tax(base, params.province("ab"), JANUARY),
+        provincial.non_refundable_credits(
+            base,
+            age,
+            epi,
+            income.cpp_base_contributions,
+            income.ei_premiums,
+            income.eligible_dividends,
+            params.province("ab"),
+            params.federal,
+            JANUARY,
+        ),
+    )
+    np.testing.assert_allclose(result.federal, expected_federal)
+    np.testing.assert_allclose(result.provincial, expected_provincial)
+
+
+def test_assessment_age_amount_taxed_after_the_repayment(params) -> None:
+    # Every other case in this file sits at an income where the federal age
+    # amount has already ground to zero on both net income and net income
+    # less the repayment, so nothing pins the age-amount half of the fix.
+    # This picks an income strictly between the OAS recovery threshold and
+    # the point the federal age amount grinds out — the window where the
+    # repayment binds but the age amount has not yet reached zero on either
+    # basis — so the age amount computed on line 23600 differs from the age
+    # amount that would have been computed on line 23400.
+    fed = params.federal
+    oas_recovery_threshold = params.oas.annual_amount("recovery_tax.threshold_annual", JANUARY)
+    age_amount = fed.annual_amount("credits.age_amount.amount_annual", JANUARY)
+    age_reduction_threshold = fed.annual_amount(
+        "credits.age_amount.reduction_threshold_annual", JANUARY
+    )
+    age_reduction_rate = fed.number("credits.age_amount.reduction_rate")
+    age_amount_grind_out = age_reduction_threshold + age_amount / age_reduction_rate
+    assert oas_recovery_threshold < age_amount_grind_out
+
+    target_net_income = (oas_recovery_threshold + age_amount_grind_out) / 2.0
+    age = fed.number("credits.age_amount.eligibility_age_years")
+
+    n = 1
+    oas_received = 20_000.0
+    income = _ledger(n, employment=target_net_income - oas_received, oas=oas_received)
+    result = person_assessment(income, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.oas_repayment > 0.0)
+    assert np.all(result.oas_repayment < income.oas)  # uncapped: isolates the age-amount effect
+    base = result.net_income - result.oas_repayment
+    epi = federal.eligible_pension_income(income, age, params.federal)
+
+    expected_federal = federal.net_tax(
+        federal.gross_tax(base, params.federal, JANUARY),
+        federal.non_refundable_credits(
+            base,
+            age,
+            epi,
+            income.cpp_base_contributions,
+            income.ei_premiums,
+            income.eligible_dividends,
+            params.federal,
+            JANUARY,
+        ),
+    )
+    np.testing.assert_allclose(result.federal, expected_federal)
+
+    # The credit must actually move between the two income bases: at an
+    # income where the age amount is already zero (or already unclawed) on
+    # both, the assertion above would still pass without the fix this issue
+    # makes, which is exactly the hole this test closes.
+    credits_on_taxable_income = federal.non_refundable_credits(
+        result.net_income_after_repayment,
+        age,
+        epi,
+        income.cpp_base_contributions,
+        income.ei_premiums,
+        income.eligible_dividends,
+        params.federal,
+        JANUARY,
+    )
+    credits_on_net_income = federal.non_refundable_credits(
+        result.net_income,
+        age,
+        epi,
+        income.cpp_base_contributions,
+        income.ei_premiums,
+        income.eligible_dividends,
+        params.federal,
+        JANUARY,
+    )
+    assert np.all(credits_on_taxable_income > credits_on_net_income)
+
+    # Alberta is not also asserted here: its age amount grinds out at its own
+    # reduction_threshold_annual + amount_annual / reduction_rate, which sits
+    # below the federal recovery threshold, so the provincial age amount is
+    # structurally always zero whenever a repayment binds. A future change to
+    # Alberta's parameters that moved its grind-out above the federal
+    # recovery threshold would silently lose this case, so a provincial
+    # assertion belongs here the day that stops holding.
+
+
+def test_net_income_after_repayment_equals_net_income_at_zero_repayment(params) -> None:
+    n = 1
+    income = _ledger(n, employment=50_000.0, oas=8_000.0)
+    result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.oas_repayment == 0.0)
+    np.testing.assert_allclose(result.net_income_after_repayment, result.net_income)
+
+
+def test_net_income_after_repayment_subtracts_the_repayment_when_owed(params) -> None:
+    n = 1
+    income = _ledger(n, employment=200_000.0, oas=100.0)
+    result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.oas_repayment > 0.0)
+    np.testing.assert_allclose(
+        result.net_income_after_repayment, result.net_income - result.oas_repayment
+    )
+    assert np.all(result.net_income_after_repayment >= 0.0)
+
+
+def test_assessment_unchanged_when_the_repayment_is_zero(params) -> None:
+    # Regression: for a person who owes no repayment, net income and taxable
+    # income coincide, so nothing about this assessment should have moved.
+    n = 1
+    age = 66
+    income = _ledger(n, employment=50_000.0, db_pension=10_000.0)
+    result = person_assessment(income, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+    assert np.all(result.oas_repayment == 0.0)
+
+    net = federal.net_income(income, params.federal, 0.0, 0.0)
+    epi = federal.eligible_pension_income(income, age, params.federal)
+
+    expected_federal = federal.net_tax(
+        federal.gross_tax(net, params.federal, JANUARY),
+        federal.non_refundable_credits(
+            net,
+            age,
+            epi,
+            income.cpp_base_contributions,
+            income.ei_premiums,
+            income.eligible_dividends,
+            params.federal,
+            JANUARY,
+        ),
+    )
+    expected_provincial = provincial.net_tax(
+        provincial.gross_tax(net, params.province("ab"), JANUARY),
+        provincial.non_refundable_credits(
+            net,
+            age,
+            epi,
+            income.cpp_base_contributions,
+            income.ei_premiums,
+            income.eligible_dividends,
+            params.province("ab"),
+            params.federal,
+            JANUARY,
+        ),
+    )
+    np.testing.assert_allclose(result.federal, expected_federal)
+    np.testing.assert_allclose(result.provincial, expected_provincial)
 
 
 def test_couple_with_no_eligible_pension_income_is_unchanged_by_the_search(params) -> None:
@@ -380,6 +596,91 @@ def test_mixed_alive_paths_only_split_where_both_are_alive(params) -> None:
     # strictly help (same case as the strict test above).
     for path in (0, 2):
         assert a0.total[path] + a1.total[path] < unsplit0.total[path] + unsplit1.total[path] - 1e-6
+
+
+def test_household_assessment_minimises_over_the_grid_with_a_binding_repayment(params) -> None:
+    # Pins four things about a couple that carries a real OAS repayment: the
+    # grid search still lands on the same minimum as an independently-built
+    # grid of person_assessment calls; the negative-fraction half of that
+    # search still collapses to the zero-transfer candidate already in the
+    # positive half (see the comment below); household_assessment's _select
+    # gathers every one of Assessment's six fields at the one winning
+    # candidate index, never mixing fields from different candidates —
+    # pinned by recomputing the winning grid candidate directly and
+    # comparing every field of a0 against it; and person0's DB pension and
+    # OAS are large enough that the repayment is still non-zero at the
+    # elected split (the maximum share, not merely on the discarded unsplit
+    # baseline). The objective itself — minimising fed(net - repay) +
+    # prov(net - repay) + repay rather than fed(net) + prov(net) + repay — is
+    # pinned elsewhere, by test_assessment_taxes_net_income_after_the_repayment
+    # and test_assessment_age_amount_taxed_after_the_repayment.
+    n = 1
+    age = 70
+    db_pension = 200_000.0
+    oas_amount = 9_000.0
+    income0 = _ledger(n, db_pension=db_pension, oas=oas_amount)
+    income1 = _ledger(n)
+    person0 = _person("a", n, birth_year=1956, income=income0)
+    person1 = _person("b", n, birth_year=1956, income=income1)
+    household = _household((person0, person1), year=2026, n=n)
+
+    # The hand-built grid below transfers fraction * db_pension, matching
+    # household_assessment's fraction * eligible_pension_income only because
+    # eligible_pension_income returns the whole DB pension at this age.
+    np.testing.assert_allclose(
+        federal.eligible_pension_income(income0, age, params.federal), db_pension
+    )
+
+    zero = np.zeros(n, dtype=np.float64)
+    unsplit0 = person_assessment(income0, age, zero, zero, "ab", params, JANUARY)
+    unsplit1 = person_assessment(income1, age, zero, zero, "ab", params, JANUARY)
+    assert np.all(unsplit0.oas_repayment > 0.0)
+
+    a0, a1 = household_assessment(household, params)
+    assert np.all(a0.oas_repayment > 0.0)
+    np.testing.assert_allclose(a0.net_income_after_repayment, a0.net_income - a0.oas_repayment)
+    np.testing.assert_allclose(a1.net_income_after_repayment, a1.net_income - a1.oas_repayment)
+    elected_total = a0.total + a1.total
+
+    # The same candidate grid household_assessment searches: person1 has no
+    # eligible pension income, so the negative-fraction half of its search
+    # (transferring from person1 to person0) collapses to the zero-transfer
+    # candidate already in this list, and need not be built separately.
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    magnitudes: list[float] = []
+    k = 0
+    while k * GRID_STEP < maximum_share:
+        magnitudes.append(k * GRID_STEP)
+        k += 1
+    magnitudes.append(maximum_share)
+
+    grid_totals = []
+    for fraction in magnitudes:
+        transfer = np.full(n, fraction * db_pension)
+        candidate0 = person_assessment(income0, age, zero, transfer, "ab", params, JANUARY)
+        candidate1 = person_assessment(income1, age, transfer, zero, "ab", params, JANUARY)
+        grid_totals.append(candidate0.total + candidate1.total)
+    grid_minimum = np.min(np.stack(grid_totals, axis=0), axis=0)
+
+    np.testing.assert_allclose(elected_total, grid_minimum)
+    assert np.all(elected_total < unsplit0.total + unsplit1.total - 1e-6)
+
+    # Recover the winning grid index and recompute that candidate directly,
+    # to pin every field of a0 -- not just total and the repayment identity
+    # already asserted above -- at the one winning candidate.
+    best = int(np.argmin(np.stack(grid_totals, axis=0), axis=0)[0])
+    winning = person_assessment(
+        income0, age, zero, np.full(n, magnitudes[best] * db_pension), "ab", params, JANUARY
+    )
+    for field in (
+        "federal",
+        "provincial",
+        "oas_repayment",
+        "total",
+        "net_income",
+        "net_income_after_repayment",
+    ):
+        np.testing.assert_allclose(getattr(a0, field), getattr(winning, field))
 
 
 # =============================================================================
@@ -925,7 +1226,14 @@ def test_person_assessment_returns_float64_arrays(params) -> None:
     income = _ledger(n, employment=50_000.0)
     result = person_assessment(income, 50, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
     assert isinstance(result, Assessment)
-    for field in ("federal", "provincial", "oas_repayment", "total", "net_income"):
+    for field in (
+        "federal",
+        "provincial",
+        "oas_repayment",
+        "total",
+        "net_income",
+        "net_income_after_repayment",
+    ):
         value = getattr(result, field)
         assert value.dtype == np.float64
         assert value.shape == (n,)
@@ -941,7 +1249,14 @@ def test_household_assessment_returns_float64_arrays_for_two_persons(params) -> 
 
     a0, a1 = household_assessment(household, params)
     for assessment in (a0, a1):
-        for field in ("federal", "provincial", "oas_repayment", "total", "net_income"):
+        for field in (
+            "federal",
+            "provincial",
+            "oas_repayment",
+            "total",
+            "net_income",
+            "net_income_after_repayment",
+        ):
             value = getattr(assessment, field)
             assert value.dtype == np.float64
             assert value.shape == (n,)

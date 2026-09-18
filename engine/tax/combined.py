@@ -39,14 +39,17 @@ class Assessment:
     A return value, not carried state: unlike ``engine.core.state`` classes
     this is not passed through ``engine.core.state.freeze`` and has no
     ``__post_init__``. ``net_income`` is the split-adjusted line 23400 the
-    OAS repayment and the age amount were both tested against.
+    OAS repayment was tested against; ``net_income_after_repayment`` is line
+    23600, which the brackets and the age amount are both applied to instead.
 
     Attributes:
         federal: Federal tax payable after credits, ``(n_paths,)``.
         provincial: Provincial tax payable after credits, ``(n_paths,)``.
         oas_repayment: OAS recovery tax for the year, ``(n_paths,)``.
         total: ``federal + provincial + oas_repayment``.
-        net_income: Net income at the elected split, ``(n_paths,)``.
+        net_income: Net income at the elected split (line 23400), ``(n_paths,)``.
+        net_income_after_repayment: ``net_income`` less ``oas_repayment`` (line
+            23600, and taxable income with it), ``(n_paths,)``.
     """
 
     federal: NDArray[np.float64]
@@ -54,6 +57,7 @@ class Assessment:
     oas_repayment: NDArray[np.float64]
     total: NDArray[np.float64]
     net_income: NDArray[np.float64]
+    net_income_after_repayment: NDArray[np.float64]
 
 
 def oas_repayment(
@@ -65,8 +69,8 @@ def oas_repayment(
     """OAS recovery tax for the year.
 
     This is the current year's return line only, never a prior year's: it is
-    computed once at the December close on this year's net income, which
-    already includes this year's OAS (L23).
+    computed once at the December close on this year's net income before the
+    repayment (line 23400), which already includes this year's OAS (L23).
 
     Args:
         net_income_before_repayment: Net income for the year, real dollars.
@@ -98,8 +102,9 @@ def person_assessment(
 ) -> Assessment:
     """One person's federal and provincial assessment, including the OAS repayment.
 
-    Taxable income equals net income (L14), so ``gross_tax`` is called on net
-    income directly. ``oas_received`` is not an argument: it is always
+    Taxable income is net income less the OAS repayment (line 23600), so
+    ``gross_tax`` and the age amount are both evaluated on that figure, not on
+    net income directly (L14). ``oas_received`` is not an argument: it is always
     ``ledger.oas``. The eligible pension income transferred carries its share
     of the pension income credit eligibility with it, which is what
     ``eligible_pension_income - transfer_out + transfer_in`` does below.
@@ -126,10 +131,12 @@ def person_assessment(
         - np.asarray(transfer_out, dtype=np.float64)
         + np.asarray(transfer_in, dtype=np.float64)
     )
+    repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
+    taxable = federal.taxable_income(net, repay)
     fed_tax = federal.net_tax(
-        federal.gross_tax(net, fed, january_month_index),
+        federal.gross_tax(taxable, fed, january_month_index),
         federal.non_refundable_credits(
-            net,
+            taxable,
             age_at_end_of_year,
             epi,
             ledger.cpp_base_contributions,
@@ -140,9 +147,9 @@ def person_assessment(
         ),
     )
     prov_tax = provincial.net_tax(
-        provincial.gross_tax(net, prov, january_month_index),
+        provincial.gross_tax(taxable, prov, january_month_index),
         provincial.non_refundable_credits(
-            net,
+            taxable,
             age_at_end_of_year,
             epi,
             ledger.cpp_base_contributions,
@@ -153,13 +160,13 @@ def person_assessment(
             january_month_index,
         ),
     )
-    repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
     return Assessment(
         federal=fed_tax,
         provincial=prov_tax,
         oas_repayment=repay,
         total=fed_tax + prov_tax + repay,
         net_income=net,
+        net_income_after_repayment=taxable,
     )
 
 

@@ -402,8 +402,9 @@ class PersonState:
         employment, pensions: Bands and defined-benefit pensions, in scenario order, possibly empty.
         income, balance_owing: Year-to-date income components, and the prior year's assessed tax
             unpaid (paid in the filing month).
-        prior_year_net_income: Net income for the prior calendar year, per person,
-            ``(n_paths,)``. Its one consumer is the RESP enhanced-grant rate
+        prior_year_net_income: Net income after the social benefits repayment
+            (line 23600) for the prior calendar year, per person, ``(n_paths,)``.
+            Its one consumer is the RESP enhanced-grant rate
             (``grant.enhanced.income_year_offset``), summed across the household's
             living persons; not read by the OAS repayment (assessed on the current
             year) nor by the GIS band indicator (a different income basis). The one

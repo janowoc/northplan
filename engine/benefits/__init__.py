@@ -25,11 +25,12 @@ an annual figure says so, ends in ``_annual``; apart from
 ``gis.band_threshold_annual``, which serves the GIS indicator, these exist
 only for golden tests against published annual totals.
 
-**The OAS repayment is assessed on the calendar year**, at the December
-close, on that year's net income including the OAS received in it, capped at
-it. OAS is paid gross monthly. ``benefit_year`` in ``params/<year>/oas.yaml``
-is read by no module here; it belongs to a future GIS implementation,
-assessed over a benefit period rather than a calendar year.
+**The OAS repayment is assessed on the calendar year**, at the December close,
+on that year's net income before the repayment (line 23400), including the OAS
+received in it, capped at it. OAS is paid gross monthly. ``benefit_year`` in
+``params/<year>/oas.yaml`` is read by no module here; it belongs to a future
+GIS implementation, assessed over a benefit period rather than a calendar
+year.
 
 **Indexation is already applied by the time a dollar reaches here.** Every
 dollar arrives through :class:`~engine.core.indexation.RealParamSet`, which

@@ -8,12 +8,12 @@ Parameters from ``params/{year}/oas.yaml``.
 The rule that gets implemented wrong most often, stated up front because this
 is the module a reader comes to looking for it: **the OAS repayment is a line
 on the current year's return.** It is assessed once, at the December close, on
-the current calendar year's net income — which includes the OAS received in
-that same year — and it is capped at that OAS. It is settled with the balance
-owing in the following year's filing month. OAS itself is paid gross every
-month; nothing is deducted from a payment. It is computed by
-``engine.tax.combined.oas_repayment``, with the household assessment it is a
-line of, and not by anything here.
+the current calendar year's net income before the repayment (line 23400) —
+which includes the OAS received in that same year — and it is capped at that
+OAS. It is settled with the balance owing in the following year's filing
+month. OAS itself is paid gross every month; nothing is deducted from a
+payment. It is computed by ``engine.tax.combined.oas_repayment``, with the
+household assessment it is a line of, and not by anything here.
 
 In reality a recovery amount is withheld from the July-to-June payments that
 follow an assessment. That withholding is a refundable prepayment of the

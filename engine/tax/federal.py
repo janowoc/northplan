@@ -3,16 +3,26 @@
 
 """Federal income tax.
 
-Annual, called once per simulated year from the December close
-(``engine/core/step.py::close_year``). Every function takes an
-``engine.core.state.IncomeLedger`` — one person's income components
-accumulated over twelve monthly steps — and a ``federal``
-``engine.core.indexation.RealParamSet``. Income figures returned are the
-full calendar year's, never one month's.
+Defines four income figures — total income, net income (line 23400), taxable
+income (line 23600), and eligible pension income — and federal tax on an
+income figure, before and after non-refundable credits.
+``engine.tax.provincial`` defines none of its own and is handed a figure.
 
-Parameters come from ``params/2026/federal.yaml``. Nothing numeric lives in
-this file. ``net_income`` is line 23400 (L49): the engine's one net-income
-figure, never adjusted downward afterward.
+Two shapes of entry point. ``total_income``, ``net_income`` and
+``eligible_pension_income`` build a figure from an
+``engine.core.state.IncomeLedger`` — one person's income components
+accumulated over the year — and a ``federal``
+``engine.core.indexation.RealParamSet``. ``taxable_income``, ``gross_tax``,
+``non_refundable_credits`` and ``net_tax`` take figures already computed and
+never see a ledger. Every income figure here is annual rather than monthly: a
+caller holding a monthly figure scales to a year first, and what it hands over
+may be an annualised approximation rather than the calendar year's income
+(L16).
+
+``net_income`` is line 23400 and is never adjusted downward afterward;
+:func:`taxable_income` is line 23600, net income less the OAS repayment, and
+line 26000 with it. Parameters come from ``params/{year}/federal.yaml``.
+Nothing numeric lives in this file.
 """
 
 from __future__ import annotations
@@ -36,8 +46,9 @@ def total_income(
     Not line 15000 once a split is elected: in reality the transfer is a
     deduction and an inclusion (lines 21000 and 11600), and this nets both into
     the total. The difference never reaches tax, since :func:`net_income` is
-    the only consumer and taxable income equals net income (L14), but an
-    income-tested rule wanting a pre-election figure must not read this.
+    the only consumer of this figure and :func:`taxable_income` derives from
+    ``net_income``, but an income-tested rule wanting a pre-election figure
+    must not read this.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -75,13 +86,13 @@ def net_income(
     transfer_in: ArrayLike,
     transfer_out: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Net income (line 23400): total income less this model's only deductions.
+    """Net income (line 23400): total income less this model's only deductions (L14).
 
     Floored at zero once, here, after the pension-splitting transfers — there
     is no second floor anywhere downstream. Nothing is ever subtracted back
-    out of this figure: the OAS repayment does not reduce it (L49), and this
-    is the model's single net-income figure rather than the two the Act
-    distinguishes (L14).
+    out of this figure: line 23600 (see :func:`taxable_income`) is a separate
+    figure derived from this one by subtracting the OAS repayment, not a
+    reduction of it.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -100,23 +111,35 @@ def net_income(
 
 
 def taxable_income(
-    ledger: IncomeLedger,
-    params: RealParamSet,
-    transfer_in: ArrayLike,
-    transfer_out: ArrayLike,
+    net_income: ArrayLike,
+    oas_repayment: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Taxable income: an alias for :func:`net_income`, not a second computation.
+    """Taxable income (line 23600, and line 26000 with it): net income less the OAS repayment.
 
-    The two concepts coincide only because RRSP contributions and the
-    enhanced CPP contribution are this model's only deductions (L14). A call
-    site uses this name to say which concept it means.
+    This is the one place the subtraction happens. This function applies no
+    floor and enforces nothing about how its two arguments relate: the result
+    is non-negative in the engine only because of how the one real caller
+    pairs them. ``engine.tax.combined.oas_repayment`` returns a fraction below
+    one of the excess of net income over a positive threshold, capped at OAS
+    received — hence strictly less than net income whenever it is non-zero,
+    and the cap only lowers it further — so the subtraction here cannot go
+    negative for that caller; :func:`net_income`'s own docstring already
+    states there is no second floor downstream. No Division C deduction is
+    modelled (L14), so line 26000 equals this figure.
 
-    Args: as :func:`net_income`.
+    Args:
+        net_income: Line 23400, real dollars, ``(n_paths,)`` or scalar. Shadows
+            the module-level :func:`net_income` inside this body only.
+        oas_repayment: The social benefits repayment (line 23500), same shape.
 
     Returns:
-        Same value as :func:`net_income`.
+        Net income after the social benefits repayment, real dollars, shape
+        broadcast from the arguments.
     """
-    return net_income(ledger, params, transfer_in, transfer_out)
+    return np.asarray(
+        np.asarray(net_income, dtype=np.float64) - np.asarray(oas_repayment, dtype=np.float64),
+        dtype=np.float64,
+    )
 
 
 def gross_tax(
@@ -127,7 +150,10 @@ def gross_tax(
     """Federal tax before credits.
 
     Args:
-        taxable: Taxable income, real dollars, ``(n_paths,)`` or scalar.
+        taxable: The income the brackets are applied to — line 23600 in the
+            annual assessment, or the annualised single-source approximation
+            in the monthly withholding estimate (L16), real dollars,
+            ``(n_paths,)`` or scalar.
         params: The ``federal`` parameter set for the tax year.
         january_month_index: Month index of January of the tax year.
 
@@ -159,7 +185,10 @@ def non_refundable_credits(
     dividend), not the dividend or the grossed-up dividend.
 
     Args:
-        net_income: Net income, real dollars.
+        net_income: The income the credits are tested against — line 23600 in
+            the annual assessment, or the annualised single-source
+            approximation in the monthly withholding estimate (L16), real
+            dollars.
         age_at_end_of_year: Age in whole years on 31 December, from
             ``engine.core.timeline.age_at_end_of_year``.
         eligible_pension_income: Eligible pension income for the pension

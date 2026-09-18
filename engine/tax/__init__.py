@@ -9,13 +9,14 @@ and ``np.where`` rather than Python branching, so a scalar input works by
 broadcasting and a golden-number test exercises the same code path as a
 100,000-path Monte Carlo run.
 
-The assessment is annual: every function in ``federal``, ``provincial``, and
-``combined`` takes a full year's figures and is called once per simulated
-year, from the year-end close in ``engine/core/step.py`` — never once a
-month. The income they are handed must be the year-to-date total from an
-``IncomeLedger``, not a single month's income. What they return is an
+The assessment is annual: ``combined`` is to be called once per simulated
+year, from the year-end close in ``engine/core/step.py``, on income
+accumulated over that year's twelve monthly steps. What it returns is an
 assessment, not a cash flow: the cash leaves in the following year's filing
-month, less withholding.
+month, less withholding. Every income figure that reaches ``federal`` or
+``provincial`` is annual rather than monthly; a monthly caller scales to a
+year first, and what it hands over may be an annualised approximation rather
+than the calendar year's income (L16).
 
 ``withholding`` is the exception, and is monthly on both counts.
 ``registered_withholding`` takes one withdrawal and the month index of that
