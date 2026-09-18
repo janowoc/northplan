@@ -29,8 +29,8 @@ REPO = "janowoc/northplan"
 #: Every issue, in the order to work them. Done issues are listed in the order
 #: they were completed. Append new issues where they belong, not at the end.
 EXECUTION_ORDER = [
-    1, 2, 3, 25, 4, 26, 5, 27, 9, 6, 28, 7, 8, 10, 11, 12, 13,
-    30, 31, 37, 32, 38, 33, 29, 34, 14, 39, 15, 16, 40, 41, 42, 43, 44, 45, 46,
+    1, 2, 3, 25, 4, 26, 5, 27, 9, 6, 28, 7, 8, 10, 11, 12, 13, 30, 31, 37, 32,
+    38, 33, 29, 34, 14, 39, 15, 16, 40, 41, 42, 43, 44, 45, 46, 47,
     17, 18, 19, 35, 36, 20, 21, 22, 23, 24,
 ]
 

@@ -67,6 +67,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 44 | Say which income the GIS band tests: `in_band`'s parameter is not line 23400 | agent | 42 | `in_band` and L2 each name line 23600 and call the current-year basis an approximation |
 | 45 | The `gis` block in `params/2026/oas.yaml` has no source, and its direction comment looks inverted | human | — | the block carries a source and a checked date; its direction matches `testable <= threshold` |
 | 46 | L2 states three directions of error under one word, and they are not the same sign | agent | 44 | each clause in L2's direction passage names what its sign is about |
+| 47 | Direction verdicts in limitations.md: one wrong sign (L11), and verdicts that don't name what they are about | agent | 46 | every `Direction:` names what its sign is about; L11's sign follows the file's definition |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -220,6 +221,13 @@ the exposure indicator's reporting rather than about dollars — four effects,
 two objects, one word. 44's brief said not to disturb the sentence, which was
 right, so the entry is now the place where that collapse is visible. It sits
 after 45 because the sign judgements are the human's.
+
+Issue 47 came out of the review of 46. Checking L2's new wording against the
+rest of the file found L11 calling an omitted credit optimistic on tax, which
+the file's own definition makes conservative, and thirteen more entries whose
+verdict names a sign but not what it is on. L2 is left out: the sentence it
+still lacks, on the band thresholds, waits on 45. It sits straight after 46
+because it is the same repair applied to the rest of the file.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
