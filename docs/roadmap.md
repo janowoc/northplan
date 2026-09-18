@@ -63,6 +63,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 40 | Refuse at load a CPP or OAS start age the rules do not allow | agent | 10, 16 | an out-of-window or past start age is refused at load, naming person and policy; L53 replaced |
 | 41 | `PensionState` refuses a nonzero bridge with no end month | agent | 11 | a bridge with no end month raises naming the pension; a zeroed bridge with one is accepted |
 | 42 | Deduct the OAS repayment: line 23600 as well as line 23400 | agent | 14 | gross tax and the age amount are computed on net income less the repayment; L49 is gone |
+| 43 | Rename `non_refundable_credits`'s income parameter: it is never line 23400 | agent | 42 | both signatures name `income`; no call site names `net_income` |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -176,6 +177,15 @@ money is. A retiree with a $120,000 pension and $9,000 of OAS is assessed
 $1,818 too much. It sits straight after 41 and ahead of 35, whose December
 close stores the figure it splits in two, and ahead of 21, whose splitting
 search minimises a total this changes.
+
+Issue 43 came out of the review of 42. That change left `non_refundable_credits`
+with a parameter called `net_income` whose argument is line 23600 in the annual
+assessment and an annualised approximation in the withholding estimate — the
+one figure it never receives. 42's own specification chose to keep the name and
+the review raised it twice; it is the last way the age-amount defect can
+return, since a future call site written against the name rather than the
+docstring would fail no test. It sits straight after 42 and ahead of 35 and 36,
+both of which write new tax call sites.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
