@@ -65,6 +65,8 @@ belongs. `--standalone` writes a full document for a browser.
 | 42 | Deduct the OAS repayment: line 23600 as well as line 23400 | agent | 14 | gross tax and the age amount are computed on net income less the repayment; L49 is gone |
 | 43 | Rename `non_refundable_credits`'s income parameter: it is never line 23400 | agent | 42 | both signatures name `income`; no call site names `net_income` |
 | 44 | Say which income the GIS band tests: `in_band`'s parameter is not line 23400 | agent | 42 | `in_band` and L2 each name line 23600 and call the current-year basis an approximation |
+| 45 | The `gis` block in `params/2026/oas.yaml` has no source, and its direction comment looks inverted | human | — | the block carries a source and a checked date; its direction matches `testable <= threshold` |
+| 46 | L2 states three directions of error under one word, and they are not the same sign | agent | 44 | each clause in L2's direction passage names what its sign is about |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -198,6 +200,26 @@ tested on the current year where the statute tests the prior year over a
 July-June benefit year, and that simplification is recorded nowhere. Both are
 verbiage, not arithmetic. It sits straight after 43 and ahead of 35, which is
 the first to wire the band up.
+
+Issue 45 came out of the review of 44. Checking that `engine/benefits/gis.py`,
+L2 and `params/2026/oas.yaml` agreed with one another turned up the one place
+they do not: the `gis` block carries neither a source URL nor a checked date,
+though the file's own header calls those comments the audit record, and the
+per-file provenance test passes on `recovery_tax`'s line instead. The same
+block says erring low "widens the band" where `in_band` tests
+`testable <= threshold`, which narrows it. Both are the human's alone — the
+file is hers and the numbers are parameters. It sits after 44 and ahead of 35,
+which is the first to report the band.
+
+Issue 46 came out of the same review. L2's direction sentence says "optimistic
+on income for low-income households", but not modelling GIS leaves the
+household with less income than it would really receive, which is conservative
+on income; what is optimistic is the hidden clawback rate in the rest of that
+sentence. 44 then chained two more clauses to the word, and those are about
+the exposure indicator's reporting rather than about dollars — four effects,
+two objects, one word. 44's brief said not to disturb the sentence, which was
+right, so the entry is now the place where that collapse is visible. It sits
+after 45 because the sign judgements are the human's.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
