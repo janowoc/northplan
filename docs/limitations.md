@@ -44,15 +44,16 @@ and the prior-year timing. The GIS exclusion is vacuous rather than
 structural: a modelled GIS would arrive at line 14600 and sit inside line
 23600, so it would have to be removed to satisfy that key — and that is where
 L14 stops being able to equate line 26000 with line 23600. Direction:
-optimistic on income for low-income households, and it hides the effective
-marginal rate that makes early registered drawdown attractive to them. The
-missed employment-income exemption is optimistic the same way: a household
-with employment income is tested on more than GIS would test it on, so it
-falls in the band less often and its exposure goes unreported. The missed
-timing runs the other way for the common shape, a household whose income falls
-after retirement: the current year is lower than the prior year GIS would
-test, so the household falls in the band more often and its exposure is
-over-reported; for a household whose income is rising it runs with the rest.
+conservative on income for low-income households, and optimistic on the cost
+of registered drawdown, since it hides the effective marginal rate that makes
+early drawdown attractive to them. The exposure indicator carries its own
+error, in path-years reported rather than in dollars. The missed
+employment-income exemption under-reports: a household with employment income
+is tested on more than GIS would test it on, so it falls in the band less
+often. The missed timing over-reports for the common shape, a household whose
+income falls after retirement: the current year is lower than the prior year
+GIS would test, so it falls in the band more often. For a household whose
+income is rising, the timing under-reports too.
 Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated
