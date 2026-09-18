@@ -64,6 +64,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 41 | `PensionState` refuses a nonzero bridge with no end month | agent | 11 | a bridge with no end month raises naming the pension; a zeroed bridge with one is accepted |
 | 42 | Deduct the OAS repayment: line 23600 as well as line 23400 | agent | 14 | gross tax and the age amount are computed on net income less the repayment; L49 is gone |
 | 43 | Rename `non_refundable_credits`'s income parameter: it is never line 23400 | agent | 42 | both signatures name `income`; no call site names `net_income` |
+| 44 | Say which income the GIS band tests: `in_band`'s parameter is not line 23400 | agent | 42 | `in_band` and L2 each name line 23600 and call the current-year basis an approximation |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -186,6 +187,17 @@ the review raised it twice; it is the last way the age-amount defect can
 return, since a future call site written against the name rather than the
 docstring would fail no test. It sits straight after 42 and ahead of 35 and 36,
 both of which write new tax call sites.
+
+Issue 44 came out of the review of 43. `engine/benefits/gis.py::in_band` takes
+a parameter called `net_income`, subtracts OAS from it, and tests the
+difference against the band thresholds — and since 42 "net income" no longer
+identifies one figure. It escaped 43 because that issue named two modules and
+this is a third, and because `in_band` has no call site in `engine/` yet, so
+nothing is got wrong today. Writing it up turned up a second gap: the band is
+tested on the current year where the statute tests the prior year over a
+July-June benefit year, and that simplification is recorded nowhere. Both are
+verbiage, not arithmetic. It sits straight after 43 and ahead of 35, which is
+the first to wire the band up.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
