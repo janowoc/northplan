@@ -34,8 +34,12 @@ problem to route around.
   implementation and the expectation disagree, report the discrepancy and
   stop. Expected values are ground truth supplied by the human.
 - Never delete or skip a failing test.
-- Golden tests in `tests/golden/` are sacred. Characterization snapshots in
-  `tests/characterization/` may be regenerated only when I explicitly say so.
+- Golden tests in `tests/golden/` are sacred. Their cases live in YAML files
+  the human writes; you may add the harness and you may never add a case.
+  Characterization snapshots in `tests/characterization/` may be regenerated
+  only when your brief says so explicitly.
+- A test may use a made-up bracket table or life table to exercise arithmetic,
+  as long as it is obviously synthetic and never presented as a real value.
 
 If a golden test fails, the implementation is wrong until the human says
 otherwise. Never add `pytest.mark.skip`, `xfail`, a tolerance widening, or a
@@ -80,7 +84,7 @@ a menu of assumptions you have already coded against.
   scenario in `engine.core.indexation` and applied once, by the step. It does
   not vary by month. A non-indexed amount is the opposite case: its real decay
   grows without limit and must be applied explicitly.
-- `engine/` must never import `api`, `fastapi`, or `cli`.
+- `engine/` never imports `api`, `fastapi`, `cli`, `starlette`, or `uvicorn`.
 - Policy functions may only read information available at that simulated point
   in time. Never read a future return, a future balance, or a future bracket —
   and never this year's total income, which is not known until December. Year
