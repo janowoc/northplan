@@ -48,11 +48,11 @@ def test_in_band_flips_exactly_at_couple_threshold(oas) -> None:
 
 def test_in_band_subtracts_oas(oas) -> None:
     threshold = band_threshold_annual(False, JANUARY, oas)
-    net_income = threshold + 500.0
-    # Net income alone is above the threshold, but net minus OAS is at it.
-    above_on_net_income_alone = in_band(net_income, 0.0, False, JANUARY, oas)
-    in_band_after_oas_subtracted = in_band(net_income, 500.0, False, JANUARY, oas)
-    assert not bool(above_on_net_income_alone)
+    net_income_after_repayment = threshold + 500.0
+    # Line 23600 alone is above the threshold; less the OAS it is at it.
+    above_before_oas_subtracted = in_band(net_income_after_repayment, 0.0, False, JANUARY, oas)
+    in_band_after_oas_subtracted = in_band(net_income_after_repayment, 500.0, False, JANUARY, oas)
+    assert not bool(above_before_oas_subtracted)
     assert bool(in_band_after_oas_subtracted)
 
 

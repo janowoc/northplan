@@ -8,7 +8,7 @@ base than the OAS recovery tax uses. None of that is populated:
 ``params/{year}/oas.yaml`` carries ``gis.modelled: false`` and nothing else.
 
 This module computes no supplement. It reports whether a household's testable
-income — net income less OAS received, annual, current year — falls in the
+income — line 23600 less the OAS received, annual, current year — falls in the
 band where an unmodelled GIS would begin to matter, so the caller can report
 the fraction of path-years in band (L2). Treating GIS as zero everywhere would
 silently understate income exactly where it matters most, and would hide the
@@ -22,6 +22,17 @@ answer and makes the exposure visible rather than silencing it.
 The band thresholds sit below the published GIS cut-offs on purpose: they are
 a conservative band around where GIS would begin to matter, not a GIS
 calculation, and must not be read as one.
+
+The income is an approximation on the same terms. Of the five entries under
+``gis.income_base`` in ``params/gis_not_implemented.yaml``, three are met: the
+OAS pension is excluded because this subtracts it, GIS itself vacuously since
+none is modelled, and couples are tested on combined income when the caller
+sums the household, as the ``Args`` entry requires. Two are not: the
+employment-income exemption, and the timing — GIS tests an earlier year over
+the benefit year in ``params/{year}/oas.yaml`` under ``benefit_year``, where
+this tests the current calendar year. L2 records the direction of both.
+Line 23400 would serve equally: the two differ only by the OAS repayment,
+which is zero everywhere the band is reachable.
 
 When GIS is implemented: the schema is already written up in
 ``params/gis_not_implemented.yaml``; move it under ``params/{year}/``,
@@ -99,7 +110,7 @@ def band_threshold_annual(
 
 
 def in_band(
-    net_income: ArrayLike,
+    net_income_after_repayment: ArrayLike,
     oas_received: ArrayLike,
     has_spouse: ArrayLike,
     january_month_index: int,
@@ -109,18 +120,22 @@ def in_band(
 
     All-false when :func:`is_modelled` is true: the exposure indicator has
     nothing to report once GIS is actually computed elsewhere. Otherwise
-    compares ``net_income - oas_received`` to :func:`band_threshold_annual`,
-    inclusive at the threshold. The caller is expected to count only
-    path-years in which at least one living household member receives OAS —
-    L2's "living pensioner" — since a household with no one drawing OAS is
-    not exposed to GIS at all.
+    compares ``net_income_after_repayment - oas_received`` to
+    :func:`band_threshold_annual`, inclusive at the threshold. The caller is
+    expected to count only path-years in which at least one living household
+    member receives OAS — L2's "living pensioner" — since a household with no
+    one drawing OAS is not exposed to GIS at all.
 
     Args:
-        net_income: Annual net income for the year, real dollars. For a
-            couple the caller passes the combined figure; this function does
-            not sum across a household.
+        net_income_after_repayment: Line 23600 for the year, real dollars —
+            net income after the OAS repayment, which approximates the GIS
+            testable base before OAS is subtracted; see the module docstring
+            for what that approximation matches and misses. For a couple the
+            caller passes the sum of both persons' figures; this function
+            does not sum across a household.
         oas_received: Annual gross OAS received for the year, real dollars,
-            on the same combined-or-not basis as ``net_income``.
+            on the same combined-or-not basis as
+            ``net_income_after_repayment``.
         has_spouse: Whether the recipient has a spouse or common-law partner,
             ``(n_paths,)`` or scalar.
         january_month_index: Month index of January of the year being checked.
@@ -131,10 +146,14 @@ def in_band(
     """
     if is_modelled(params):
         shape = np.broadcast(
-            np.asarray(net_income), np.asarray(oas_received), np.asarray(has_spouse)
+            np.asarray(net_income_after_repayment),
+            np.asarray(oas_received),
+            np.asarray(has_spouse),
         ).shape
         return np.zeros(shape, dtype=np.bool_)
 
-    testable = np.asarray(net_income, dtype=np.float64) - np.asarray(oas_received, dtype=np.float64)
+    testable = np.asarray(net_income_after_repayment, dtype=np.float64) - np.asarray(
+        oas_received, dtype=np.float64
+    )
     threshold = band_threshold_annual(has_spouse, january_month_index, params)
     return np.asarray(testable <= threshold, dtype=np.bool_)

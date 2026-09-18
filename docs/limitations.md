@@ -29,13 +29,31 @@ of `params/province-template.yaml` plus sourcing, with no new code.
 
 **L2. GIS and the Allowances.** In reality low-income OAS pensioners receive a
 non-taxable supplement reduced at fifty cents per dollar of testable income,
-and a spouse aged 60 to 64 may receive an Allowance. We do not model either.
-Instead the engine reports the fraction of path-years in which a living
-pensioner's testable income sits inside the band where GIS would apply, so a
-plan that leans on unmodelled income is visible rather than silent. Direction:
+tested on the prior year's income over a July-to-June benefit year and on a
+base that matches no line of the return; a spouse aged 60 to 64 may receive an
+Allowance. We do not model either. Instead the engine reports the fraction of
+path-years in which a living pensioner's testable income sits inside the band
+where GIS would apply, so a plan that leans on unmodelled income is visible
+rather than silent. The testable income is approximated as line 23600 less the
+OAS received, in the current calendar year. Of the five keys
+`params/gis_not_implemented.yaml` lists under `gis.income_base`, that meets
+three — the OAS pension is excluded by the subtraction, GIS itself vacuously
+since none is modelled, and couples are tested on combined income when the
+caller sums the household — and misses two, the employment-income exemption
+and the prior-year timing. The GIS exclusion is vacuous rather than
+structural: a modelled GIS would arrive at line 14600 and sit inside line
+23600, so it would have to be removed to satisfy that key — and that is where
+L14 stops being able to equate line 26000 with line 23600. Direction:
 optimistic on income for low-income households, and it hides the effective
-marginal rate that makes early registered drawdown attractive to them. Lives
-in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
+marginal rate that makes early registered drawdown attractive to them. The
+missed employment-income exemption is optimistic the same way: a household
+with employment income is tested on more than GIS would test it on, so it
+falls in the band less often and its exposure goes unreported. The missed
+timing runs the other way for the common shape, a household whose income falls
+after retirement: the current year is lower than the prior year GIS would
+test, so the household falls in the band more often and its exposure is
+over-reported; for a household whose income is rising it runs with the rest.
+Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated
 pensions.** A LIF is governed by the jurisdiction its pension was registered
