@@ -84,9 +84,9 @@ def test_age_amount_fully_clawed_back_at_threshold_plus_amount_over_rate(ab, fed
     basic_personal = ab.annual_amount("credits.basic_personal_amount_annual", JANUARY)
     valuation_rate = ab.number("credits.valuation_rate")
 
-    net_income = threshold + amount / reduction_rate
+    income = threshold + amount / reduction_rate
     credits = provincial.non_refundable_credits(
-        net_income, eligibility_age, 0.0, 0.0, 0.0, 0.0, ab, fed, JANUARY
+        income, eligibility_age, 0.0, 0.0, 0.0, 0.0, ab, fed, JANUARY
     )
     assert credits == pytest.approx(valuation_rate * basic_personal)
 
@@ -256,7 +256,7 @@ def test_synthetic_gross_tax_hand_computed(synth) -> None:
 
 def test_synthetic_credits_hand_computed(synth) -> None:
     ab, fed = synth
-    # net_income=0, age=65, pension=1000 (capped 100), cpp=1000 (capped 60),
+    # income=0, age=65, pension=1000 (capped 100), cpp=1000 (capped 60),
     # ei=1000 (capped 30), dividends=100.
     # valuation_rate * (800 + 300 + 100 + 60 + 30) + 100 * 0.5 * 0.3
     # = 0.1 * 1290 + 15 = 129 + 15 = 144

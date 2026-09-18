@@ -166,7 +166,7 @@ def gross_tax(
 
 
 def non_refundable_credits(
-    net_income: ArrayLike,
+    income: ArrayLike,
     age_at_end_of_year: ArrayLike,
     eligible_pension_income: ArrayLike,
     cpp_base_contributions: ArrayLike,
@@ -185,10 +185,9 @@ def non_refundable_credits(
     dividend), not the dividend or the grossed-up dividend.
 
     Args:
-        net_income: The income the credits are tested against — line 23600 in
-            the annual assessment, or the annualised single-source
-            approximation in the monthly withholding estimate (L16), real
-            dollars.
+        income: The income the credits are tested against — line 23600 in the
+            annual assessment, or the annualised single-source approximation
+            in the monthly withholding estimate (L16), real dollars.
         age_at_end_of_year: Age in whole years on 31 December, from
             ``engine.core.timeline.age_at_end_of_year``.
         eligible_pension_income: Eligible pension income for the pension
@@ -215,12 +214,12 @@ def non_refundable_credits(
     )
     reduction_rate = params.number("credits.age_amount.reduction_rate")
 
-    net_income_arr = np.asarray(net_income, dtype=np.float64)
+    income_arr = np.asarray(income, dtype=np.float64)
     age_arr = np.asarray(age_at_end_of_year)
     age_amount_allowed = np.where(
         age_arr >= eligibility_age,
         np.clip(
-            age_amount - reduction_rate * np.clip(net_income_arr - reduction_threshold, 0, None),
+            age_amount - reduction_rate * np.clip(income_arr - reduction_threshold, 0, None),
             0,
             None,
         ),

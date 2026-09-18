@@ -16,7 +16,7 @@ cases:
     source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
     checked: 2026-09-16
     inputs:
-      net_income: 100000.0
+      income: 100000.0
       age_at_end_of_year: 45
       eligible_pension_income: 0.0
       cpp_base_contributions: 0.0
@@ -33,7 +33,7 @@ cases:
     source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
     checked: 2026-09-16
     inputs:
-      net_income: 50000.0
+      income: 50000.0
       age_at_end_of_year: 70
       eligible_pension_income: 20000.0
       cpp_base_contributions: 0.0
@@ -50,7 +50,7 @@ cases:
     source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
     checked: 2026-09-16
     inputs:
-      net_income: 55000.0
+      income: 55000.0
       age_at_end_of_year: 70
       eligible_pension_income: 0.0
       cpp_base_contributions: 0.0
@@ -69,7 +69,7 @@ cases:
     source: "https://www.taxtips.ca/calculators/canadian-tax/canadian-tax-calculator.htm"
     checked: 2026-09-16
     inputs:
-      net_income: 100000.0
+      income: 100000.0
       age_at_end_of_year: 45
       eligible_pension_income: 0.0
       cpp_base_contributions: 0.0

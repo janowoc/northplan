@@ -101,9 +101,9 @@ def test_age_amount_fully_clawed_back_at_threshold_plus_amount_over_rate(fed) ->
     basic_personal = fed.annual_amount("credits.basic_personal_amount_annual", JANUARY)
     valuation_rate = fed.number("credits.valuation_rate")
 
-    net_income = threshold + amount / reduction_rate
+    income = threshold + amount / reduction_rate
     credits = federal.non_refundable_credits(
-        net_income, eligibility_age, 0.0, 0.0, 0.0, 0.0, fed, JANUARY
+        income, eligibility_age, 0.0, 0.0, 0.0, 0.0, fed, JANUARY
     )
     assert credits == pytest.approx(valuation_rate * basic_personal)
 
@@ -382,7 +382,7 @@ def test_synthetic_gross_tax_hand_computed(synth) -> None:
 
 
 def test_synthetic_credits_hand_computed(synth) -> None:
-    # net_income=0, age=65 (>=eligibility), pension=1000 (capped at 200),
+    # income=0, age=65 (>=eligibility), pension=1000 (capped at 200),
     # cpp=1000 (capped at 100), ei=1000 (capped at 50), dividends=100.
     #
     # valuation_rate * (1000 + 500 + 200 + 100 + 50) + 100 * 0.5 * 0.4
@@ -392,7 +392,7 @@ def test_synthetic_credits_hand_computed(synth) -> None:
 
 
 def test_synthetic_credits_age_amount_partial_reduction(synth) -> None:
-    # net_income=4000: excess over 3000 is 1000, reduction = 1000*0.1 = 100.
+    # income=4000: excess over 3000 is 1000, reduction = 1000*0.1 = 100.
     # age_amount_allowed = 500 - 100 = 400.
     # valuation_rate * (1000 [basic] + 400 [age]) = 0.2 * 1400 = 280
     credits = federal.non_refundable_credits(4000.0, 65, 0.0, 0.0, 0.0, 0.0, synth, JANUARY)
