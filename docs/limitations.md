@@ -160,14 +160,14 @@ is no separate horizon.
 **L11. Credits modelled.** Basic personal amount, age amount, pension income
 amount, CPP and EI contribution credits, and the dividend tax credit, federal
 and Alberta. Not modelled: the spousal amount (material for a single-earner
-couple below the pension-splitting age; optimistic on tax for them), the
+couple below the pension-splitting age; conservative on tax for them), the
 Canada employment amount, disability, medical, tuition, and donation credits.
 Lives in `engine/tax/federal.py`, `engine/tax/provincial.py`.
 
 **L12. Basic personal amount clawback.** In reality the federal amount is
 reduced for net income across the fourth bracket. We use the full amount at
-every income. Direction: optimistic above that bracket by at most a few
-hundred dollars a year.
+every income. Direction: optimistic on tax above that bracket, by at most a
+few hundred dollars a year.
 
 **L13. Alternative minimum tax.** Not modelled. Bites only on very large
 capital gains or donations in one year.
@@ -189,9 +189,9 @@ brackets and the age amount are applied to line 23600, as is the RESP
 enhanced-grant rate through `PersonState.prior_year_net_income`. Gross OAS
 enters both lines as income, as the rules require; what separates them is the
 repayment deducted at line 23500, not a different treatment of the pension
-itself. Direction: conservative — the omitted deductions and the missing
-Division C computation overstate taxable income, so the engine's tax comes
-out too high. Lives in `engine/tax/federal.py`, `engine/tax/combined.py`,
+itself. Direction: conservative on tax — the omitted deductions and the
+missing Division C computation overstate taxable income, so the engine's tax
+comes out too high. Lives in `engine/tax/federal.py`, `engine/tax/combined.py`,
 `engine/benefits/employment.py`, `params/2026/cpp.yaml`.
 
 **L15. Pension income splitting.** Modelled to the federal rule: DB pension
@@ -204,9 +204,9 @@ pension sharing, spousal RRSPs.
 any amount up to the statutory share, and the tax-minimising choice is a point
 on a piecewise-linear frontier. We evaluate transfer fractions on a grid of
 0.05 in each direction, plus the maximum share itself, and take the best of
-them per path. Direction: conservative — the grid's best is never better than
-the true optimum, so household tax is overstated, by at most the curvature of
-the objective across one grid step. Lives in
+them per path. Direction: conservative on tax — the grid's best is never
+better than the true optimum, so household tax is overstated, by at most the
+curvature of the objective across one grid step. Lives in
 `engine/tax/combined.py::household_assessment`.
 
 **L16. Withholding.** RRSP withdrawals and RRIF withdrawals above the minimum
@@ -245,15 +245,16 @@ of capital, capital losses and their carry-forward, the superficial loss rule.
 **L18. CPP amount.** In reality the pension is computed from a full earnings
 history with drop-out provisions and the post-2019 enhancement. We take
 either a fraction of the maximum supplied by the scenario, or the amount
-already in pay. Direction: depends on the fraction supplied; conservative for
-younger cohorts (L7). Lives in `engine/benefits/cpp.py`.
+already in pay. Direction: on the CPP pension, depends on the fraction
+supplied; conservative for younger cohorts (L7). Lives in
+`engine/benefits/cpp.py`.
 
 **L19. CPP survivor pension.** In reality the survivor formula differs above
 and below age 65 and is capped when combined with the survivor's own pension.
 We apply the 65-and-over formula at every age: a fixed share of the deceased's
 age-65 base pension, with the combined total capped. For a person already in
-pay the base pension is taken as the amount in pay. Direction: either way for
-survivors under 65, small.
+pay the base pension is taken as the amount in pay. Direction: either way on
+the survivor pension for survivors under 65, small.
 
 **L20. Other CPP benefits.** Not modelled: the post-retirement benefit for
 contributions made while receiving CPP, the disability pension, the death
@@ -268,8 +269,8 @@ earn is not modelled (L20), which is conservative on pension. Lives in
 `engine/benefits/employment.py`.
 
 **L22. OAS residence.** In reality full OAS needs forty years of residence
-after 18. We assume every person qualifies in full. Direction: optimistic for
-anyone who does not. Lives in `params/2026/oas.yaml`.
+after 18. We assume every person qualifies in full. Direction: optimistic on
+OAS for anyone who does not. Lives in `params/2026/oas.yaml`.
 
 **L23. OAS repayment.** Assessed at the December close on the current year's
 net income before the repayment (line 23400), capped at the OAS received that
@@ -285,9 +286,10 @@ between adjustments and loses real value until the next one, as a published
 maximum does. We pay the amount the scenario states, in January dollars of
 the start year, unchanged every month apart from the OAS age-band step-up;
 the erosion factor reaches only amounts read from `params/` (L5). Direction:
-optimistic, by one erosion factor per schedule, larger for CPP (adjusted
-annually) than for OAS (quarterly). Lives in `engine/benefits/cpp.py::pension_monthly`,
-`oas.py::gross_pension_monthly`, `pension.py::db_pension_monthly`.
+optimistic on pension income, by one erosion factor per schedule, larger for
+CPP (adjusted annually) than for OAS (quarterly). Lives in
+`engine/benefits/cpp.py::pension_monthly`, `oas.py::gross_pension_monthly`,
+`pension.py::db_pension_monthly`.
 
 **L54. A benefit start already past when the run opens.** In reality an
 unstarted CPP or OAS pension can be backdated a limited time, with a back
@@ -325,20 +327,21 @@ minimum. Lives in `engine/accounts/rrif.py`.
 
 **L27. LIF maximum.** In reality Alberta's maximum is the greater of the
 factor result and the prior year's investment return. We apply the factor
-result only. Direction: conservative, the ceiling is never higher than the
-rule allows. Not modelled: the one-time unlocking transfer, small-balance and
-hardship unlocking. Lives in `engine/accounts/lira.py`.
+result only. Direction: conservative on the LIF maximum: the modelled
+ceiling is never higher than the rule allows. Not modelled: the one-time
+unlocking transfer, small-balance and hardship unlocking. Lives in
+`engine/accounts/lira.py`.
 
 **L47. One locked-in account per person.** In reality a person may hold
 several LIRAs or LIFs, from several employers, registered in different
 jurisdictions, and they do not merge: each is drawn under the maximum table of
 the jurisdiction its own originating pension was registered in. We model at
 most one LIRA and one LIF per person, sharing one jurisdiction. Direction:
-neutral for a household whose locked-in money is all from one jurisdiction,
-which is the common case; where it is not, the ceiling on the whole balance
-comes from whichever jurisdiction the scenario names, and the error runs in
-either direction depending on which table is the looser. Lives in
-`engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
+neutral on the LIF maximum for a household whose locked-in money is all from
+one jurisdiction, which is the common case; where it is not, the ceiling on
+the whole balance comes from whichever jurisdiction the scenario names, and
+the error runs in either direction depending on which table is the looser.
+Lives in `engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
 `engine/core/state.py::LiraState` and `LifState`, read by
 `engine/accounts/lira.py`.
 
@@ -358,7 +361,7 @@ input rather than computed from history.
 **L30. Student's tax.** In reality grants and growth are taxable to the
 student when paid out. We pay them tax-free, on the grounds that a student
 drawing a typical plan over four years stays below the basic personal amounts.
-Direction: optimistic when the student has other income.
+Direction: optimistic on the student's tax when the student has other income.
 
 **L31. Withdrawal shape.** The plan pays the scheduled education cost evenly
 over the window, grants and growth first, then contributions. Not modelled:
@@ -391,8 +394,8 @@ regime dependence, sequence effects beyond what the draws produce.
 interest, eligible dividends, and distributed capital gains as fractions of
 balance per year; price change is total return less yields. Distributions are
 reinvested and raise the adjusted cost base. Withdrawals realise a
-proportional share of the embedded gain. Direction: neutral in expectation.
-Lives in `engine/accounts/taxable.py`.
+proportional share of the embedded gain. Direction: neutral on tax in
+expectation. Lives in `engine/accounts/taxable.py`.
 
 **L37. Allocation.** Each account holds fixed weights over asset classes and
 is rebalanced monthly at no cost. No glide path.
@@ -401,8 +404,8 @@ is rebalanced monthly at no cost. No glide path.
 allowed: the step force-withdraws in the policy's order, and if nothing
 remains spending is cut and the path is flagged depleted. In reality each
 spouse holds their own cash; we hold one household balance. Exact while cash
-pays nothing, since no income arises to attribute. Direction: neutral. The
-attribution lost when pooled cash funds one spouse's account is L50. Lives
+pays nothing, since no income arises to attribute. Direction: neutral on tax.
+The attribution lost when pooled cash funds one spouse's account is L50. Lives
 in `engine/core/state.py::HouseholdState.cash`.
 
 **L50. Spousal attribution.** In reality income and gains on property one
@@ -410,7 +413,7 @@ spouse funds in the other's name are attributed back to the spouse who
 supplied the money. Cash is one household balance (L38), so the model does
 not know whose money funded a contribution, and taxes a taxable account's
 income and gains to its holder. A policy can therefore shift investment
-income to the lower-income spouse for free. Direction: optimistic for
+income to the lower-income spouse for free. Direction: optimistic on tax for
 couples with unequal incomes. Lives in
 `engine/core/state.py::HouseholdState.cash`.
 
