@@ -71,7 +71,7 @@ gis:
   income_base:
     excludes_oas_pension: true         # verify: OAS itself is not GIS-testable income
     excludes_gis: true                 # GIS is non-taxable and not self-testing
-    prior_year_income: true            # same July-June cycle as benefit_year above
+    prior_year_income: true            # same July-June cycle as benefit_year in params/{year}/oas.yaml
 
     # For couples the test is on COMBINED income, but the reduction RATE per
     # dollar differs by case. gis.py must not assume combined income implies a

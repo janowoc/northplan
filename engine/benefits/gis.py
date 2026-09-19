@@ -5,7 +5,8 @@
 
 GIS is income-tested, non-taxable, and reduced against a different income
 base than the OAS recovery tax uses. None of that is populated:
-``params/{year}/oas.yaml`` carries ``gis.modelled: false`` and nothing else.
+``params/{year}/oas.yaml`` carries ``gis.modelled: false`` and the two band
+thresholds, nothing a GIS calculation needs.
 
 This module computes no supplement. It reports whether a household's testable
 income — line 23600 less the OAS received, annual, current year — falls in the
@@ -19,9 +20,10 @@ Monte Carlo run — the part a retirement plan exists to be read for — refused
 most modest households outright. Reporting the exposure instead keeps the
 answer and makes the exposure visible rather than silencing it.
 
-The band thresholds sit below the published GIS cut-offs on purpose: they are
-a conservative band around where GIS would begin to matter, not a GIS
-calculation, and must not be read as one.
+The band thresholds are the published GIS cut-offs, not a GIS calculation,
+and must not be read as one. The couple threshold is the cut-off for a couple
+who both receive OAS, and it is applied to every couple; L2 records the
+direction of that.
 
 The income is an approximation on the same terms. Of the five entries under
 ``gis.income_base`` in ``params/gis_not_implemented.yaml``, three are met: the
@@ -121,7 +123,8 @@ def in_band(
     All-false when :func:`is_modelled` is true: the exposure indicator has
     nothing to report once GIS is actually computed elsewhere. Otherwise
     compares ``net_income_after_repayment - oas_received`` to
-    :func:`band_threshold_annual`, inclusive at the threshold. The caller is
+    :func:`band_threshold_annual`, exclusive at the threshold: the published
+    cut-off is the income at which GIS reaches zero. The caller is
     expected to count only path-years in which at least one living household
     member receives OAS — L2's "living pensioner" — since a household with no
     one drawing OAS is not exposed to GIS at all.
@@ -156,4 +159,4 @@ def in_band(
         oas_received, dtype=np.float64
     )
     threshold = band_threshold_annual(has_spouse, january_month_index, params)
-    return np.asarray(testable <= threshold, dtype=np.bool_)
+    return np.asarray(testable < threshold, dtype=np.bool_)

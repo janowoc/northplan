@@ -110,16 +110,16 @@ recovery_tax:
 # income base than the recovery tax uses — the testable basis is combined
 # across a couple and is not net income.
 
+# 2026-09-18 https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/guaranteed-income-supplement/benefit-amount.html
 gis:
   modelled: false
   # Not a GIS calculation. These bound the reporting band: the engine reports
   # the fraction of path-years in which a living pensioner's projected
-  # testable income sits inside them, so a plan leaning on unmodelled GIS is
-  # visible rather than silent (L2). Set BELOW the published cutoffs on
-  # purpose — erring low widens the band, which is the safe direction.
+  # testable income sits below them, so a plan leaning on unmodelled GIS is
+  # visible rather than silent (L2).
   band_thresholds:
     single_testable_income_annual: 22800
-    couple_combined_testable_income_annual: 42144
+    couple_combined_testable_income_annual: 30096
 
 # --- NOT HERE ---------------------------------------------------------------
 # Full OAS requires 40 years of residence after 18; 10 years gets a partial pension at 1/40th per year of residence.

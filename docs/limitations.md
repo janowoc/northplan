@@ -53,7 +53,13 @@ is tested on more than GIS would test it on, so it falls in the band less
 often. The missed timing over-reports for the common shape, a household whose
 income falls after retirement: the current year is lower than the prior year
 GIS would test, so it falls in the band more often. For a household whose
-income is rising, the timing under-reports too.
+income is rising, the timing under-reports too. The band thresholds are the
+published cut-offs for a single pensioner and for a couple who both receive
+OAS; there they carry only L5's error, which sets them a little high, so the
+indicator over-reports slightly. A couple in which only one person receives
+OAS has a higher published cut-off, whether or not the spouse receives the
+Allowance, but is tested against the both-OAS figure, so the indicator
+under-reports for it.
 Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated

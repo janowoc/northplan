@@ -32,26 +32,30 @@ def test_is_modelled_false_for_real_2026(oas) -> None:
 
 def test_in_band_flips_exactly_at_single_threshold(oas) -> None:
     threshold = band_threshold_annual(False, JANUARY, oas)
+    below = in_band(threshold - 1.0, 0.0, False, JANUARY, oas)
     at = in_band(threshold, 0.0, False, JANUARY, oas)
     above = in_band(threshold + 1.0, 0.0, False, JANUARY, oas)
-    assert bool(at)
+    assert bool(below)
+    assert not bool(at)
     assert not bool(above)
 
 
 def test_in_band_flips_exactly_at_couple_threshold(oas) -> None:
     threshold = band_threshold_annual(True, JANUARY, oas)
+    below = in_band(threshold - 1.0, 0.0, True, JANUARY, oas)
     at = in_band(threshold, 0.0, True, JANUARY, oas)
     above = in_band(threshold + 1.0, 0.0, True, JANUARY, oas)
-    assert bool(at)
+    assert bool(below)
+    assert not bool(at)
     assert not bool(above)
 
 
 def test_in_band_subtracts_oas(oas) -> None:
     threshold = band_threshold_annual(False, JANUARY, oas)
     net_income_after_repayment = threshold + 500.0
-    # Line 23600 alone is above the threshold; less the OAS it is at it.
+    # Line 23600 alone is above the threshold; less the OAS it is one dollar below it.
     above_before_oas_subtracted = in_band(net_income_after_repayment, 0.0, False, JANUARY, oas)
-    in_band_after_oas_subtracted = in_band(net_income_after_repayment, 500.0, False, JANUARY, oas)
+    in_band_after_oas_subtracted = in_band(net_income_after_repayment, 501.0, False, JANUARY, oas)
     assert not bool(above_before_oas_subtracted)
     assert bool(in_band_after_oas_subtracted)
 

@@ -65,7 +65,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 42 | Deduct the OAS repayment: line 23600 as well as line 23400 | agent | 14 | gross tax and the age amount are computed on net income less the repayment; L49 is gone |
 | 43 | Rename `non_refundable_credits`'s income parameter: it is never line 23400 | agent | 42 | both signatures name `income`; no call site names `net_income` |
 | 44 | Say which income the GIS band tests: `in_band`'s parameter is not line 23400 | agent | 42 | `in_band` and L2 each name line 23600 and call the current-year basis an approximation |
-| 45 | The `gis` block in `params/2026/oas.yaml` has no source, and its direction comment looks inverted | human | — | the block carries a source and a checked date; its direction matches `testable <= threshold` |
+| 45 | The `gis` block in `params/2026/oas.yaml` has no source, and its direction comment looks inverted | human | — | the block carries a source and a checked date; its direction matches `testable < threshold` |
 | 46 | L2 states three directions of error under one word, and they are not the same sign | agent | 44 | each clause in L2's direction passage names what its sign is about |
 | 47 | Direction verdicts in limitations.md: one wrong sign (L11), and verdicts that don't name what they are about | agent | 46 | every `Direction:` names what its sign is about; L11's sign follows the file's definition |
 
@@ -207,10 +207,10 @@ L2 and `params/2026/oas.yaml` agreed with one another turned up the one place
 they do not: the `gis` block carries neither a source URL nor a checked date,
 though the file's own header calls those comments the audit record, and the
 per-file provenance test passes on `recovery_tax`'s line instead. The same
-block says erring low "widens the band" where `in_band` tests
-`testable <= threshold`, which narrows it. Both are the human's alone — the
-file is hers and the numbers are parameters. It sits after 44 and ahead of 35,
-which is the first to report the band.
+block said erring low "widens the band" where `in_band` tested `testable <=
+threshold`, which narrowed it. Both are the human's alone — the file is hers
+and the numbers are parameters. It sits after 44 and ahead of 35, which is the
+first to report the band.
 
 Issue 46 came out of the same review. L2's direction sentence says "optimistic
 on income for low-income households", but not modelling GIS leaves the
@@ -225,9 +225,9 @@ after 45 because the sign judgements are the human's.
 Issue 47 came out of the review of 46. Checking L2's new wording against the
 rest of the file found L11 calling an omitted credit optimistic on tax, which
 the file's own definition makes conservative, and thirteen more entries whose
-verdict names a sign but not what it is on. L2 is left out: the sentence it
-still lacks, on the band thresholds, waits on 45. It sits straight after 46
-because it is the same repair applied to the rest of the file.
+verdict names a sign but not what it is on. L2 is left out: 45 supplies the
+sentence it lacked, on the band thresholds. It sits straight after 46 because
+it is the same repair applied to the rest of the file.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
