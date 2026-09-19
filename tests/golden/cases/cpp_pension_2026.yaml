@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: CPP retirement pension, annual, at the MAXIMUM (contributory_history
+# 1.0 = 100% of the maximum), started at 60, 65, and 70. The function returns
+# 12 x (maximum at 65 monthly) x (start adjustment factor).
+#
+# Where to find the expected values:
+#   Service Canada's CPP pages give the MAXIMUM MONTHLY amount for someone
+#   starting in 2026 at 60, at 65, and at 70. The two pages cpp.yaml already
+#   cites are the place to start:
+#     https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html
+#     https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html
+#   Use the figure labelled as the 2026 MAXIMUM for a new recipient (not the
+#   "average" column, and not the survivor or disability tables).
+#   expected.value = 12 x that monthly figure. Write the monthly figure in the
+#   trailing comment so a reviewer can check the multiplication.
+#
+#   If the page states only a percentage for 60 or 70 (for example "36% less")
+#   and no dollar figure, the case is arithmetic on the 65 maximum, not a
+#   published number. Say so in `source` rather than presenting it as a table
+#   value.
+#
+# rounding: monthly_cent_times_twelve, because the source rounds a MONTHLY
+# figure to the cent and the case multiplies it by 12. If Service Canada
+# publishes an ANNUAL figure directly, use that and drop to the default (cent).
+#
+# Inputs are fixed: January 2026 (month_index 0), zero inflation, so the
+# real view returns the file's nominal values unchanged.
+
+target: engine.benefits.cpp.pension_annual
+cases:
+  - name: maximum, started at 60
+    source: "65 maximum * (1 - 0.36), arithmetic https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      contributory_history: 1.0
+      start_age_months: 720            # 60 * 12
+      month_index: 0
+      real_params: {year: 2026, file: cpp, inflation: 0.0}
+    expected:
+      value: 11578.752                 # 12 * 1507.65 * (1 - 0.36)
+
+  - name: maximum, started at 65
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/cpp/amount.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      contributory_history: 1.0
+      start_age_months: 780            # 65 * 12
+      month_index: 0
+      real_params: {year: 2026, file: cpp, inflation: 0.0}
+    expected:
+      value: 18091.80                  # 12 * 1507.65
+
+  - name: maximum, started at 70
+    source: "65 maximum * (1 + 0.42), arithmetic https://www.canada.ca/en/services/benefits/publicpensions/cpp/when-start.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      contributory_history: 1.0
+      start_age_months: 840            # 70 * 12
+      month_index: 0
+      real_params: {year: 2026, file: cpp, inflation: 0.0}
+    expected:
+      value: 25690.356                 # 12 * 1507.65 * (1 + 0.42)

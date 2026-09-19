@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: a whole year's employee CPP contributions, reached by calling the
+# monthly function once with the full year's earnings as "this month" and
+# nothing earned before (income_ytd 0). The function is year-to-date aware,
+# so this equals the annual contribution.
+#
+# Where to find the values (CRA; the two pages cpp.yaml cites):
+#   first tier (CPP):  https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html
+#       2026 row: "Maximum annual pensionable earnings" (YMPE) and
+#                 "Maximum employee and employer contribution" (EMPLOYEE share, not the
+#                 combined or self-employed figure)
+#   second tier (CPP2): https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html
+#       2026 row: "Additional maximum annual pensionable earnings" (YAMPE) and
+#                 "Maximum employee and employer second additional contribution"
+#
+# The engine does NOT return a single total. It returns two named outputs:
+#   base     = the base-rate part of the first tier (the part that earns the credit)
+#   enhanced = the rest of the first tier + all of the second tier (the deduction)
+# CRA publishes neither split directly, so each expected value below is
+# arithmetic on the published maxima. Write the arithmetic in the comment:
+#   base     = CPP_max x base_rate / employee_rate      (the 4.95 / 5.95 split, as a ratio of rates)
+#   enhanced = CPP_max - base  +  CPP2_max (the CPP2 term only when earnings pass the YAMPE)
+#
+# "Twice the ceiling" means twice the YMPE. That is above the YAMPE, so both
+# tiers are at their maxima.
+
+target: engine.benefits.employment.cpp_contributions_monthly
+cases:
+  - name: earnings exactly at the YMPE
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/canada-pension-plan-cpp/cpp-contribution-rates-maximums-exemptions.html"
+    checked: 2026-09-18
+    inputs:
+      # despite the 'monthly' name, the test expects an annual amount here
+      monthly_income: 74600.00         # the YMPE as CRA publishes it $74,600
+      income_ytd: 0.0
+      january_month_index: 0
+      real_params: {year: 2026, file: cpp, inflation: 0.0}
+    expected:
+      base: 3519.45                    # 4230.45 * 0.0495 / 0.0595 = 3519.45
+      enhanced: 711.00                 # 4230.45 - 3519.45
+
+  - name: earnings at twice the YMPE
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html"
+    checked: 2026-09-18
+    inputs:
+      # despite the 'monthly' name, the test expects an annual amount here
+      monthly_income: 149200.00        # 2 x YMPE
+      income_ytd: 0.0
+      january_month_index: 0
+      real_params: {year: 2026, file: cpp, inflation: 0.0}
+    expected:
+      base: 3519.45                    # same as the case above
+      enhanced: 1127.00                # (CPP_max - base) + CPP2_max => 711.00 + 416.00

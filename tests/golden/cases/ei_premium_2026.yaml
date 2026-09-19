@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: a whole year's EI premium (full year's earnings as one "month",
+# income_ytd 0), for a worker OUTSIDE Quebec.
+#
+# Where to find the values (the page federal.yaml cites):
+#   https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html
+#   2026 row, "Canada (except Quebec)" / federal columns:
+#     "Maximum annual insurable earnings" and "Maximum annual EMPLOYEE premium"
+#   Not the employer premium (1.4 x the employee premium), and not the Quebec row.
+#
+# At the ceiling and at twice it, the expected value is the published maximum
+# employee premium: a direct table value, with no arithmetic.
+
+target: engine.benefits.employment.ei_premium_monthly
+cases:
+  - name: earnings exactly at the maximum insurable earnings
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html"
+    checked: 2026-09-18
+    inputs:
+      monthly_income: 68900.00         # maximum annual insurable earnings
+      income_ytd: 0.0
+      january_month_index: 0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+    expected:
+      value: 1123.07                   # maximum annual employee premium
+
+  - name: earnings at twice the maximum insurable earnings
+    source: "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html"
+    checked: 2026-09-18
+    inputs:
+      monthly_income: 137800.00        # 2 x maximum annual insurable earnings
+      income_ytd: 0.0
+      january_month_index: 0
+      real_params: {year: 2026, file: federal, inflation: 0.0}
+    expected:
+      value: 1123.07                   # same maximum annual employee premium

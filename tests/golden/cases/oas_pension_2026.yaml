@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# target: gross OAS, annual (12 x the monthly amount), full residence (L22),
+# at 65 taken at 65, at 70 deferred to 70, and at 75 taken at 65.
+#
+# Where to find the expected values:
+#   https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html
+#   (the page oas.yaml cites). It gives a MAXIMUM MONTHLY PAYMENT per age group
+#   ("65 to 74" and "75 and over") FOR ONE QUARTER.
+#
+#   !! QUARTER. OAS changes every January, April, July, and October. With zero
+#   inflation the engine returns exactly the figure in params/2026/oas.yaml,
+#   so the case must use the SAME QUARTER as that file. That file's figures
+#   were checked 2026-09-04. Before filling this in, confirm which quarter's
+#   table they came from and use that quarter's row here. Name the quarter in
+#   `source`. If the file turns out to hold a quarter other than Jan-Mar 2026,
+#   that is a params question under the January-dollars convention, not
+#   something this case settles.
+#
+#   Deferral to 70: if the page (or the deferral page it links to) publishes a
+#   dollar figure for a pension deferred to 70, use it. If it only says "up to
+#   36% more", the expected value is 12 x (65-74 max) x 1.36, which is
+#   arithmetic, and `source` should say so.
+#
+#   Age 75: the higher band starts in the month AFTER the 75th birthday
+#   (oas.yaml band from_age_months: 901). So current_age_months is 901, not
+#   900. At 900 the engine correctly still pays the 65-74 amount.
+#
+# rounding: monthly_cent_times_twelve (a monthly figure to the cent, x 12).
+
+target: engine.benefits.oas.gross_pension_annual
+cases:
+  - name: taken at 65, age 65
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      current_age_months: 780          # 65 * 12
+      start_age_months: 780
+      month_index: 0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+    expected:
+      value: 9023.64                   # 12 * 751.97
+
+  - name: deferred to 70, age 70
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/when-start.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      current_age_months: 840          # 70 * 12
+      start_age_months: 840
+      month_index: 0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+    expected:
+      value: 12272.16                  # 12 * 1022.68
+
+  - name: taken at 65, first month of the 75-and-over band
+    source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html"
+    checked: 2026-09-18
+    rounding: monthly_cent_times_twelve
+    inputs:
+      current_age_months: 901          # month after the 75th birthday
+      start_age_months: 780
+      month_index: 0
+      real_params: {year: 2026, file: oas, inflation: 0.0}
+    expected:
+      value: 9926.04                   # 12 * 827.17
