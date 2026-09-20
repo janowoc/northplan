@@ -68,6 +68,9 @@ belongs. `--standalone` writes a full document for a browser.
 | 45 | The `gis` block in `params/2026/oas.yaml` has no source, and its direction comment looks inverted | human | — | the block carries a source and a checked date; its direction matches `testable < threshold` |
 | 46 | L2 states three directions of error under one word, and they are not the same sign | agent | 44 | each clause in L2's direction passage names what its sign is about |
 | 47 | Direction verdicts in limitations.md: one wrong sign (L11), and verdicts that don't name what they are about | agent | 46 | every `Direction:` names what its sign is about; L11's sign follows the file's definition |
+| 48 | One year's decay for nominal balances, and the nominal/real classification test | agent | 8, 11, 33 | an unclassified state field fails; the factor equals twelve months of `unindexed_factor` |
+| 49 | Two years of net income in the state and the scenario | agent | 11, 33 | the example loads with both figures; an offset other than -2 raises |
+| 50 | The AIP penalty in the assessment: which line, and a field on `Assessment` | agent | 14, 18 | a wind-up's penalty reaches assessed tax without touching net income |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -228,6 +231,27 @@ the file's own definition makes conservative, and thirteen more entries whose
 verdict names a sign but not what it is on. L2 is left out: 45 supplies the
 sentence it lacked, on the band thresholds. It sits straight after 46 because
 it is the same repair applied to the rest of the file.
+
+Issues 48, 49 and 50 all came out of the design review of 18, held before any
+account code was written. 48 is the one 18 waits on: the engine deflates a
+nominal *limit* on principle, but several balances the state carries are
+nominal in the same way and would sit constant in real dollars — unused room,
+the RESP lifetime totals and its buckets, and the adjusted cost base, where a
+real ACB exempts the inflation part of every capital gain from tax. 48 supplies
+the one-year factor and the test that classifies every state field; 18 and 19
+apply it. It sits between 17 and 18.
+
+Issue 49 follows from the enhanced grant's reach-back, which the provider guide
+puts two years back rather than one, so the state has to carry two years of net
+income and the scenario has to state both. No account code reads it — the
+family income arrives at `resp.py` as an argument — so it sits after 18 and
+before 19, the first code that has to assemble that figure.
+
+Issue 50 assesses the RESP wind-up penalty. 18 computes the penalty from the
+rate in `params/`, and nothing can charge it until `Assessment` carries a field
+for an additional tax that is not a reduction of income. It sits after 19 and
+before 35, whose December close is where the figure would be passed in, and it
+opens with questions for the human about which line the payment lands on.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
