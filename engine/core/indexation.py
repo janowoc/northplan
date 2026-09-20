@@ -59,6 +59,7 @@ __all__ = [
     "RoutedParameterError",
     "UnroutedParameterError",
     "erosion_factor",
+    "nominal_carry_factor",
     "real_year",
     "schedule",
     "unindexed_factor",
@@ -163,6 +164,31 @@ def unindexed_factor(inflation_rate: float, month_index: int) -> float:
         )
     _check_inflation(inflation_rate)
     return (1 + inflation_rate) ** (-month_index / MONTHS_PER_YEAR)
+
+
+def nominal_carry_factor(inflation_rate: float) -> float:
+    """One January's decay for a balance the *state* carries, fixed in nominal terms.
+
+    For a dollar figure a parameter file routes as unindexed, ``RealParamSet`` applies
+    :func:`unindexed_factor` on read. A state balance has no ``indexation`` block to route it, so
+    a caller carrying one across a January is the one that must know it is nominal and owes it
+    this factor; ``tests/core/test_state_nominal_or_real.py`` is where that classification, field
+    by field, is made explicit.
+
+    Takes the inflation rate only, no month index: the ratio between two consecutive Januaries
+    does not depend on which two.
+
+    Args:
+        inflation_rate: Assumed annual inflation as a bare fraction.
+
+    Returns:
+        A multiplier, exactly 1 at zero inflation, below 1 while prices rise, above 1 under
+        deflation.
+
+    Raises:
+        ValueError: If ``inflation_rate`` is at or below -1.
+    """
+    return unindexed_factor(inflation_rate, MONTHS_PER_YEAR)
 
 
 def _check_inflation(inflation_rate: float) -> None:

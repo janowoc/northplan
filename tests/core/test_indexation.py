@@ -30,6 +30,7 @@ from engine.core.indexation import (
     RoutedParameterError,
     UnroutedParameterError,
     erosion_factor,
+    nominal_carry_factor,
     real_year,
     schedule,
     unindexed_factor,
@@ -230,6 +231,36 @@ def test_an_unindexed_amount_decays_without_limit() -> None:
 def test_a_month_before_the_start_of_the_run_is_refused() -> None:
     with pytest.raises(ValueError, match="cannot be negative"):
         unindexed_factor(0.02, -1)
+
+
+# --- nominal_carry_factor ----------------------------------------------------
+
+
+class TestNominalCarryFactor:
+    """One year of :func:`unindexed_factor`, for a state balance rather than a parameter."""
+
+    @pytest.mark.parametrize("rate", [0.0, 0.02, HALVING, -0.5])
+    def test_agrees_with_unindexed_factor_at_twelve_months(self, rate: float) -> None:
+        """Delegation, asserted directly: the two must agree by construction."""
+        assert nominal_carry_factor(rate) == unindexed_factor(rate, 12)
+
+    def test_zero_inflation_carries_the_balance_unchanged(self) -> None:
+        assert nominal_carry_factor(0.0) == 1.0
+
+    def test_a_positive_rate_erodes_the_balance(self) -> None:
+        assert nominal_carry_factor(0.02) < 1.0
+
+    def test_a_negative_rate_inflates_the_balance(self) -> None:
+        assert nominal_carry_factor(-0.5) > 1.0
+
+    @pytest.mark.parametrize("rate", [-1.0, -1.5, -2])
+    def test_a_rate_at_or_below_minus_one_is_refused(self, rate: float) -> None:
+        with pytest.raises(ValueError, match="greater than -1"):
+            nominal_carry_factor(rate)
+
+    def test_the_closed_form_at_two_percent(self) -> None:
+        """An independent check, so the test does not merely restate the delegation."""
+        assert nominal_carry_factor(0.02) == pytest.approx(1 / 1.02)
 
 
 # --- schedule ---------------------------------------------------------------
