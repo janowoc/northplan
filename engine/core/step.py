@@ -113,9 +113,15 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        year's OAS), and capped at the OAS received this year.
     4. Assessment less ``remitted_ytd`` becomes ``balance_owing`` (or a refund),
        settled in next year's filing month.
-    5. Store this year's net income after the social benefits repayment (line
-       23600, ``Assessment.net_income_after_repayment``) in ``prior_year_net_income``,
-       read by next year's RESP enhanced-grant rate; the OAS repayment is not
+    5. Shift the pair of net-income fields: ``net_income_two_years_prior``
+       takes the value ``prior_year_net_income`` held all year, and
+       ``prior_year_net_income`` takes this year's net income after the
+       social benefits repayment (line 23600,
+       ``Assessment.net_income_after_repayment``) — written for every person,
+       including one who has died (#35). ``net_income_two_years_prior`` is
+       the one next year's RESP enhanced-grant rate reads; the newly written
+       ``prior_year_net_income`` is not read until the December close after
+       this one shifts it into that older field. The OAS repayment is not
        stored here, it is assessed in item 3.
     6. Append the year to ``history``.
 

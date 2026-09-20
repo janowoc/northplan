@@ -410,15 +410,24 @@ class PersonState:
         employment, pensions: Bands and defined-benefit pensions, in scenario order, possibly empty.
         income, balance_owing: Year-to-date income components, and the prior year's assessed tax
             unpaid (paid in the filing month).
-        prior_year_net_income: Net income after the social benefits repayment
-            (line 23600) for the prior calendar year, per person, ``(n_paths,)``.
-            Its one consumer is the RESP enhanced-grant rate
-            (``grant.enhanced.income_year_offset``), summed across every person in
-            the household, including one who has died, whose last-written figure
-            keeps counting (L33); not read by the OAS repayment (assessed on the current
-            year) nor by the GIS band indicator (a different income basis). The one
-            field taken as filed rather than converted to real dollars, until the
-            first December close writes a real figure
+        prior_year_net_income, net_income_two_years_prior: Net income after the
+            social benefits repayment (line 23600), per person, ``(n_paths,)``:
+            ``prior_year_net_income`` for the calendar year before the
+            scenario's start year, ``net_income_two_years_prior`` for the year
+            before that. Their one consumer is the RESP enhanced-grant rate
+            (``grant.enhanced.income_year_offset``), which reads the **older**
+            of the two, ``net_income_two_years_prior``, because the reach-back
+            is two years; summed across every person in the household,
+            including one who has died, whose last-written figure keeps
+            counting (L33); not read by the OAS repayment (assessed on the
+            current year) nor by the GIS band indicator (a different income
+            basis). At each December close the pair shifts — the older takes
+            the value of the newer, the newer takes this year's line 23600 —
+            written for every person including one who has died (implemented
+            in #35). Both are taken as filed rather than converted to real
+            dollars, each replaced in turn: ``prior_year_net_income`` at the
+            first December close, ``net_income_two_years_prior`` only at the
+            second, once the shift has carried a real figure into it
             (``engine.core.step.close_year``, item 5).
     """
 
@@ -441,10 +450,11 @@ class PersonState:
     income: IncomeLedger
     balance_owing: NDArray[np.float64]
     prior_year_net_income: NDArray[np.float64]
+    net_income_two_years_prior: NDArray[np.float64]
 
     def __post_init__(self) -> None:
         _freeze_fields(self, "alive", "death_month_index", "balance_owing")
-        _freeze_fields(self, "prior_year_net_income")
+        _freeze_fields(self, "prior_year_net_income", "net_income_two_years_prior")
         if np.any(~self.alive & (self.death_month_index == DEATH_NOT_DRAWN)):
             raise ValueError(
                 "at least one path has alive=False but death_month_index is "

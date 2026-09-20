@@ -10,7 +10,8 @@
 #
 # Conventions:
 #   - Every dollar amount is a REAL dollar of January 2026, the start year,
-#     except prior_year_net_income, which is taken as filed.
+#     except prior_year_net_income and net_income_two_years_prior, which are
+#     taken as filed.
 #     Do not inflate a future salary or a future school fee; the engine works
 #     in this January's purchasing power and converts once, at display.
 #   - Rates and shares are bare fractions (0.02), never percentages (2).
@@ -40,6 +41,7 @@ household:
         - {from_year: 2026, to_year: 2031, annual: 95000}   # both years inclusive
       cpp: {contributory_history: 0.85}          # or {in_pay_monthly: 1200}; exactly one
       prior_year_net_income: 92000               # as filed for the prior year, not restated
+      net_income_two_years_prior: 88000          # as filed two years before start, not restated
       db_pensions:
         - name: employer
           start_year: 2031

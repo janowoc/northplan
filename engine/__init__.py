@@ -15,8 +15,9 @@ Invariants that hold everywhere below this package:
   monthly timeline, not a second loop.
 - Every dollar amount crossing a function boundary is real (constant
   purchasing power) dollars in the scenario's base year, except the opening
-  ``PersonState.prior_year_net_income``, taken as filed until the first
-  December close replaces it with a real figure.
+  ``PersonState.prior_year_net_income`` and
+  ``PersonState.net_income_two_years_prior``, taken as filed until the
+  December closes that replace them with real figures.
 - Indexed amounts are constant in real terms except for a per-schedule
   erosion factor (``engine.core.indexation.erosion_factor``) covering the
   within-cycle erosion between adjustment dates; the CPI lag is separate,

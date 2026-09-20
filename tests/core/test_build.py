@@ -134,6 +134,14 @@ class TestBuildAgainstTheExample:
         state = build_initial_state(scenario, n_paths=N_PATHS)
         assert (state.persons[0].prior_year_net_income == 92_000.0).all()
 
+    def test_the_two_years_of_net_income_are_broadcast_and_not_crossed(self, scenario) -> None:
+        """The example's two figures (92000, 88000) differ on purpose (brief-49 s8): a
+        test that only checked one field could pass with the two swapped in build.py.
+        """
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        assert (state.persons[0].prior_year_net_income == 92_000.0).all()
+        assert (state.persons[0].net_income_two_years_prior == 88_000.0).all()
+
     def test_education_start_month_index(self, scenario) -> None:
         state = build_initial_state(scenario, n_paths=N_PATHS)
         resp = state.beneficiaries[0].resp

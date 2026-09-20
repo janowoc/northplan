@@ -20,6 +20,7 @@ from a dollar in ``params/`` to the engine. ``mortality`` owns the survival
 curve and the per-path death draw. ``state`` is what passes between months.
 
 All amounts are real dollars, except the opening
-``PersonState.prior_year_net_income``, which is the scenario's figure as
-filed. All arrays are shape ``(n_paths,)``.
+``PersonState.prior_year_net_income`` and
+``PersonState.net_income_two_years_prior``, which are the scenario's figures
+as filed. All arrays are shape ``(n_paths,)``.
 """

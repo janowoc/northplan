@@ -223,6 +223,16 @@ REJECTIONS = [
         "prior_year_net_income",
         sets("household.persons.0.prior_year_net_income", -1),
     ),
+    rejected(
+        "net-income-two-years-prior-absent",
+        "net_income_two_years_prior",
+        deletes("household.persons.0.net_income_two_years_prior"),
+    ),
+    rejected(
+        "negative-net-income-two-years-prior",
+        "net_income_two_years_prior",
+        sets("household.persons.0.net_income_two_years_prior", -1),
+    ),
     # --- Employment ---------------------------------------------------------
     rejected(
         "employment-bands-overlap",
@@ -661,6 +671,10 @@ ACCEPTANCES = [
         sets("household.persons.0.prior_year_net_income", 0),
     ),
     accepted(
+        "a-net-income-two-years-prior-of-zero",
+        sets("household.persons.0.net_income_two_years_prior", 0),
+    ),
+    accepted(
         "a-person-already-receiving-oas-needs-no-start-age",
         sets("household.persons.0.oas", {"in_pay_monthly": 800}),
         sets("policies.0.elections.oas_start_age_years", {}),
@@ -793,6 +807,36 @@ def test_absent_prior_year_net_income_names_the_person_by_id(tmp_path: Path) -> 
     assert "prior_year_net_income" in message, message
     assert "person 'a'" in message, message
     assert "Field required" not in message, message
+
+
+def test_absent_net_income_two_years_prior_names_the_person_by_id(tmp_path: Path) -> None:
+    """Mirrors :func:`test_absent_prior_year_net_income_names_the_person_by_id` for the
+    sibling field; the two keys share one before-validator (brief-49 s4(b))."""
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        load_mutated(tmp_path, (deletes("household.persons.0.net_income_two_years_prior"),))
+
+    message = str(excinfo.value)
+    assert "net_income_two_years_prior" in message, message
+    assert "person 'a'" in message, message
+    assert "Field required" not in message, message
+
+
+def test_absent_both_net_income_fields_names_both_in_one_message(tmp_path: Path) -> None:
+    """One before-validator covers both keys (brief-49 s4(b)) precisely so a scenario
+    missing both gets one message naming both, not just the first pydantic would report."""
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        load_mutated(
+            tmp_path,
+            (
+                deletes("household.persons.0.prior_year_net_income"),
+                deletes("household.persons.0.net_income_two_years_prior"),
+            ),
+        )
+
+    message = str(excinfo.value)
+    assert "1 validation error" in message, message
+    assert "prior_year_net_income" in message, message
+    assert "net_income_two_years_prior" in message, message
 
 
 def test_absent_prior_year_net_income_and_absent_id_names_neither(tmp_path: Path) -> None:

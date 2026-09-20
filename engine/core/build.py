@@ -363,6 +363,7 @@ def _build_person(
         income=_empty_income_ledger(n_paths),
         balance_owing=_zeros(n_paths),
         prior_year_net_income=_broadcast(person.prior_year_net_income, n_paths),
+        net_income_two_years_prior=_broadcast(person.net_income_two_years_prior, n_paths),
     )
 
 

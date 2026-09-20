@@ -195,7 +195,8 @@ modelled (L2) — so the two lines differ by the OAS repayment alone, and only
 for a person who owes one. Line 26000 equals line 23600 since no Division C
 deduction is modelled. The repayment is tested against line 23400; the tax
 brackets and the age amount are applied to line 23600, as is the RESP
-enhanced-grant rate through `PersonState.prior_year_net_income`. Gross OAS
+enhanced-grant rate through `PersonState.net_income_two_years_prior`, a line
+23600 figure like its sibling `PersonState.prior_year_net_income`. Gross OAS
 enters both lines as income, as the rules require; what separates them is the
 repayment deducted at line 23500, not a different treatment of the pension
 itself. Direction: conservative on tax — the omitted deductions and the
@@ -419,10 +420,10 @@ overstates family income and so lowers the rate; conservative.
 between a past year's nominal income and this year's published, nominal
 cut-offs. We compare a real-dollar income with a cut-off the engine has
 deflated, so the income runs high by roughly half a year of inflation in the
-start year, a year and a half in year two, and two years thereafter.
-Direction: conservative — a household crosses a cut-off slightly early — and
-small: at most one rate step on the eligible window per beneficiary per
-year.
+start year, a year and a half in year two, and two and a half years
+thereafter. Direction: conservative — a household crosses a cut-off slightly
+early — and small: at most one rate step on the eligible window per
+beneficiary per year.
 
 **L34. RESP at death.** The plan is excluded from the estate calculation and is
 assumed to pass to the beneficiary intact.

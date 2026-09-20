@@ -171,6 +171,7 @@ def _person(
         income=_income_ledger(),
         balance_owing=_zeros(),
         prior_year_net_income=_zeros(),
+        net_income_two_years_prior=_zeros(),
     )
 
 
@@ -576,6 +577,14 @@ class TestPriorYearNetIncome:
         assert person.prior_year_net_income.shape == (N_PATHS,)
         assert (person.prior_year_net_income == 0.0).all()
         assert not person.prior_year_net_income.flags.writeable
+
+
+class TestNetIncomeTwoYearsPrior:
+    def test_present_zero_and_read_only_by_default(self) -> None:
+        person = _person()
+        assert person.net_income_two_years_prior.shape == (N_PATHS,)
+        assert (person.net_income_two_years_prior == 0.0).all()
+        assert not person.net_income_two_years_prior.flags.writeable
 
 
 def test_person_state_has_no_cash_field() -> None:

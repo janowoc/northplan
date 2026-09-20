@@ -143,6 +143,7 @@ def _person(
         income=income if income is not None else _ledger(n),
         balance_owing=_zeros(n),
         prior_year_net_income=_zeros(n),
+        net_income_two_years_prior=_zeros(n),
     )
 
 

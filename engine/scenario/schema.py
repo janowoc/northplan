@@ -16,12 +16,12 @@ path and every policy the optimizer evaluates, so a mutation or a silently
 ignored misspelled key would corrupt a whole run without a visible error.
 
 **Dollars are real dollars of January of ``start_year``**, the same convention
-the engine holds everywhere, except a person's ``prior_year_net_income``, taken
-as filed, not restated.
+the engine holds everywhere, except a person's ``prior_year_net_income`` and
+``net_income_two_years_prior``, taken as filed, not restated.
 
 **Amounts are what the household has, not what the rules allow.** Contribution
-room and prior-year net income are scenario inputs because they depend on a
-filing history the model does not have. The schema checks that a number is
+room and the two years of net income are scenario inputs because they depend
+on a filing history the model does not have. The schema checks that a number is
 non-negative and self-consistent; it never checks a number against a statutory
 limit, since those live in ``params/`` for a particular year.
 
@@ -145,7 +145,7 @@ FrozenMapping = Annotated[Mapping[str, _V], AfterValidator(_freeze)]
 
 #: A dollar amount that cannot be negative. Real dollars of January of the
 #: scenario's start year, like every amount below except
-#: ``Person.prior_year_net_income``.
+#: ``Person.prior_year_net_income`` and ``Person.net_income_two_years_prior``.
 Money = Annotated[float, Field(ge=0.0)]
 
 #: A calendar month, January is 1.
@@ -499,8 +499,13 @@ class Person(_Base):
         prior_year_net_income: Net income (line 23600) for the calendar year
             before ``start_year``, as reported on that year's return (an
             estimate if not yet filed) — not restated in start-year dollars,
-            the one amount in a scenario that is not real dollars. Required,
-            no default: zero is a legitimate value the author types.
+            one of the two amounts in a scenario that are not real dollars.
+            Required, no default: zero is a legitimate value the author
+            types.
+        net_income_two_years_prior: Net income (line 23600) for the calendar
+            year two years before ``start_year``, on the same terms as
+            ``prior_year_net_income`` — as filed, not restated, required with
+            no default because zero is a legitimate value the author types.
     """
 
     id: str
@@ -513,23 +518,38 @@ class Person(_Base):
     db_pensions: tuple[DbPension, ...] = ()
     accounts: Accounts = Field(default_factory=Accounts)
     prior_year_net_income: Money
+    net_income_two_years_prior: Money
 
     @model_validator(mode="before")
     @classmethod
-    def _check_prior_year_net_income_present(cls, data: Any) -> Any:
-        """Reject a missing ``prior_year_net_income`` before field validation.
+    def _check_net_income_fields_present(cls, data: Any) -> Any:
+        """Reject a missing ``prior_year_net_income`` or ``net_income_two_years_prior``.
 
         Runs before field validation so the message can name the person by
-        ``id``, which pydantic's own missing-field error does not. When this
+        ``id``, which pydantic's own missing-field error does not. Covers both
+        keys in one validator rather than one each: two ``mode="before"``
+        validators on the same model would report only the first pydantic
+        happens to run, making the order the two errors surface in depend on
+        declaration order instead of on what is actually missing. When this
         raises, pydantic reports no other error for this person, so their
         other mistakes surface only on the next load.
         """
-        if isinstance(data, Mapping) and "prior_year_net_income" not in data:
+        if not isinstance(data, Mapping):
+            return data
+        missing = [
+            key
+            for key in ("prior_year_net_income", "net_income_two_years_prior")
+            if key not in data
+        ]
+        if missing:
             who = f"person {data['id']!r}" if "id" in data else "person (no id)"
+            plural = len(missing) > 1
             raise ValueError(
-                f"{who}: prior_year_net_income is required and "
-                "has no default; a scenario carries no filing history the "
-                "model could otherwise derive it from. Zero is a legitimate "
+                f"{who}: {', '.join(missing)} "
+                f"{'are' if plural else 'is'} required and "
+                f"{'have' if plural else 'has'} no default; a scenario "
+                f"carries no filing history the model could otherwise derive "
+                f"{'them' if plural else 'it'} from. Zero is a legitimate "
                 "value; write 0 if that is the figure."
             )
         return data
@@ -1112,7 +1132,8 @@ class Scenario(_Base):
     Attributes:
         name: Label for the run, used for export filenames.
         start_year: The simulation opens on 1 January of this year, every
-            amount but ``Person.prior_year_net_income`` is in that January's
+            amount but ``Person.prior_year_net_income`` and
+            ``Person.net_income_two_years_prior`` is in that January's
             dollars, and ``params/<start_year>/`` serves the whole run.
         n_paths: Monte Carlo paths.
         seed: Seed for the common random numbers. Fixed so the same scenario

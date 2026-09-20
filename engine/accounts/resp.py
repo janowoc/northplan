@@ -35,12 +35,24 @@ Parameters come from ``params/{year}/resp.yaml``.
 
 from __future__ import annotations
 
+import math
+from typing import Final
+
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet, nominal_carry_factor
 from engine.core.state import RespState, updated
+
+#: Net-income fields ``PersonState`` carries (``prior_year_net_income``,
+#: ``net_income_two_years_prior``) — a structural fact about the state, not a
+#: copy of the published ``grant.enhanced.income_year_offset``. The offset's
+#: magnitude is this count; its sign is the file's own "years added to the
+#: current year" convention and is policy, not structure, which is why
+#: :func:`governing_income_year_offset` compares against
+#: ``-_NET_INCOME_FIELDS`` rather than this constant directly.
+_NET_INCOME_FIELDS: Final[int] = 2
 
 
 def grant_room_accrued(
@@ -116,6 +128,61 @@ def enhanced_grant_rate(
     income_arr = np.asarray(family_income, dtype=np.float64)
     index = np.searchsorted(edges_arr, income_arr, side="left")
     return np.asarray(rates_arr[index], dtype=np.float64)
+
+
+def governing_income_year_offset(params: RealParamSet) -> int:
+    """Confirm ``resp.yaml``'s reach-back is still two years, and return it.
+
+    Reads ``grant.enhanced.income_year_offset`` with :meth:`RealParamSet.get`,
+    not :meth:`RealParamSet.number`: the value is a count of years, not a
+    dollar or a rate, and the path is unrouted in the file's ``indexation``
+    block, so ``number()`` would coerce it to ``float`` for no reason — and
+    unlike ``number()``, ``get()`` returns the value's own type, so a caller
+    can tell an ``int`` in the file from a ``float``.
+
+    Does not touch :func:`enhanced_grant_rate`, whose docstring keeps the
+    governing year "applied by the caller, not guessed here" — this function
+    is for that caller (#19's ``open_year``) to consult when it decides which
+    of ``PersonState``'s two net-income fields to sum.
+
+    Args:
+        params: The ``resp`` parameter set.
+
+    Returns:
+        The offset, always ``-2`` (``-_NET_INCOME_FIELDS``) if this returns
+        at all.
+
+    Raises:
+        ValueError: If the value is not finite or not integral (``bool``,
+            ``NaN``, and infinity all take this branch, never
+            :class:`OverflowError`), or is integral but not
+            ``-_NET_INCOME_FIELDS``. ``PersonState`` carries exactly that
+            many net-income fields, so a two-year reach-back is the only one
+            the state can express; if the published offset ever changes, the
+            state gains or loses a field, and this is where that would first
+            surface.
+    """
+    path = "grant.enhanced.income_year_offset"
+    value = params.get(path)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not float(value).is_integer()
+    ):
+        raise ValueError(
+            f"{params.raw.source}[{path}]: expected a whole number of years, found {value!r}."
+        )
+    offset = int(value)
+    if offset != -_NET_INCOME_FIELDS:
+        raise ValueError(
+            f"{params.raw.source}[{path}]: is {offset}, not -{_NET_INCOME_FIELDS}. "
+            "PersonState carries two net-income figures, so a two-year "
+            "reach-back is the only one it can express. A genuinely changed "
+            "offset means the state needs a field added or removed before "
+            "this guard can be relaxed."
+        )
+    return offset
 
 
 def basic_grant(

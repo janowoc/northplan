@@ -200,6 +200,27 @@ aip:
   penalty_rate: 0.5
 """
 
+#: SYNTHETIC, with a non-integral offset. Built from SYNTHETIC by a one-line
+#: substitution rather than hand-typed, and checked against the real file by
+#: the same parametrized test SYNTHETIC itself is
+#: (``test_the_synthetic_fixture_shares_no_value_with_the_real_file``), not
+#: by a comment's say-so.
+SYNTHETIC_NONINTEGRAL_OFFSET = SYNTHETIC.replace(
+    "income_year_offset: -1", "income_year_offset: -2.5"
+)
+
+#: SYNTHETIC, with a boolean offset — YAML's bare ``true``/``false``, which
+#: parses as ``bool`` and must be refused even though ``bool`` is an
+#: ``int`` subclass. Same construction and same collision guarantee as
+#: SYNTHETIC_NONINTEGRAL_OFFSET above.
+SYNTHETIC_BOOLEAN_OFFSET = SYNTHETIC.replace("income_year_offset: -1", "income_year_offset: true")
+
+#: SYNTHETIC, with an infinite offset — YAML's ``.inf``. ``int(float("inf"))``
+#: raises ``OverflowError``; the guard must reject this as ``ValueError``
+#: before any such conversion is attempted. Same construction and same
+#: collision guarantee as SYNTHETIC_NONINTEGRAL_OFFSET above.
+SYNTHETIC_INFINITE_OFFSET = SYNTHETIC.replace("income_year_offset: -1", "income_year_offset: .inf")
+
 
 def _write(root: Path, name: str, text: str) -> Path:
     year_dir = root / "2026"
@@ -235,8 +256,22 @@ def _leaves(value: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], A
     return {prefix: value}
 
 
-def test_the_synthetic_fixture_shares_no_value_with_the_real_file(synth) -> None:
-    """Enforces the SYNTHETIC docstring's claim in code, not in prose.
+@pytest.mark.parametrize(
+    "fixture_text",
+    (SYNTHETIC, SYNTHETIC_NONINTEGRAL_OFFSET, SYNTHETIC_BOOLEAN_OFFSET, SYNTHETIC_INFINITE_OFFSET),
+    ids=(
+        "SYNTHETIC",
+        "SYNTHETIC_NONINTEGRAL_OFFSET",
+        "SYNTHETIC_BOOLEAN_OFFSET",
+        "SYNTHETIC_INFINITE_OFFSET",
+    ),
+)
+def test_the_synthetic_fixture_shares_no_value_with_the_real_file(
+    tmp_path: Path, fixture_text: str
+) -> None:
+    """Enforces every synthetic fixture string's "not a real figure" claim in code, not in
+    prose — every one derived from SYNTHETIC gets the same check SYNTHETIC itself does,
+    rather than a comment asserting the derivation preserves it.
 
     Flattens both files to leaf paths and asserts that no numeric leaf present
     in both has an equal value. The ``indexation`` block is excluded: its
@@ -244,8 +279,10 @@ def test_the_synthetic_fixture_shares_no_value_with_the_real_file(synth) -> None
     must share with the real file to load at all, not a tax parameter that
     could be mistaken for a real one.
     """
+    _write(tmp_path, "resp", fixture_text)
+    synthetic = real_year(load_year(2026, tmp_path), 0.0).resp
     real = real_year(load_year(2026), 0.0).resp
-    synthetic_leaves = _leaves(synth.raw.values)
+    synthetic_leaves = _leaves(synthetic.raw.values)
     real_leaves = _leaves(real.raw.values)
 
     collisions = []
@@ -574,3 +611,96 @@ def test_erode_nominal_conserves_the_plans_value() -> None:
     assert new_state.contributions_lifetime[0] < 3000.0
     assert new_state.grants_lifetime[0] < 1500.0
     assert new_state.grant_room[0] < 800.0
+
+
+# --- governing_income_year_offset ---------------------------------------------
+
+
+def test_governing_income_year_offset_matches_the_real_file(rp) -> None:
+    result = resp.governing_income_year_offset(rp)
+    assert result == -2
+    assert type(result) is int
+
+
+def test_governing_income_year_offset_reads_get_not_number(rp, monkeypatch) -> None:
+    """The docstring's reason for ``get()`` over ``number()`` — that ``number()`` would
+    coerce the file's int to a float — is not otherwise checkable: both accessors return
+    ``-2``/``-2.0`` here, both satisfy ``float(value).is_integer()``, and
+    ``governing_income_year_offset`` converts with ``int(value)`` regardless, so its
+    return type and pass/fail outcome are identical either way (confirmed by hand: calling
+    it with ``params.number`` substituted for ``params.get`` still returns ``-2``). Only
+    intercepting the accessor call itself can tell them apart, so that is what this does:
+    ``number()`` is made to raise, and the guard must still pass without calling it.
+    """
+
+    def _number_must_not_be_called(self: object, path: str) -> float:
+        raise AssertionError(
+            f"governing_income_year_offset called number({path!r}); it must use get()."
+        )
+
+    monkeypatch.setattr(type(rp), "number", _number_must_not_be_called)
+
+    result = resp.governing_income_year_offset(rp)
+    assert result == -2
+
+
+def test_governing_income_year_offset_raises_when_the_file_disagrees(synth) -> None:
+    # SYNTHETIC's own income_year_offset is -1, chosen for this test (and
+    # never equal to the real file's -2, which
+    # test_the_synthetic_fixture_shares_no_value_with_the_real_file enforces).
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(synth)
+
+    message = str(excinfo.value)
+    assert "grant.enhanced.income_year_offset" in message, message
+    assert str(synth.raw.source) in message, message
+    assert "-1" in message, message
+
+
+def test_governing_income_year_offset_raises_on_a_non_integral_value(tmp_path: Path) -> None:
+    _write(tmp_path, "resp", SYNTHETIC_NONINTEGRAL_OFFSET)
+    non_integral = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(non_integral)
+
+    message = str(excinfo.value)
+    assert "grant.enhanced.income_year_offset" in message, message
+    assert str(non_integral.raw.source) in message, message
+    assert "-2.5" in message, message
+
+
+def test_governing_income_year_offset_raises_on_a_boolean_value(tmp_path: Path) -> None:
+    """``bool`` is an ``int`` subclass: ``True`` passes ``isinstance(value, (int, float))``
+    and, unguarded, would fall through to ``offset = int(True) = 1`` and raise from the
+    *second* branch ("is 1, not -2") rather than the first — same exception type, so only
+    the message tells the two branches apart. Asserting on it is what pins the
+    ``isinstance(value, bool)`` guard down; asserting only ``pytest.raises(ValueError)``
+    would pass either way.
+    """
+    _write(tmp_path, "resp", SYNTHETIC_BOOLEAN_OFFSET)
+    boolean = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(boolean)
+
+    message = str(excinfo.value)
+    assert "expected a whole number of years" in message, message
+    assert "True" in message, message
+
+
+def test_governing_income_year_offset_raises_on_an_infinite_value(tmp_path: Path) -> None:
+    """``value != int(value)`` would call ``int(inf)``, which raises ``OverflowError`` — a
+    type the docstring does not promise and a caller catching ``ValueError`` would not
+    catch. ``math.isfinite`` is checked before any conversion, so this must raise
+    ``ValueError`` naming the file and path, not ``OverflowError``.
+    """
+    _write(tmp_path, "resp", SYNTHETIC_INFINITE_OFFSET)
+    infinite = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(infinite)
+
+    message = str(excinfo.value)
+    assert "grant.enhanced.income_year_offset" in message, message
+    assert str(infinite.raw.source) in message, message
