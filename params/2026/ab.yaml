@@ -14,8 +14,9 @@
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum),
-#          engine/accounts/taxable.py (investment_income).
+# Read by: engine/tax/provincial.py (tax, credits, and investment_income)
+#          engine/accounts/lif.py (LIF maximum)
+#          engine/accounts/lira.py (the LIRA conversion deadline)
 #
 # Provincial credit amounts and the rate they are valued at are NOT derivable
 # from the federal ones. Source them separately even where they look familiar.
@@ -71,7 +72,7 @@ credits:
     reduction_rate: 0.15                          # Line 5 of Worksheet AB428
 
 # --- Investment income treatment -------------------------------------------
-# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# Read by engine/tax/provincial.py::non_refundable_credits.
 # These are provincial income-tax rules, which is why they stay in this file
 # rather than moving to an account file — the taxable account is not a
 # registered program.
@@ -82,7 +83,7 @@ investment_income:
   eligible_dividend_credit_rate_of_gross_up: 0.294805       # 21(c)(ii) => 227/770, truncated
 
 # --- LIF maximum withdrawal -------------------------------------------------
-# Read by engine/accounts/lira.py::maximum_withdrawal.
+# Read by engine/accounts/lif.py::maximum_withdrawal.
 #
 # ANNUAL, and the dangerous one. The maximum is fixed each January from the
 # 1 January balance and consumed across the year. Enforced per month it would
@@ -101,10 +102,10 @@ investment_income:
 # but it is reached by a different route from the tax parameters above it:
 #
 #   income tax   ParamYear.province(HouseholdState.province)
-#   LIF maximum  ParamYear.jurisdiction(LockedInState.jurisdiction)
+#   LIF maximum  ParamYear.jurisdiction(LifState.jurisdiction)
 #
-# engine/core/state.py::LockedInState carries the registration jurisdiction,
-# and PersonState.locked_in holds ONE of them per person. A person with two
+# engine/core/state.py::LiraState and LifState carry the registration
+# jurisdiction, and PersonState holds at most one of each. A person with two
 # locked-in accounts from two employers in two jurisdictions is not modelled:
 # the accounts do not merge in reality, and the model has a single slot for
 # them. See docs/limitations.md L47.
@@ -194,3 +195,9 @@ lif:
 # https://www.alberta.ca/pensions-individuals
 # 2026-09-04 https://open.alberta.ca/dataset/3e08374c-ba38-4b96-abf0-6fd15dae7109/resource/c2419a4b-4a85-4453-91e8-4bb3ef51831b/download/tbf-accessing-pension-funds-information-for-individuals-2026.pdf
   unlocking_age_years: 50
+
+  # Last age at which a LIRA may still be converted to a LIF. Alberta's pension
+  # legislation sets no maximum age, so the binding deadline is the Income Tax
+  # Act's RRSP maturity rule, ITA s.146(2)(b.4).
+# 2026-09-19 https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-146.html
+  conversion_deadline_age_years: 71

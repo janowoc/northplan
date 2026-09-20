@@ -31,8 +31,9 @@
 #   - Rates are bare fractions (0.15), never percentages or basis points.
 #   - Nominal amounts as published; the engine deflates. Do not pre-deflate.
 #
-# Read by: engine/tax/provincial.py, engine/accounts/lira.py (LIF maximum),
-#          engine/accounts/taxable.py (investment_income).
+# Read by: engine/tax/provincial.py (tax, credits, and investment_income)
+#          engine/accounts/lif.py (LIF maximum)
+#          engine/accounts/lira.py (the LIRA conversion deadline)
 #
 # THIS FILE IS THE TEMPLATE FOR EVERY PROVINCE. engine/tax/provincial.py takes
 # a province's parameter set rather than hard-coding one, so adding a province
@@ -88,7 +89,7 @@ credits:
     reduction_rate: 0.11                          # PLACEHOLDER
 
 # --- Investment income treatment -------------------------------------------
-# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# Read by engine/tax/provincial.py::non_refundable_credits.
 # These are provincial income-tax rules, which is why they stay in this file
 # rather than moving to an account file — the taxable account is not a
 # registered program.
@@ -98,7 +99,7 @@ investment_income:
   eligible_dividend_credit_rate_of_gross_up: 0.111111    # PLACEHOLDER
 
 # --- LIF maximum withdrawal -------------------------------------------------
-# Read by engine/accounts/lira.py::maximum_withdrawal.
+# Read by engine/accounts/lif.py::maximum_withdrawal.
 #
 # ANNUAL, and the dangerous one. The maximum is fixed each January from the
 # 1 January balance and consumed across the year. Enforced per month it would
@@ -167,3 +168,10 @@ lif:
   # Unlocking. Withdrawals are barred before this age, which is what
   # distinguishes a LIRA from an RRSP.
   unlocking_age_years: 11            # PLACEHOLDER
+
+  # Last age at which a LIRA may still be converted to a LIF. Where a province
+  # sets no maximum age of its own, the binding deadline is the Income Tax
+  # Act's RRSP maturity rule, ITA s.146(2)(b.4). Check the province's pension
+  # legislation before taking the fallback.
+# XXXX-XX-XX https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-146.html
+  conversion_deadline_age_years: 11  # PLACEHOLDER

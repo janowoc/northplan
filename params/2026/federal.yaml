@@ -20,10 +20,12 @@
 # account rules that used to sit here now live in rrif.yaml (RRSP/RRIF),
 # tfsa.yaml, and resp.yaml.
 #
-# Read by: engine/tax/federal.py, engine/core/timeline.py (is_filing_month),
-#          engine/accounts/taxable.py (investment_income), engine/tax/provincial.py (non_refundable_credits),
+# Read by: engine/benefits/employment.py (ei)
+#          engine/core/timeline.py (is_filing_month)
 #          engine/tax/combined.py (pension_splitting)
-#          engine/benefits/employment.py (ei), engine/tax/withholding.py (ei)
+#          engine/tax/federal.py
+#          engine/tax/provincial.py (non_refundable_credits)
+#          engine/tax/withholding.py (ei)
 
 # --- Calendar rules ---------------------------------------------------------
 # Statutory, and parameters like any other: engine/core/timeline.py reads them
@@ -122,7 +124,8 @@ ei:
   maximum_insurable_earnings_annual: 68900
 
 # --- Investment income treatment -------------------------------------------
-# Read by engine/accounts/taxable.py::taxable_income_from_distributions.
+# Read by engine/tax/federal.py::total_income (gross-up and inclusion rate)
+# and ::non_refundable_credits (dividend credit).
 # These are federal income-tax rules, which is why they stay in this file
 # rather than moving to an account file — the taxable account is not a
 # registered program.

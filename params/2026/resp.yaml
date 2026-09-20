@@ -62,8 +62,10 @@ contributions:
 # 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/registered-education-savings-plans-resps/canada-education-savings-programs-cesp/canada-education-savings-grant-cesg.html
 grant:
   match_rate: 0.20                  # grant per dollar contributed
-  room_annual: 500                  # grant room accrued per beneficiary per year
-  maximum_annual: 1000              # max grant per beneficiary per CALENDAR YEAR, including room carried forward
+  room_annual: 500                  # grant room accrued per beneficiary per year, in GRANT dollars
+# 2026-09-19 https://www.canada.ca/en/employment-social-development/services/student-financial-aid/education-savings/resp/resp-promoters/user-guide/chapter-5.html#h2_5.3
+  maximum_annual: 1000              # max BASIC grant per beneficiary per CALENDAR YEAR, including room carried
+                                    # forward; the additional tier is paid over and above it. Table 5 of Section 5.3.
   cessation_age_years: 17           # age at which the grant stops accruing, and the annual room is no longer added
   maximum_lifetime: 7200            # max grant per beneficiary, all years —
                                     # covers the basic and enhanced tiers
@@ -89,9 +91,10 @@ grant:
   # be a second source of truth for one fact.
   #
   # The basic grant above is the opposite case and that is why it has the key:
-  # maximum_annual (1000) is NOT match_rate * room_annual (0.20 * 500 = 100),
-  # precisely because unused basic room carries forward. Do not read the two
-  # blocks as parallel.
+  # room_annual and maximum_annual are BOTH grant dollars, and maximum_annual
+  # (1000) is not room_annual (500), precisely because unused basic room
+  # carries forward and one year can pay out more than one year's accrual.
+  # Do not read the two blocks as parallel.
   #
   # grant_on_contribution must NOT compute the enhanced cap from a literal —
   # it falls out of rate * min(contribution, remaining eligible window), with
@@ -111,12 +114,15 @@ grant:
     eligible_contribution_annual: 500        # first dollars each year the enhanced rate applies to
 
     # Which calendar year's family income governs the rate. Added to the
-    # current year, so -1 means "last year's income". Statutory, and read
+    # current year, so -2 means "year before last's income". Statutory, and read
     # rather than assumed: guessing the current year overstates the grant for
     # a household whose income is rising and understates it for one drawing
     # down. The reach-back is the RESP's own rule — the OAS repayment does not
     # reach back, it is assessed on the current year (L23).
-    income_year_offset: -1
+    # Section 5.2.8 of the "Registered Education Savings Plan provider user guide"
+    # says it's two years back.
+# 2026-09-19 https://www.canada.ca/en/employment-social-development/services/student-financial-aid/education-savings/resp/resp-promoters/user-guide/chapter-5.html#h2_5.2
+    income_year_offset: -2
 
     # Whose income counts. The rate is set by FAMILY income, not the
     # subscriber's — a grandparent subscriber does not make a low-income family
