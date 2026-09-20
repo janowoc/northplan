@@ -10,18 +10,25 @@ single beneficiary's state; the step iterates.
 
 A withdrawal splits three ways and the split is not the caller's choice:
 contributions come out tax-free, while grant and accumulated income come out
-as an Educational Assistance Payment taxable in the *student's* hands, not
-the subscriber's.
+as an Educational Assistance Payment. In reality that EAP is taxable in the
+*student's* hands; this engine does not model the student's own tax return
+(``docs/limitations.md`` L30) and so :func:`education_draw` puts the whole
+payment in ``WithdrawalResult.tax_free`` — none of it reaches the household
+ledger.
 
-Grant room accrues once a year, in January; the annual grant maximum is
+Grant room accrues once a year, in January, **in grant dollars** — it is an
+amount of grant entitlement, not of contribution. The annual grant maximum is
 enforced against the year-to-date grant received, not a single month's.
 Enrolment begins in a month, not on 1 January, and the EAP cap window is
-measured in weeks from the start of enrolment, so the enrolment month is
-state the plan carries.
+measured in weeks from the start of enrolment — not modelled here
+(``docs/limitations.md`` L31) — so the enrolment month is state the plan
+carries but this module does not read.
 
-The grant has two tiers: a basic match paid to everyone, and an additional
-match on the first dollars of each year's contribution at a rate that steps
-down as family income rises and is capped in dollars.
+The grant has two tiers: a basic match paid to everyone, bounded by an annual
+maximum that carries unused room forward; and an additional match on the
+first dollars of each year's contribution, at a rate that steps down as
+family income rises, with no carry-forward and no separate annual cap — its
+only ceiling is the lifetime maximum, shared with the basic tier.
 
 Parameters come from ``params/{year}/resp.yaml``.
 """
@@ -32,140 +39,460 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from engine.accounts.base import WithdrawalResult
-from engine.params.loader import ParamSet
+from engine.core.indexation import RealParamSet, nominal_carry_factor
+from engine.core.state import RespState, updated
 
 
-class RespState:
-    """Per-beneficiary plan state: contributions, grant, and accumulated income.
+def grant_room_accrued(
+    age_at_end_of_year: int,
+    params: RealParamSet,
+    january_month_index: int,
+) -> float:
+    """New grant room accrued in January, in grant dollars.
 
-    The three components are tracked separately because they are taxed
-    separately on the way out. Also carries: year-to-date grant received (so
-    the annual grant maximum enforces against the year, not a month), the
-    month enrolment began (the EAP window is measured from it), and — once
-    implemented — year-to-date contributions, needed because the enhanced
-    grant tier's eligible window is a dollar amount per year, not per month.
+    Computes the year's quantity unconditionally — there is no start-year
+    guard here; that lives once, in ``engine.core.step.open_year`` (#19).
 
-    Defined here as a placeholder; its fields land with the implementation.
+    Args:
+        age_at_end_of_year: Age in whole years on 31 December. Not per-path.
+        params: The ``resp`` parameter set, supplying ``grant.room_annual``
+            and ``grant.cessation_age_years``.
+        january_month_index: Month index of January of the year the room is
+            granted for.
+
+    Returns:
+        ``grant.room_annual`` while ``age_at_end_of_year <=
+        grant.cessation_age_years``, else zero.
     """
+    cessation_age = params.number("grant.cessation_age_years")
+    if age_at_end_of_year > cessation_age:
+        return 0.0
+    return params.annual_amount("grant.room_annual", january_month_index)
 
 
 def enhanced_grant_rate(
     family_income: ArrayLike,
-    params: ParamSet,
+    params: RealParamSet,
+    january_month_index: int,
 ) -> NDArray[np.float64]:
     """Additional match rate for the first dollars of this year's contribution.
 
-    A step function of family income: the highest rate below the first
-    cut-off, a lower rate between cut-offs, and zero above the last — cliffs,
-    not a phase-out, so a dollar of income across a cut-off changes the rate
-    on every eligible dollar. Cut-offs and rates come from ``params`` under
-    ``grant.enhanced``, laid out as a bracket table
-    (``len(match_rates) == len(income_edges_annual) + 1``), so the
-    branch-free clipping idiom from ``engine.tax.federal.gross_tax`` applies.
+    A cliff table, not a phase-out: rates **descend** as income rises, and a
+    dollar of income across a cut-off changes the rate on every eligible
+    dollar, not just the dollars above the cut-off. Cut-offs and rates come
+    from ``params`` under ``grant.enhanced``
+    (``len(match_rates) == len(income_edges_annual) + 1``). A cut-off itself
+    belongs to the **lower-income, higher-rate** band: income exactly at an
+    edge is still "at or below" that edge, not above it. This resolves the
+    **opposite** way from a tax bracket edge in ``engine.tax.brackets`` — that
+    module's ``marginal_rate`` puts an exact edge in the *higher* bracket,
+    because it is pricing the next dollar earned, which does fall there. A
+    CESG cliff rates the whole eligible window at one rate; there is no next
+    dollar to reason about, and family income landing exactly on the
+    published cut-off has not yet crossed it.
 
     This returns a rate; the dollar cap on eligible contribution is applied
     by :func:`grant_on_contribution`.
 
     Args:
         family_income: Family income for the governing year, ``(n_paths,)`` —
-            summed across the household's living persons, not one person's.
-            The governing year is set by
-            ``grant.enhanced.income_year_offset`` in ``params`` and applied
-            by the caller, not guessed here.
+            summed across every person in the household, including one who
+            has died, whose last-written figure keeps counting
+            (``docs/limitations.md`` L33) — not one person's. The governing
+            year is set by ``grant.enhanced.income_year_offset`` in
+            ``params`` and applied by the caller, not guessed here.
         params: The ``resp`` parameter set.
+        january_month_index: Month index of January of the year the rate is
+            being read for.
 
     Returns:
         Additional match rate as a bare fraction, ``(n_paths,)``, zero above
         the highest cut-off.
     """
-    raise NotImplementedError
+    edges = params.annual_amounts("grant.enhanced.income_edges_annual", january_month_index)
+    rates = params.numbers("grant.enhanced.match_rates")
+    edges_arr = np.asarray(edges, dtype=np.float64)
+    rates_arr = np.asarray(rates, dtype=np.float64)
+    income_arr = np.asarray(family_income, dtype=np.float64)
+    index = np.searchsorted(edges_arr, income_arr, side="left")
+    return np.asarray(rates_arr[index], dtype=np.float64)
+
+
+def basic_grant(
+    contribution: ArrayLike,
+    state: RespState,
+    params: RealParamSet,
+    january_month_index: int,
+) -> NDArray[np.float64]:
+    """Basic-tier grant matched to this month's contribution.
+
+    Bounded four ways: the flat match rate, the unused annual room (which
+    carries forward, ``state.grant_room``), the annual maximum against grant
+    already received this calendar year (``state.grant_received_ytd``), and
+    the lifetime maximum against grant received over all years
+    (``state.grants_lifetime``) — ``grant.maximum_annual`` bounds this tier
+    only (``params/2026/resp.yaml:67``).
+
+    Args:
+        contribution: This month's contribution, already capped at the
+            lifetime contribution maximum, ``(n_paths,)``.
+        state: That beneficiary's plan state.
+        params: The ``resp`` parameter set.
+        january_month_index: Month index of January of the current year.
+
+    Returns:
+        Basic-tier grant paid this month, ``(n_paths,)``, floored at zero.
+    """
+    match_rate = params.number("grant.match_rate")
+    maximum_annual = params.annual_amount("grant.maximum_annual", january_month_index)
+    maximum_lifetime = params.annual_amount("grant.maximum_lifetime", january_month_index)
+    contribution_arr = np.asarray(contribution, dtype=np.float64)
+    matched = match_rate * contribution_arr
+    bound_room = state.grant_room
+    bound_annual = maximum_annual - state.grant_received_ytd
+    bound_lifetime = maximum_lifetime - state.grants_lifetime
+    grant = np.minimum(np.minimum(matched, bound_room), np.minimum(bound_annual, bound_lifetime))
+    return np.asarray(np.clip(grant, 0, None), dtype=np.float64)
+
+
+def enhanced_grant(
+    contribution: ArrayLike,
+    family_income: ArrayLike,
+    state: RespState,
+    basic_grant_paid: ArrayLike,
+    params: RealParamSet,
+    january_month_index: int,
+) -> NDArray[np.float64]:
+    """Additional-tier grant matched to this month's contribution.
+
+    Matches ``grant.enhanced`` rate against the first
+    ``grant.enhanced.eligible_contribution_annual`` dollars contributed this
+    calendar year (``state.contributed_ytd``, excluding this month's
+    contribution). There is deliberately no annual cap or carry-forward for
+    this tier — its only bound besides the eligible window is the lifetime
+    maximum, **shared** with the basic tier: match basic first, then the
+    enhanced tier takes what is left of it, which is why
+    ``basic_grant_paid`` is an argument.
+
+    Args:
+        contribution: This month's contribution, already capped at the
+            lifetime contribution maximum, ``(n_paths,)``.
+        family_income: Family income for the year that governs the rate; see
+            :func:`enhanced_grant_rate`.
+        state: That beneficiary's plan state.
+        basic_grant_paid: This month's basic-tier grant, from
+            :func:`basic_grant`, so the shared lifetime cap accounts for it.
+        params: The ``resp`` parameter set.
+        january_month_index: Month index of January of the current year.
+
+    Returns:
+        Additional-tier grant paid this month, ``(n_paths,)``, floored at
+        zero.
+    """
+    rate = enhanced_grant_rate(family_income, params, january_month_index)
+    eligible_window = params.annual_amount(
+        "grant.enhanced.eligible_contribution_annual", january_month_index
+    )
+    maximum_lifetime = params.annual_amount("grant.maximum_lifetime", january_month_index)
+    contribution_arr = np.asarray(contribution, dtype=np.float64)
+    remaining_window = np.clip(eligible_window - state.contributed_ytd, 0, None)
+    eligible_contribution = np.minimum(contribution_arr, remaining_window)
+    matched = rate * eligible_contribution
+    remaining_lifetime = np.clip(
+        maximum_lifetime - state.grants_lifetime - np.asarray(basic_grant_paid, dtype=np.float64),
+        0,
+        None,
+    )
+    grant = np.minimum(matched, remaining_lifetime)
+    return np.asarray(np.clip(grant, 0, None), dtype=np.float64)
 
 
 def grant_on_contribution(
     contribution: ArrayLike,
-    grant_room: ArrayLike,
-    grant_received_ytd: ArrayLike,
-    contributed_ytd: ArrayLike,
-    lifetime_grant_paid: ArrayLike,
     family_income: ArrayLike,
-    params: ParamSet,
-) -> NDArray[np.float64]:
-    """Grant matched to this month's contribution, for one beneficiary.
+    state: RespState,
+    params: RealParamSet,
+    january_month_index: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Both grant tiers matched to this month's contribution, for one beneficiary.
 
-    Both tiers, summed: the basic match at a flat rate on every eligible
-    dollar, and the additional match at :func:`enhanced_grant_rate` on the
-    first ``grant.enhanced.eligible_contribution_annual`` dollars contributed
-    this year. Bounded by both match rates, the annual grant room (which
-    carries forward), the annual grant maximum against ``grant_received_ytd``,
-    and the lifetime grant maximum — every bound from ``params``.
+    Returns the pair rather than their sum: ``state.grant_received_ytd``
+    tracks the basic half only (:func:`basic_grant`'s docstring).
 
     Args:
-        contribution: This month's contribution, ``(n_paths,)``.
-        grant_room: Unused annual grant room, including carry-forward.
-        grant_received_ytd: Grant received this calendar year, ``(n_paths,)``.
-        contributed_ytd: Contributions made this calendar year,
-            ``(n_paths,)``, excluding this month's — bounds the enhanced
-            tier's eligible window.
-        lifetime_grant_paid: Grant received over all years.
+        contribution: This month's contribution, already capped at the
+            lifetime contribution maximum, ``(n_paths,)``.
         family_income: Family income for the year that governs the enhanced
             rate; see :func:`enhanced_grant_rate`.
+        state: That beneficiary's plan state.
         params: The ``resp`` parameter set.
+        january_month_index: Month index of January of the current year.
 
     Returns:
-        Grant paid this month, both tiers combined, ``(n_paths,)``.
+        ``(basic, enhanced)``, each ``(n_paths,)``.
     """
-    raise NotImplementedError
+    basic = basic_grant(contribution, state, params, january_month_index)
+    enhanced = enhanced_grant(
+        contribution, family_income, state, basic, params, january_month_index
+    )
+    return basic, enhanced
 
 
 def contribute(
     state: RespState,
     requested: ArrayLike,
     family_income: ArrayLike,
-    params: ParamSet,
-) -> RespState:
+    age_at_end_of_year: int,
+    january_month_index: int,
+    params: RealParamSet,
+) -> tuple[RespState, NDArray[np.float64]]:
     """Contribute for one beneficiary this month and receive the matching grant.
+
+    The contribution is capped at the lifetime contribution maximum
+    **first**, and both grant tiers are computed on the capped amount. No
+    grant at all once ``age_at_end_of_year > grant.cessation_age_years``
+    (``docs/limitations.md`` L33) — the contribution itself is unaffected.
 
     Args:
         state: That beneficiary's plan state.
-        requested: Desired contribution this month, ``(n_paths,)``. Capped at
-            the lifetime contribution maximum, which is per beneficiary and
-            does not aggregate across children.
+        requested: Desired contribution this month, ``(n_paths,)``. Negative
+            on any path raises.
         family_income: Family income for the year that governs the enhanced
             grant rate; see :func:`enhanced_grant_rate`.
+        age_at_end_of_year: Age in whole years on 31 December. Not per-path.
+        january_month_index: Month index of January of the current year.
         params: The ``resp`` parameter set.
 
     Returns:
-        Updated state, with the contribution, both grant tiers, and the
-        year-to-date contribution and grant totals applied.
+        ``(new_state, contributed)``. ``new_state`` has the contribution, both
+        grant tiers, and the year-to-date and lifetime totals applied.
+        ``state.income`` is untouched by a contribution.
+
+    Raises:
+        ValueError: If ``requested`` is negative on any path.
     """
-    raise NotImplementedError
+    requested_arr = _non_negative(requested)
+    lifetime_max = params.annual_amount("contributions.maximum_lifetime", january_month_index)
+    remaining_lifetime = np.clip(lifetime_max - state.contributions_lifetime, 0, None)
+    contributed = np.minimum(requested_arr, remaining_lifetime)
+
+    cessation_age = params.number("grant.cessation_age_years")
+    if age_at_end_of_year > cessation_age:
+        zeros = np.zeros_like(contributed)
+        basic, enhanced = zeros, zeros
+    else:
+        basic, enhanced = grant_on_contribution(
+            contributed, family_income, state, params, january_month_index
+        )
+
+    new_state = updated(
+        state,
+        contributions=state.contributions + contributed,
+        grants=state.grants + basic + enhanced,
+        contributions_lifetime=state.contributions_lifetime + contributed,
+        grants_lifetime=state.grants_lifetime + basic + enhanced,
+        grant_room=state.grant_room - basic,
+        grant_received_ytd=state.grant_received_ytd + basic,
+        contributed_ytd=state.contributed_ytd + contributed,
+    )
+    return new_state, np.asarray(contributed, dtype=np.float64)
 
 
-def withdraw(
-    state: RespState,
-    requested: ArrayLike,
-    is_eligible_student: ArrayLike,
-    months_since_enrolment: ArrayLike,
-    params: ParamSet,
-) -> tuple[RespState, WithdrawalResult]:
-    """Withdraw for one beneficiary this month.
+def grow(state: RespState, monthly_real_return: ArrayLike) -> RespState:
+    """Apply one month of real return to the plan's whole value.
 
-    The tax-free and taxable portions are determined by the plan's
-    composition, not chosen by the caller. EAP withdrawals require the
-    beneficiary to be enrolled and are capped for an initial window measured
-    in months since enrolment began.
+    The entire result accrues to ``state.income``: ``contributions`` and
+    ``grants`` keep the nominal amounts the wind-up acts on, so
+    ``state.income`` may go negative on a month of losses, and must be
+    allowed to.
 
     Args:
-        state: That beneficiary's plan state.
-        requested: Amount wanted this month, ``(n_paths,)``.
-        is_eligible_student: Whether the beneficiary is enrolled this month,
-            ``(n_paths,)``. Determines whether an EAP is permitted at all.
-        months_since_enrolment: Months since enrolment began, ``(n_paths,)``,
-            compared against the cap window from ``params``.
-        params: The ``resp`` parameter set, supplying the cap and its window.
+        state: Opening RESP state.
+        monthly_real_return: Real, monthly return as a bare fraction,
+            ``(n_paths,)``.
 
     Returns:
-        ``(updated_state, result)``. The result's ``fully_taxable`` portion is
-        taxable to the student, and the step must attribute it there.
+        Updated state; only ``income`` changes.
     """
-    raise NotImplementedError
+    monthly_real_return_arr = np.asarray(monthly_real_return, dtype=np.float64)
+    value = state.contributions + state.grants + state.income
+    growth = value * monthly_real_return_arr
+    return updated(state, income=state.income + growth)
+
+
+def education_draw(state: RespState) -> tuple[RespState, WithdrawalResult]:
+    """Pay the scheduled monthly education cost, or the plan's whole value if less.
+
+    Composition follows CESP Provider User Guide ch. 3-2: the payment draws
+    grant and income **in proportion to their shares** of the ``grants +
+    income`` pool while income is positive, and from grant alone when income
+    is zero or negative; contributions are drawn only once grant and income
+    are exhausted (``docs/limitations.md`` L31). No Canada Learning Bond is
+    modelled (L33).
+
+    Takes no ``months_remaining`` argument: dividing by the months left would
+    drain the plan by construction, making :func:`wind_up`, the grant
+    repayment, and :func:`aip_penalty` unreachable, and hiding the cost of
+    over-funding.
+
+    The whole payment goes in ``result.tax_free`` — see the module docstring's
+    note on L30; ``result.fully_taxable`` is always zero.
+
+    Assumes ``value = contributions + grants + income >= 0``, unlike
+    :func:`wind_up`, which clips it — deliberately, not an oversight: a
+    negative ``value`` would make ``payment`` negative too, since nothing
+    here floors it. The precondition holds because ``value`` changes only two
+    ways — :func:`contribute` adds a non-negative amount, and :func:`grow`
+    multiplies it by ``1 + monthly_real_return``, always strictly positive
+    for the lognormal draws L35 describes — so a plan that starts at zero can
+    never cross below it.
+
+    Args:
+        state: Opening RESP state for one beneficiary.
+
+    Returns:
+        ``(new_state, result)``. ``result.shortfall`` is the scheduled cost
+        not covered because the plan's value fell short of it.
+    """
+    value = state.contributions + state.grants + state.income
+    payment = np.minimum(state.education_monthly_cost, value)
+
+    grants = state.grants
+    income = state.income
+    pool = grants + income
+    income_positive = income > 0
+
+    pool_safe = np.where(pool > 0, pool, 1.0)
+    from_pool = np.minimum(payment, pool)
+    from_grants_if_positive = from_pool * grants / pool_safe
+    from_grants_if_nonpositive = np.minimum(payment, grants)
+
+    from_grants = np.where(income_positive, from_grants_if_positive, from_grants_if_nonpositive)
+    from_income = np.where(income_positive, from_pool - from_grants_if_positive, 0.0)
+    from_contributions = payment - from_grants - from_income
+
+    new_state = updated(
+        state,
+        contributions=state.contributions - from_contributions,
+        grants=state.grants - from_grants,
+        income=state.income - from_income,
+    )
+    shortfall = np.clip(state.education_monthly_cost - payment, 0, None)
+    zeros = np.zeros_like(payment)
+    result = WithdrawalResult(
+        gross=payment,
+        fully_taxable=zeros,
+        capital_gain=zeros,
+        tax_free=payment,
+        shortfall=shortfall,
+    )
+    return new_state, result
+
+
+def wind_up(
+    state: RespState,
+) -> tuple[RespState, NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Wind up the plan: repay grant, pay contributions tax-free, tax the rest.
+
+    Matches CESP Provider User Guide ch. 3-3: the grant repayment is the
+    lesser of the grant account balance and the plan's fair market value at
+    the time of the AIP. Conserves dollars on every path where the plan's
+    value is non-negative: ``to_cash_free + accumulated + grants_repaid ==
+    max(value, 0)``. Called by the step in the month **after** the education
+    window (``docs/limitations.md`` L32).
+
+    Args:
+        state: Opening RESP state for one beneficiary.
+
+    Returns:
+        ``(new_state, to_cash_tax_free, accumulated_income_to_subscriber,
+        grants_repaid)``. ``new_state`` has all three buckets zeroed and
+        ``wound_up`` set to ``True``.
+    """
+    value = state.contributions + state.grants + state.income
+    grants_repaid = np.minimum(state.grants, np.clip(value, 0, None))
+    remaining = value - grants_repaid
+    to_cash_free = np.minimum(state.contributions, remaining)
+    accumulated = remaining - to_cash_free
+
+    new_state = updated(
+        state,
+        contributions=np.zeros_like(state.contributions),
+        grants=np.zeros_like(state.grants),
+        income=np.zeros_like(state.income),
+        wound_up=np.ones_like(state.wound_up),
+    )
+    return (
+        new_state,
+        np.asarray(to_cash_free, dtype=np.float64),
+        np.asarray(accumulated, dtype=np.float64),
+        np.asarray(grants_repaid, dtype=np.float64),
+    )
+
+
+def aip_penalty(accumulated_income: ArrayLike, params: RealParamSet) -> NDArray[np.float64]:
+    """Penalty on the accumulated-income portion of a wind-up.
+
+    ``accumulated_income * aip.penalty_rate``. That is all this does —
+    assessing the penalty (which line it lands on, whether it enters net
+    income, wiring it through ``close_year``) is issue #50 and out of scope
+    here.
+
+    Args:
+        accumulated_income: The AIP paid to the subscriber, from
+            :func:`wind_up`, ``(n_paths,)``.
+        params: The ``resp`` parameter set, supplying ``aip.penalty_rate``.
+
+    Returns:
+        Penalty amount, ``(n_paths,)``.
+    """
+    rate = params.number("aip.penalty_rate")
+    return np.asarray(np.asarray(accumulated_income, dtype=np.float64) * rate, dtype=np.float64)
+
+
+def erode_nominal(state: RespState, inflation_rate: float) -> RespState:
+    """One January's decay of the plan's nominal buckets, conserving its value.
+
+    Erodes ``grant_room``, ``contributions_lifetime``, ``grants_lifetime``,
+    ``contributions``, and ``grants`` — the fields
+    ``tests/core/test_state_nominal_or_real.py`` marks ``NOMINAL`` for this
+    class. The amount ``contributions`` and ``grants`` lose moves into
+    ``income``, so ``contributions + grants + income`` is unchanged:
+    the buckets hold the nominal amounts the wind-up acts on, and the plan's
+    value is the sum of the three. ``income`` may go negative and that is
+    fine. The other two eroded fields, ``grant_room`` and the lifetime
+    totals, are running counters against caps the parameter view decays, with
+    no offsetting bucket. This applies one year's decay at a time — the
+    erosion is annual, not monthly, which is ``docs/limitations.md`` L57.
+
+    Args:
+        state: Opening RESP state, before this January's erosion.
+        inflation_rate: Assumed annual inflation as a bare fraction.
+
+    Returns:
+        Updated state.
+    """
+    factor = nominal_carry_factor(inflation_rate)
+    new_contributions = state.contributions * factor
+    new_grants = state.grants * factor
+    lost = (state.contributions - new_contributions) + (state.grants - new_grants)
+    return updated(
+        state,
+        contributions=new_contributions,
+        grants=new_grants,
+        income=state.income + lost,
+        contributions_lifetime=state.contributions_lifetime * factor,
+        grants_lifetime=state.grants_lifetime * factor,
+        grant_room=state.grant_room * factor,
+    )
+
+
+def _non_negative(amount: ArrayLike) -> np.ndarray:
+    """``amount`` as a float64 array, or raise if any path is negative."""
+    amount_arr = np.asarray(amount, dtype=np.float64)
+    if np.any(amount_arr < 0):
+        raise ValueError(
+            f"amount must be non-negative on every path, got {amount_arr!r}. "
+            "A negative request is a caller bug, not a reverse transaction."
+        )
+    return amount_arr

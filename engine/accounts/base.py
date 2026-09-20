@@ -55,7 +55,9 @@ def grow(balance: ArrayLike, monthly_real_return: ArrayLike) -> NDArray[np.float
     Returns:
         Closing balance for the month, before any contribution or withdrawal.
     """
-    raise NotImplementedError
+    balance_arr = np.asarray(balance, dtype=np.float64)
+    monthly_real_return_arr = np.asarray(monthly_real_return, dtype=np.float64)
+    return np.asarray(balance_arr * (1 + monthly_real_return_arr), dtype=np.float64)
 
 
 def withdraw(balance: ArrayLike, requested: ArrayLike) -> tuple[NDArray[np.float64], ...]:
@@ -69,8 +71,25 @@ def withdraw(balance: ArrayLike, requested: ArrayLike) -> tuple[NDArray[np.float
     Returns:
         A tuple of ``(new_balance, withdrawn, shortfall)``, each ``(n_paths,)``.
         ``withdrawn + shortfall == requested`` on every path.
+
+    Raises:
+        ValueError: If ``requested`` is negative on any path.
     """
-    raise NotImplementedError
+    requested_arr = np.asarray(requested, dtype=np.float64)
+    if np.any(requested_arr < 0):
+        raise ValueError(
+            f"requested must be non-negative on every path, got {requested_arr!r}. "
+            "A negative request is a caller bug, not a reverse transaction."
+        )
+    balance_arr = np.asarray(balance, dtype=np.float64)
+    withdrawn = np.clip(np.minimum(balance_arr, requested_arr), 0, None)
+    shortfall = requested_arr - withdrawn
+    new_balance = balance_arr - withdrawn
+    return (
+        np.asarray(new_balance, dtype=np.float64),
+        np.asarray(withdrawn, dtype=np.float64),
+        np.asarray(shortfall, dtype=np.float64),
+    )
 
 
 def remaining_annual_allowance(
@@ -79,9 +98,16 @@ def remaining_annual_allowance(
 ) -> NDArray[np.float64]:
     """How much of an annual limit is left for the rest of the year.
 
-    Every annual bound in this package — the LIF maximum, contribution room,
-    the RESP grant maximum — is enforced through this, against the
-    year-to-date total rather than a single month's amount.
+    Every annual bound in this package is enforced against a year-to-date
+    total, but most account functions take that total directly as an
+    argument (``state.grant_received_ytd``, ``state.withdrawn_ytd``, and so
+    on) and compare it inline, rather than calling this first. This is the
+    one place that comparison is factored out, because
+    ``engine.accounts.lif.withdraw`` does not take a year-to-date total at
+    all — it takes ``maximum_remaining`` directly, since the LIF maximum has
+    no fixed floor the way a minimum does. The step (#19) is expected to call
+    this once, in January, to turn the year's LIF maximum and the
+    year-to-date withdrawn total into that argument.
 
     Args:
         annual_limit: The year's limit, fixed in January, ``(n_paths,)``.
@@ -90,4 +116,11 @@ def remaining_annual_allowance(
     Returns:
         Remaining allowance, floored at zero, ``(n_paths,)``.
     """
-    raise NotImplementedError
+    return np.asarray(
+        np.clip(
+            np.asarray(annual_limit, dtype=np.float64) - np.asarray(taken_ytd, dtype=np.float64),
+            0,
+            None,
+        ),
+        dtype=np.float64,
+    )

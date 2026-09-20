@@ -114,6 +114,15 @@ close to zero.
 erosion factor and for the decay of unindexed amounts. Returns are real. There
 is no stochastic inflation.
 
+**L57. Erosion of nominal state balances.** In reality a contribution room,
+a lifetime total, or an adjusted cost base fixed in nominal terms loses real
+value continuously as prices rise. We apply one year's decay once, each
+January. Direction: within a year the modelled real value is too high, by at
+most one year's inflation and on average half of it; the sign of the effect
+on the household depends on the field — too much room is optimistic, too high
+an ACB is optimistic on tax. Lives in each account module's `erode_nominal`,
+with the factor from `engine/core/indexation.py::nominal_carry_factor`.
+
 **L7. Future legislated changes.** In reality the CPP enhancement phases in to
 2065 and the TFSA limit steps. We use the start year's parameters for every
 year. Direction: conservative on CPP for cohorts retiring after roughly 2040.
@@ -235,6 +244,16 @@ so none changes lifetime tax; all three change when the cash moves, which is
 what a policy reading the cash balance between the accrual month and the filing
 month sees.
 
+**L56. Withholding on a RRIF or LIF minimum.** In reality withholding applies
+to the excess of a payment over the year's minimum amount (ITR 103(6); see
+also ITA 153(1)(l), 146.3(1), CRA guide T4079), and the source gives no
+ordering within the year. We treat the year's **first** dollars as satisfying
+the minimum, so each later month's excess is banded separately rather than
+as one annual payment. Direction: splitting one payment into twelve lowers
+the band each falls in, so the model **under-withholds**; cash timing only,
+the December assessment is unchanged. Same family of error as L16. Lives in
+`engine/accounts/rrif.py::withdraw` and `engine/accounts/lif.py::withdraw`.
+
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
 credits. Not modelled: non-eligible dividends, foreign withholding tax, return
@@ -330,7 +349,14 @@ factor result and the prior year's investment return. We apply the factor
 result only. Direction: conservative on the LIF maximum: the modelled
 ceiling is never higher than the rule allows. Not modelled: the one-time
 unlocking transfer, small-balance and hardship unlocking. Lives in
-`engine/accounts/lira.py`.
+`engine/accounts/lif.py`.
+
+**L55. LIRA conversion timing.** In reality a LIRA may be converted to a LIF
+at any time from the unlocking age, and the latest is 31 December of the year
+the holder reaches the Income Tax Act's RRSP maturity age. We convert at the
+deadline only, in the December close of that year. Direction: conservative —
+the money stays locked longer than it need be, and the LIF's minimum and
+maximum both start later. Lives in `engine/accounts/lira.py::must_convert`.
 
 **L47. One locked-in account per person.** In reality a person may hold
 several LIRAs or LIFs, from several employers, registered in different
@@ -343,7 +369,7 @@ the whole balance comes from whichever jurisdiction the scenario names, and
 the error runs in either direction depending on which table is the looser.
 Lives in `engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
 `engine/core/state.py::LiraState` and `LifState`, read by
-`engine/accounts/lira.py`.
+`engine/accounts/lira.py` and `engine/accounts/lif.py`.
 
 The narrowing arrived with the scenario schema rather than with the account
 code, which is why it is recorded here rather than as a gap in `lira.py`: a
@@ -363,10 +389,12 @@ student when paid out. We pay them tax-free, on the grounds that a student
 drawing a typical plan over four years stays below the basic personal amounts.
 Direction: optimistic on the student's tax when the student has other income.
 
-**L31. Withdrawal shape.** The plan pays the scheduled education cost evenly
-over the window, grants and growth first, then contributions. Not modelled:
-the cap on assistance payments in the first thirteen weeks of study, which an
-even draw stays under.
+**L31. Withdrawal shape.** The plan pays the scheduled monthly education cost,
+or the plan's whole value if less; the payment draws grant and income in
+proportion to their shares while income is positive, and from grant alone
+when income is zero or negative; contributions are drawn only once grant and
+income are exhausted. Not modelled: the cap on assistance payments in the
+first thirteen weeks of study, which the scheduled monthly draw stays under.
 
 **L32. Wind-up.** At the end of the education window any unused grant is
 repaid and vanishes, any accumulated income goes to cash as the subscriber's
@@ -375,10 +403,26 @@ tax-free. Not modelled: rolling accumulated income into an RRSP with room, the
 ten-year and age-21 conditions on the wind-up, plan lifetime limits.
 
 **L33. Grants.** The basic grant with carry-forward room, the annual and
-lifetime caps, the enhanced tier on prior-year household net income, and
-cessation at the end of the year the beneficiary turns 17 are modelled. We
-assume the conditions for grants at 16 and 17 are met. Not modelled: the
-Canada Learning Bond, provincial grants.
+lifetime caps, the enhanced tier on household net income from two years
+before, and cessation at the end of the year the beneficiary turns 17 are
+modelled. We assume the conditions for grants at 16 and 17 are met. Not
+modelled: the Canada Learning Bond, provincial grants.
+
+*Family income.* In reality the additional grant rate follows the primary
+caregiver's CCB adjusted income, which includes a cohabiting spouse's, and
+the source addresses no death. We model the sum of line 23600 across every
+person in the household, including a person who has died — their last filed
+figure keeps counting. Direction: counting a deceased spouse's income
+overstates family income and so lowers the rate; conservative.
+
+*Stale income against this year's edges.* In reality the comparison is
+between a past year's nominal income and this year's published, nominal
+cut-offs. We compare a real-dollar income with a cut-off the engine has
+deflated, so the income runs high by roughly half a year of inflation in the
+start year, a year and a half in year two, and two years thereafter.
+Direction: conservative — a household crosses a cut-off slightly early — and
+small: at most one rate step on the eligible window per beneficiary per
+year.
 
 **L34. RESP at death.** The plan is excluded from the estate calculation and is
 assumed to pass to the beneficiary intact.

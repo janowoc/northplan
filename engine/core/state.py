@@ -11,6 +11,10 @@ classes.
 **Month indexes may be negative**, counting from January of the scenario's start year: a
 negative one means the event predates the run, except :attr:`PersonState.death_month_index`,
 guarded instead by :data:`DEATH_NOT_DRAWN`.
+
+Whether a dollar-typed field is fixed in real terms or in nominal terms is classified field by
+field in ``tests/core/test_state_nominal_or_real.py``; a field classified nominal there is eroded
+once a year, in January, by its owning account module's ``erode_nominal``.
 """
 
 from __future__ import annotations
@@ -141,7 +145,8 @@ class RrifState:
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
-        annual_minimum: This year's statutory minimum still to be withdrawn, fixed in January.
+        annual_minimum: This year's statutory minimum, fixed in January and never decremented;
+            what remains to be withdrawn is ``annual_minimum - withdrawn_ytd``.
         withdrawn_ytd: Withdrawn so far this year; reset in January.
         opened_year: The calendar year opened, or ``None`` if the opening balance is zero. If
             already open at scenario start, set to ``scenario.start_year - 1``, not the start year.
@@ -196,9 +201,12 @@ class LifState:
         balance: Real dollars, ``(n_paths,)``.
         jurisdiction: Two-letter pension-jurisdiction code; empty only while balance is zero (L3);
             carried from the LIRA on conversion (L47).
-        annual_minimum, annual_maximum, withdrawn_ytd, opened_year: This year's RRIF-equivalent
-            minimum, jurisdiction-specific maximum (where imposed), and amount withdrawn so far
-            (fixed/reset in January); opened_year mirrors :attr:`RrifState.opened_year` exactly.
+        annual_minimum: This year's RRIF-equivalent minimum, fixed in January and never
+            decremented; what remains to be withdrawn is ``annual_minimum - withdrawn_ytd``.
+        annual_maximum: This year's jurisdiction-specific maximum (where imposed), fixed in
+            January the same way.
+        withdrawn_ytd: Amount withdrawn so far this year; fixed/reset in January.
+        opened_year: Mirrors :attr:`RrifState.opened_year` exactly.
     """
 
     balance: NDArray[np.float64]
@@ -405,8 +413,9 @@ class PersonState:
         prior_year_net_income: Net income after the social benefits repayment
             (line 23600) for the prior calendar year, per person, ``(n_paths,)``.
             Its one consumer is the RESP enhanced-grant rate
-            (``grant.enhanced.income_year_offset``), summed across the household's
-            living persons; not read by the OAS repayment (assessed on the current
+            (``grant.enhanced.income_year_offset``), summed across every person in
+            the household, including one who has died, whose last-written figure
+            keeps counting (L33); not read by the OAS repayment (assessed on the current
             year) nor by the GIS band indicator (a different income basis). The one
             field taken as filed rather than converted to real dollars, until the
             first December close writes a real figure
@@ -469,11 +478,17 @@ class RespState:
     out tax-free, grants/income taxable to the student, grants clawed back if wound up without one.
 
     Attributes:
-        contributions, grants, income: The three buckets.
+        contributions, grants, income: The three buckets. ``income`` may be negative: growth and
+            losses both accrue here, so that ``contributions`` and ``grants`` keep the nominal
+            amounts the wind-up acts on.
         contributions_lifetime, grants_lifetime, grant_room: Totals ever received (for the
-            lifetime ceilings), and unused grant-eligible contribution room.
-        grant_received_ytd, contributed_ytd, subscriber_index: So far this year (reset in
-            January); and index into ``HouseholdState.persons`` of the subscriber.
+            lifetime ceilings), and unused grant room, in grant dollars — an amount of grant, not
+            of contribution.
+        grant_received_ytd, contributed_ytd, subscriber_index: Basic grant received so far this
+            year (reset in January) — the additional tier is paid over and above the annual
+            maximum and is bounded by the lifetime cap instead, so it does not count here;
+            contributions so far this year; and index into ``HouseholdState.persons`` of the
+            subscriber.
         education_start_month_index, education_months, education_monthly_cost: Enrolment's start
             month index, length in months, and monthly cost (not per-path).
         wound_up: Whether the plan has been wound up, ``(n_paths,)``.

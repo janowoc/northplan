@@ -13,13 +13,18 @@ depends on age. Two things about it are easy to get wrong:
 
 It is an annual obligation with a 31 December deadline: fixed in January and
 satisfied over the months that follow, in whatever pattern the policy
-chooses, with whatever is left forced out by the year-end close.
+chooses, with whatever is left forced out by the year-end close
+(``docs/limitations.md`` L26).
 
 Factors come from ``params/{year}/rrif.yaml`` under ``rrif.minimum_factors``.
 That file holds one program at two stages of life — the RRSP that accumulates
 and the RRIF it becomes — with the conversion age at the top level joining
 them. There is no formula in this file: even the pre-table basis is a constant
 in the YAML, because ``1 / (C - age)`` puts a ``C`` in a ``.py`` file otherwise.
+
+:func:`minimum_withdrawal` takes plain values rather than a state object so
+that ``engine.accounts.lif`` can call it directly: a LIF's minimum *is* the
+RRIF minimum, computed on the LIF's own opening balance.
 """
 
 from __future__ import annotations
@@ -27,47 +32,78 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from engine.accounts import base
 from engine.accounts.base import WithdrawalResult
-from engine.params.loader import ParamSet
+from engine.core.indexation import RealParamSet
+from engine.core.state import RrifState, updated
 
 
-def minimum_factor(age_at_start_of_year: ArrayLike, params: ParamSet) -> NDArray[np.float64]:
+def minimum_factor(age_at_start_of_year: int, params: RealParamSet) -> float:
     """Mandatory withdrawal factor for a given age.
 
+    Below the table's first age, the factor is ``1 / (C - age)`` where ``C``
+    is ``rrif.minimum_factors.pre_table.formula_constant``. At and above
+    ``rrif.minimum_factors.terminal_age_years``, the terminal row applies.
+    Otherwise, the row for that exact age.
+
     Args:
-        age_at_start_of_year: Age in whole years on 1 January, ``(n_paths,)``.
-            Not age at year end, and not age in the current month. See
-            ``engine.core.timeline.age_at_start_of_year``.
+        age_at_start_of_year: Age in whole years on 1 January. Not age at
+            year end, and not age in the current month. See
+            ``engine.core.timeline.age_at_start_of_year``. Not per-path: a
+            person's age does not vary by path.
         params: The ``rrif`` parameter set, supplying the factor table and the
-            pre-71 basis.
+            pre-table basis.
 
     Returns:
-        Factor as a bare fraction, ``(n_paths,)``.
+        Factor as a bare fraction.
     """
-    raise NotImplementedError
+    table = params.get("rrif.minimum_factors.by_age")
+    terminal_age = params.number("rrif.minimum_factors.terminal_age_years")
+    first_age = min(int(age) for age in table)
+    if age_at_start_of_year >= terminal_age:
+        return float(table[str(int(terminal_age))])
+    if age_at_start_of_year < first_age:
+        formula_constant = params.number("rrif.minimum_factors.pre_table.formula_constant")
+        return 1 / (formula_constant - age_at_start_of_year)
+    return float(table[str(age_at_start_of_year)])
 
 
 def minimum_withdrawal(
     opening_balance: ArrayLike,
-    age_at_start_of_year: ArrayLike,
-    params: ParamSet,
+    age_at_start_of_year: int,
+    opened_year: int | None,
+    year: int,
+    params: RealParamSet,
 ) -> NDArray[np.float64]:
     """Mandatory minimum withdrawal for the **whole year**.
 
     Called once, by the January phase of the step. The result is an annual
     amount that is then drawn down across the year; it is never recomputed
-    mid-year, because the balance it is based on no longer exists after January.
+    mid-year, because the balance it is based on no longer exists after
+    January.
+
+    Returns zero when ``opened_year is None`` (nothing has been opened) or
+    ``opened_year == year`` (opened this calendar year): the first minimum
+    applies only from the January after the plan opens (``docs/limitations.md``
+    L26).
 
     Args:
         opening_balance: Balance on 1 January, before the year's growth and
             before any of the year's withdrawals, ``(n_paths,)``.
-        age_at_start_of_year: Age in whole years on 1 January.
+        age_at_start_of_year: Age in whole years on 1 January. Not per-path.
+        opened_year: The calendar year the plan was opened, or ``None`` if it
+            holds no balance yet.
+        year: The calendar year the minimum is being fixed for.
         params: The ``rrif`` parameter set.
 
     Returns:
         Annual minimum withdrawal in real dollars, ``(n_paths,)``.
     """
-    raise NotImplementedError
+    opening_balance_arr = np.asarray(opening_balance, dtype=np.float64)
+    if opened_year is None or opened_year == year:
+        return np.zeros_like(opening_balance_arr)
+    factor = minimum_factor(age_at_start_of_year, params)
+    return np.asarray(opening_balance_arr * factor, dtype=np.float64)
 
 
 def minimum_still_required(
@@ -80,7 +116,7 @@ def minimum_still_required(
     Zero for most of the year: a policy is free to take nothing in January and
     the whole minimum in December. This returns a non-zero floor only when the
     remaining months can no longer accommodate the shortfall, which in practice
-    means December.
+    means December (``months_remaining_in_year == 1``).
 
     Args:
         annual_minimum: The year's minimum, fixed in January, ``(n_paths,)``.
@@ -93,32 +129,91 @@ def minimum_still_required(
         Amount that must be withdrawn this month, ``(n_paths,)``, floored at
         zero.
     """
-    raise NotImplementedError
+    shortfall = np.clip(
+        np.asarray(annual_minimum, dtype=np.float64) - np.asarray(withdrawn_ytd, dtype=np.float64),
+        0,
+        None,
+    )
+    return np.asarray(np.where(months_remaining_in_year <= 1, shortfall, 0.0), dtype=np.float64)
 
 
 def withdraw(
-    balance: ArrayLike,
+    state: RrifState,
     requested: ArrayLike,
-    minimum_this_month: ArrayLike,
-) -> WithdrawalResult:
+    floor: ArrayLike,
+) -> tuple[RrifState, WithdrawalResult, NDArray[np.float64]]:
     """Withdraw at least this month's required floor. Fully taxable.
 
     A policy may request less than the floor; the floor still comes out. That
-    interaction is why ``minimum_this_month`` is an argument rather than being
-    recomputed here — and why it is *this month's* floor from
-    :func:`minimum_still_required`, not the annual minimum, which would be
-    taken twelve times over.
+    interaction is why ``floor`` is an argument rather than being recomputed
+    here — and why it is *this month's* floor from :func:`minimum_still_required`,
+    not the annual minimum, which would be taken twelve times over.
 
     Args:
-        balance: Balance at the start of this month, ``(n_paths,)``.
+        state: Opening RRIF state.
         requested: Policy-requested withdrawal for this month, ``(n_paths,)``.
-        minimum_this_month: Output of :func:`minimum_still_required`.
+            Negative on any path raises.
+        floor: Output of :func:`minimum_still_required`. ``gross`` is at least
+            this on every path, even when ``requested`` is less.
 
     Returns:
-        A :class:`~engine.accounts.base.WithdrawalResult` with everything in
-        ``fully_taxable``, gross at least ``minimum_this_month``.
+        ``(new_state, result, above_minimum)``. ``result`` has everything in
+        ``fully_taxable``. ``above_minimum`` is the base the step's
+        withholding applies to:
+
+        ``above_minimum = max(0, gross - max(0, state.annual_minimum -
+        state.withdrawn_ytd))``
+
+        **Not** ``gross - floor``: the floor is zero for eleven months of the
+        year, so that reading would withhold on the minimum itself whenever it
+        is taken early. This is a deliberate convention
+        (``docs/limitations.md`` L56).
+
+    Raises:
+        ValueError: If ``requested`` is negative on any path.
     """
-    raise NotImplementedError
+    requested_arr = _non_negative(requested)
+    floor_arr = np.asarray(floor, dtype=np.float64)
+    target = np.maximum(requested_arr, floor_arr)
+    new_balance, withdrawn, shortfall = base.withdraw(state.balance, target)
+    minimum_remaining = np.clip(state.annual_minimum - state.withdrawn_ytd, 0, None)
+    above_minimum = np.clip(withdrawn - minimum_remaining, 0, None)
+    new_state = updated(
+        state,
+        balance=new_balance,
+        withdrawn_ytd=state.withdrawn_ytd + withdrawn,
+    )
+    zeros = np.zeros_like(withdrawn)
+    result = WithdrawalResult(
+        gross=withdrawn,
+        fully_taxable=withdrawn,
+        capital_gain=zeros,
+        tax_free=zeros,
+        shortfall=shortfall,
+    )
+    return new_state, result, above_minimum
+
+
+def receive_conversion(state: RrifState, amount: ArrayLike, year: int) -> RrifState:
+    """Receive an amount converted in from an RRSP.
+
+    Sets ``opened_year`` to ``year`` when the RRIF held nothing before
+    (``opened_year is None``); otherwise leaves it, since the RRIF was already
+    open and its minimum schedule already running. Per L26, the first minimum
+    then applies from the next January, which falls out of
+    :func:`minimum_withdrawal` returning zero when ``opened_year == year``.
+
+    Args:
+        state: Opening RRIF state, before receiving the conversion.
+        amount: Amount moved in from the RRSP, ``(n_paths,)``.
+        year: The calendar year the conversion happens in.
+
+    Returns:
+        Updated state.
+    """
+    amount_arr = np.asarray(amount, dtype=np.float64)
+    opened_year = state.opened_year if state.opened_year is not None else year
+    return updated(state, balance=state.balance + amount_arr, opened_year=opened_year)
 
 
 def spousal_rollover(
@@ -141,3 +236,14 @@ def spousal_rollover(
         ``(deceased_balance, survivor_balance)`` after the rollover.
     """
     raise NotImplementedError
+
+
+def _non_negative(amount: ArrayLike) -> np.ndarray:
+    """``amount`` as a float64 array, or raise if any path is negative."""
+    amount_arr = np.asarray(amount, dtype=np.float64)
+    if np.any(amount_arr < 0):
+        raise ValueError(
+            f"amount must be non-negative on every path, got {amount_arr!r}. "
+            "A negative request is a caller bug, not a reverse transaction."
+        )
+    return amount_arr

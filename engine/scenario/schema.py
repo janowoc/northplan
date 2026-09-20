@@ -613,7 +613,8 @@ class Resp(_Base):
         grants: Grant received to date, real dollars.
         income: Accumulated income to date, real dollars.
         grant_room_carried: The unused grant room available on 1 January of
-            the start year after that year's grant.
+            the start year after that year's grant, in grant dollars — an
+            amount of grant, not of contribution.
     """
 
     subscriber: str

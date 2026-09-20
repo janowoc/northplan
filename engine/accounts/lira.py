@@ -1,44 +1,33 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Locked-In Retirement Account and the LIF it becomes.
+"""Locked-In Retirement Account, and its conversion to a LIF.
 
 Like an RRSP in tax treatment and unlike it in access: withdrawals are barred
-until an unlocking age, and once converted to a LIF there is both a mandatory
-minimum and a jurisdiction-specific *maximum* withdrawal — the part that
-distinguishes this from ``rrif.py``.
+until an unlocking age, and a LIRA itself pays out nothing — it only
+accumulates until converted. The LIF the balance moves into, with its
+mandatory minimum and jurisdiction-specific maximum, is
+``engine.accounts.lif``.
 
-**The jurisdiction is not the province of residence.** A LIF is governed by
+**The jurisdiction is not the province of residence.** A LIRA is governed by
 the pension legislation of the jurisdiction its originating pension was
 registered under: a household resident in Alberta may hold an
-Ontario-registered LIF, drawn under Ontario's table while filing Alberta
+Ontario-registered LIRA, converting under Ontario's rules while filing Alberta
 income tax. Every function here that takes a parameter set takes the
 *registration* jurisdiction's — ``ParamYear.jurisdiction`` keyed by
-``LiraState.jurisdiction`` / ``LifState.jurisdiction`` — never
-``ParamYear.province(household.province)``.
-
-Both the minimum and the maximum are **annual** figures fixed in January from
-the 1 January balance and enforced against the year-to-date total, not a
-single month's amount.
-
-Not every jurisdiction imposes a maximum; some prescribe a RRIF-like account
-with a minimum and no ceiling. :func:`has_maximum` is what separates that
-rule from a table nobody has entered yet.
+``LiraState.jurisdiction`` — never ``ParamYear.province(household.province)``.
+``engine.accounts.lif`` carries the same warning for ``LifState.jurisdiction``.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
 
-from engine.accounts.base import WithdrawalResult
-from engine.params.loader import ParamSet
+from engine.core.indexation import RealParamSet
+from engine.core.state import LifState, LiraState, updated
 
 
-def withdrawals_permitted(
-    age_at_start_of_year: ArrayLike,
-    params: ParamSet,
-) -> NDArray[np.bool_]:
+def withdrawals_permitted(age_at_start_of_year: int, params: RealParamSet) -> bool:
     """Whether the account may be drawn on at all this year.
 
     The lock is what makes a LIRA a LIRA rather than an RRSP, and a policy that
@@ -47,92 +36,71 @@ def withdrawals_permitted(
     ``params``.
 
     Args:
-        age_at_start_of_year: Age in whole years on 1 January, ``(n_paths,)``.
-            See ``engine.core.timeline.age_at_start_of_year``.
+        age_at_start_of_year: Age in whole years on 1 January. See
+            ``engine.core.timeline.age_at_start_of_year``. Not per-path: a
+            person's age does not vary by path.
         params: The parameter set of the jurisdiction the account is
             **registered** in.
 
     Returns:
-        Boolean mask, ``(n_paths,)``.
+        Whether the lock has lifted.
     """
-    raise NotImplementedError
+    unlocking_age = params.number("lif.unlocking_age_years")
+    return bool(age_at_start_of_year >= unlocking_age)
 
 
-def has_maximum(params: ParamSet) -> bool:
-    """Whether this jurisdiction caps annual LIF withdrawals.
-
-    A scalar rule about a jurisdiction, not a per-path quantity, so this
-    returns a plain ``bool`` rather than an array.
-
-    Without the flag, a jurisdiction with no ceiling is indistinguishable
-    from one whose maximum table has not been entered yet — both would raise
-    on lookup. The flag makes "there is no maximum" a fact a human verified,
-    not an inference.
+def convert_to_lif(lira: LiraState, lif: LifState, year: int) -> tuple[LiraState, LifState]:
+    """Move the whole LIRA balance into the LIF, opening it if needed.
 
     Args:
-        params: The parameter set of the jurisdiction the account is
-            **registered** in.
+        lira: The LIRA being converted; zeroed by this call.
+        lif: The receiving LIF, possibly already holding a balance from an
+            earlier partial conversion.
+        year: The calendar year the conversion happens in.
 
     Returns:
-        True if :func:`maximum_withdrawal` should be consulted.
+        ``(new_lira, new_lif)``. ``new_lif.jurisdiction`` is the LIF's own if
+        it was already set, the LIRA's otherwise. ``new_lif.opened_year`` is
+        set to ``year`` when it was ``None``, otherwise left alone.
 
     Raises:
-        MissingParameterError: If the flag itself is absent. An unverified
-            jurisdiction is not assumed to be uncapped.
+        ValueError: If both accounts name a jurisdiction and they differ — two
+            jurisdictions do not merge (``docs/limitations.md`` L47).
     """
-    raise NotImplementedError
+    if lira.jurisdiction and lif.jurisdiction and lira.jurisdiction != lif.jurisdiction:
+        raise ValueError(
+            f"LIRA jurisdiction {lira.jurisdiction!r} and LIF jurisdiction "
+            f"{lif.jurisdiction!r} differ; two jurisdictions do not merge "
+            f"(docs/limitations.md L47)."
+        )
+    jurisdiction = lif.jurisdiction or lira.jurisdiction
+    opened_year = lif.opened_year if lif.opened_year is not None else year
+    new_lif = updated(
+        lif,
+        balance=lif.balance + lira.balance,
+        jurisdiction=jurisdiction,
+        opened_year=opened_year,
+    )
+    new_lira = updated(lira, balance=np.zeros_like(lira.balance))
+    return new_lira, new_lif
 
 
-def maximum_withdrawal(
-    opening_balance: ArrayLike,
-    age_at_start_of_year: ArrayLike,
-    params: ParamSet,
-) -> NDArray[np.float64]:
-    """Jurisdiction-specific maximum LIF withdrawal for the **whole year**.
+def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
+    """Whether a LIRA must be converted to a LIF by the end of this year.
 
-    Called once, by the January phase of the step, and then drawn down. Call
-    :func:`has_maximum` first: this raises for a jurisdiction that has no
-    ceiling rather than returning infinity, so that an uncapped account is
-    handled by the caller deciding not to cap it.
+    A LIRA converts **at the deadline only** — the December close of the year
+    the holder reaches ``lif.conversion_deadline_age_years``, alongside the
+    RRSP conversion. In reality a LIRA may be converted at any time from the
+    unlocking age; converting earlier is not modelled
+    (``docs/limitations.md`` L55).
 
     Args:
-        opening_balance: Balance on 1 January, before growth, ``(n_paths,)``.
-        age_at_start_of_year: Age in whole years on 1 January.
+        age_at_end_of_year: Age in whole years on 31 December. Not per-path.
         params: The parameter set of the jurisdiction the account is
-            **registered** in.
+            **registered** in, supplying ``lif.conversion_deadline_age_years``.
 
     Returns:
-        Maximum permitted withdrawal for the year, ``(n_paths,)``.
-
-    Raises:
-        MissingParameterError: If the jurisdiction has no maximum table. Guard
-            with :func:`has_maximum`.
+        Whether conversion is due this year.
     """
-    raise NotImplementedError
-
-
-def withdraw(
-    balance: ArrayLike,
-    requested: ArrayLike,
-    minimum_this_month: ArrayLike,
-    maximum_remaining: ArrayLike,
-) -> WithdrawalResult:
-    """Withdraw this month within the annual bounds. Fully taxable.
-
-    Args:
-        balance: Balance at the start of this month, ``(n_paths,)``.
-        requested: Policy-requested withdrawal for this month, clamped into
-            ``[minimum_this_month, maximum_remaining]``.
-        minimum_this_month: RRIF-equivalent floor for this month, from
-            ``engine.accounts.rrif.minimum_still_required``.
-        maximum_remaining: What is left of the year's maximum, from
-            ``engine.accounts.base.remaining_annual_allowance`` applied to
-            :func:`maximum_withdrawal`. Not the annual maximum itself. For a
-            jurisdiction where :func:`has_maximum` is false, pass the balance:
-            the account is still capped by what is in it.
-
-    Returns:
-        A :class:`~engine.accounts.base.WithdrawalResult` with everything in
-        ``fully_taxable``.
-    """
-    raise NotImplementedError
+    deadline_age = params.number("lif.conversion_deadline_age_years")
+    return bool(age_at_end_of_year >= deadline_age)

@@ -184,7 +184,7 @@ lif:
     terminal_age_years: 89
 
   # Some jurisdictions define the maximum as the GREATER of the factor result
-  # and the prior year's investment return. lira.maximum_withdrawal takes only
+  # and the prior year's investment return. lif.maximum_withdrawal takes only
   # the opening balance and the age, so if this is true for Alberta the
   # signature is wrong. Verifying the flag is a lookup; changing the signature
   # is a design decision.

@@ -79,7 +79,7 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
        the start of the year.
     5. Fix the LIF maximum the same way, from
        ``params.jurisdiction(LifState.jurisdiction)``; where
-       ``engine.accounts.lira.has_maximum`` is false, none is stored.
+       ``engine.accounts.lif.has_maximum`` is false, none is stored.
     6. Reset the year-to-date income ledger and ``remitted_ytd`` (not
        ``balance_owing``, still owed until filing); reset per-beneficiary RESP
        grant-received and contributed-ytd.
