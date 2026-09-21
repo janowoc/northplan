@@ -71,6 +71,13 @@ belongs. `--standalone` writes a full document for a browser.
 | 48 | One year's decay for nominal balances, and the nominal/real classification test | agent | 8, 11, 33 | an unclassified state field fails; the factor equals twelve months of `unindexed_factor` |
 | 49 | Two years of net income in the state and the scenario | agent | 11, 33 | the example loads with both figures; an offset other than -2 raises |
 | 50 | The AIP penalty in the assessment: which line, and a field on `Assessment` | agent | 14, 18 | a wind-up's penalty reaches assessed tax without touching net income |
+| 51 | Stub signatures take `RealParamYear`, and the three builders the loop needs | agent | 29, 33, 48 | no `ParamYear`, `n_years` or `params_by_year` under `engine/` outside the loader, indexation and the start-age check |
+| 52 | `risk_aversion` is a scenario field, not a command-line flag | agent | 10 | the example loads with one; a scenario without one still loads |
+| 53 | Documentation drift the pending issues will not rewrite | agent | — | every changed hunk is a docstring, a comment or Markdown prose; no phase list touched |
+| 54 | Two guards: the `.raw` allowlist, and scalar-vs-per-path state fields | agent | 48 | an unclassified scalar field, and an unlisted `.raw` access, each fail |
+| 55 | A second committed scenario: the late-life couple | agent | 10, 33 | the two-person branch of `household_assessment` is reachable from a committed scenario |
+| 56 | Hand-check the couple scenario's death mechanics | human | 36, 55 | a spreadsheet is linked; a characterization test exists, created on instruction |
+| 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -252,6 +259,51 @@ rate in `params/`, and nothing can charge it until `Assessment` carries a field
 for an additional tax that is not a reduction of income. It sits after 19 and
 before 35, whose December close is where the figure would be passed in, and it
 opens with questions for the human about which line the payment lands on.
+
+Pre-19 audit, 2026-09-21. The tree was read against the work left after 18
+landed — 19 to 24, plus 35, 36 and 50 — before any of it started. Twelve
+decisions came out of it and seven issues: 51 to 54 before 19, 55 before 35,
+56 after 36, and 57 out of splitting 50. The suite, ruff, the `L<n>` citations
+and every Sphinx reference under `engine/` were clean; the drift was in the
+five modules that are still stubs and in prose that outran the code.
+
+51 is the one 19 waits on. `engine/core/step.py`, `engine/mc/simulate.py`,
+`engine/policy/` and `engine/optimize/` are the only modules under `engine/`
+still typed against `ParamYear`, and they carry an `n_years` horizon and a
+`params_by_year` mapping that L10 and this file's own conventions both deny.
+They also lack the three builders the loop needs: nothing derives the month
+count from the life table, though `engine/mc/returns.py` says the caller does,
+and nothing turns a scenario into draws or resolves a death month before the
+loop opens. Four issues would otherwise each fix a slice of this for their own
+file. 52 and 54 are independent of it and of each other. 53 goes last of the
+four, on 34's precedent: a docstring pass wants no concurrent work.
+
+The audit's drift list was triaged rather than fixed whole. Anything living in
+a docstring that 19, 35, 36, 22, 23 or 24 is about to rewrite was left alone
+and the issue amended instead — 19's own criterion is that it state its phase
+order verbatim, so fixing that order now would be work thrown away twice. 53
+carries only what no pending issue touches, which would otherwise rot: three
+places in `engine/core/state.py`, two in `engine/core/__init__.py`, the README's
+status paragraph, L33's wording, and two test comments.
+
+55 exists because `scenarios/example.yaml` has one person, so it cannot reach
+pension splitting, the survivor share, the spousal rollover, OAS ceasing at
+first death, or the couple GIS threshold — its own `survivor_share` fields are
+dead letters. Adding a second person to the example was rejected: 21 rebuilds
+2026 and 2027, where person `a` is 60, and a second person there doubles the
+manual rows without reaching a single new mechanism. The new fixture is
+late-life instead, both deaths inside a handful of years, so 35 and 36 stop
+inventing a household each and 56 can check the death arithmetic by hand the
+way 21 checks the accumulation path.
+
+57 is the half of 50 that cannot exist at 50's position. 50 sits between 19 and
+35, but its specification ends with `close_year` passing what the wind-up
+produced, and `close_year` is 35's. 50 keeps the `Assessment` field and
+`person_assessment`; 57 takes the wind-up withholding and the December close.
+The withholding is new scope: T1171 establishes that an accumulated income
+payment is withheld on and publishes no formula, so the engine models the
+special tax as withheld at the payment, and that assumption needs an entry of
+its own before 57 is dispatched.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
