@@ -147,13 +147,21 @@ Review in this order, and grep aggressively rather than trusting a read:
    the month before and after. Zero income, negative income, zero balance,
    negative balance. Empty household member list.
 
-   Month-boundary cases specifically: a scenario that opens in a month other
-   than January, and whose first tax year is therefore short. A scenario that
-   ends before the filing month, leaving a balance owing unpaid. December and
-   January in the same step sequence. A death in the first month, and one in
-   December. A benefit starting in December. A person who never starts a
-   benefit. The first and last simulated month, and the first and last
-   simulated year, which are not the same boundaries.
+   Month-boundary cases specifically. Every run opens on 1 January of the
+   scenario's start year (`docs/limitations.md` L4) and runs to the second
+   death with no separate horizon (L10); there is no mid-year start and no
+   short first tax year, so a docstring or a test describing either is itself
+   a finding. What to check instead: **month index zero**, where `open_year`
+   grants no room and restores none, since the scenario's figures are already
+   post-grant, while the minimums and maximums are still fixed. **Negative
+   month indexes**, which mean an event predating the run — a pension already
+   in pay, an employment band already ended, a bridge whose end month is
+   behind the opening. A run that ends before the filing month, leaving a
+   balance owing unpaid. December and January in the same step sequence. A
+   death in the first month, and one in December. A benefit starting in
+   December. A person who never starts a benefit. The first and last simulated
+   month, and the first and last simulated year, which are not the same
+   boundaries.
 
 Run the test suite. A passing suite is not evidence of correctness — say so
 when the tests do not cover what you were checking.

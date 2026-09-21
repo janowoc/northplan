@@ -80,11 +80,16 @@ a menu of assumptions you have already coded against.
 - Real dollars internally, except the two years of net income a scenario
   states for each person, which are taken as filed until a December close
   replaces each with a real figure in turn. Convert to nominal only at
-  display. Periodic indexation and its lag cost a *constant* in real terms,
-  computed once per scenario in `engine.core.indexation` and applied once,
-  by the step. It does not vary by month. A non-indexed amount is the
-  opposite case: its real decay grows without limit and must be applied
-  explicitly.
+  display. The erosion a periodic adjustment leaves between its adjustment
+  dates costs a *constant* in real terms, computed once per scenario in
+  `engine.core.indexation` and applied by `RealParamSet.amount` and its
+  siblings on the way out of `params/` — not by the step, and never again at
+  a call site, which would count it twice. It does not vary by month. The CPI
+  lag is a separate thing and is not modelled at all (`docs/limitations.md`
+  L5); do not fold the two together. A non-indexed amount is the opposite
+  case: its real decay grows without limit and must be applied explicitly,
+  which `engine.benefits.pension.db_pension_monthly` does by hand for a
+  pension that is not indexed — the one factor a caller applies.
 - `engine/` never imports `api`, `fastapi`, `cli`, `starlette`, or `uvicorn`.
 - Policy functions may only read information available at that simulated point
   in time. Never read a future return, a future balance, or a future bracket —
