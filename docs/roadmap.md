@@ -71,10 +71,10 @@ belongs. `--standalone` writes a full document for a browser.
 | 48 | One year's decay for nominal balances, and the nominal/real classification test | agent | 8, 11, 33 | an unclassified state field fails; the factor equals twelve months of `unindexed_factor` |
 | 49 | Two years of net income in the state and the scenario | agent | 11, 33 | the example loads with both figures; an offset other than -2 raises |
 | 50 | The AIP penalty in the assessment: which line, and a field on `Assessment` | agent | 14, 18 | a wind-up's penalty reaches assessed tax without touching net income |
-| 51 | Stub signatures take `RealParamYear`, and the three builders the loop needs | agent | 29, 33, 48 | no `ParamYear`, `n_years` or `params_by_year` under `engine/` outside the loader, indexation and the start-age check |
+| 51 | Stub signatures take `RealParamYear`, and the three builders the loop needs | agent | 29, 33, 48 | no bare `ParamYear`, no `n_years` argument and no `params_by_year` in the step, the loop, the policies or the optimizer |
 | 52 | `risk_aversion` is a scenario field, not a command-line flag | agent | 10 | the example loads with one; a scenario without one still loads |
 | 53 | Documentation drift the pending issues will not rewrite | agent | — | every changed hunk is a docstring, a comment or Markdown prose; no phase list touched |
-| 54 | Two guards: the `.raw` allowlist, and scalar-vs-per-path state fields | agent | 48 | an unclassified scalar field, and an unlisted `.raw` access, each fail |
+| 54 | Three guards: the `.raw` allowlist, scalar-vs-per-path state fields, and a scenario older than the life table | agent | 48 | an unclassified scalar field, an unlisted `.raw` access, and a scenario whose run cannot reach a December close, each fail |
 | 55 | A second committed scenario: the late-life couple | agent | 10, 33 | the two-person branch of `household_assessment` is reachable from a committed scenario |
 | 56 | Hand-check the couple scenario's death mechanics | human | 36, 55 | a spreadsheet is linked; a characterization test exists, created on instruction |
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
