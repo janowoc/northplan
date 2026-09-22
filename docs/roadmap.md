@@ -78,6 +78,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 55 | A second committed scenario: the late-life couple | agent | 10, 33 | the two-person branch of `household_assessment` is reachable from a committed scenario |
 | 56 | Hand-check the couple scenario's death mechanics | human | 36, 55 | a spreadsheet is linked; a characterization test exists, created on instruction |
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
+| 58 | No scenario field may be infinite or nan | agent | — | every float field refuses `inf` and `nan`; a sum check rewritten as a rejection test fails a test |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -285,6 +286,17 @@ order verbatim, so fixing that order now would be work thrown away twice. 53
 carries only what no pending issue touches, which would otherwise rot: three
 places in `engine/core/state.py`, two in `engine/core/__init__.py`, the README's
 status paragraph, L33's wording, and two test comments.
+
+58 came out of 52's review. `risk_aversion` landed with
+`allow_inf_nan=False` and was then the only field in the schema that refused
+infinity: `Money` has no upper bound, so an infinite salary or balance loads
+clean and turns the path to `nan` at the first `inf - inf`. Probing the rest
+found a second, separate hole — the allocation and contribution-weight sum
+checks are written as `if abs(total - 1.0) > TOLERANCE: raise`, and a `nan`
+weight satisfies neither that comparison nor its opposite, so the check does
+not fire at all. It sits after 54 because it is the same kind of work, a guard
+against a file the engine cannot represent, and before 53, which still goes
+last.
 
 55 exists because `scenarios/example.yaml` has one person, so it cannot reach
 pension splitting, the survivor share, the spousal rollover, OAS ceasing at
