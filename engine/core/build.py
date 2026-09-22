@@ -1,13 +1,21 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Scenario -> opening :class:`~engine.core.state.HouseholdState` and
-:class:`~engine.mc.market.MarketInputs`.
+"""Scenario -> opening :class:`~engine.core.state.HouseholdState`,
+:class:`~engine.mc.market.MarketInputs`, and the run's common random numbers.
 
 The one place a :class:`~engine.scenario.schema.Scenario` — real dollars of January of its
 start year, except each person's prior-year net income, taken as filed — is turned into the
-array-valued state the monthly loop steps forward. Everything here is a mapping, not a
-decision: no balance is projected, no benefit is computed, no bracket is consulted.
+array-valued state and draws the monthly loop steps forward. Five public functions:
+:func:`build_initial_state` and :func:`build_market_inputs` map the scenario; :func:`build_draws`
+and :func:`build_deterministic_draws` generate the run's :class:`~engine.mc.returns.RandomDraws`;
+:func:`draw_deaths` resolves every person's death month from those draws.
+
+:func:`build_initial_state` and :func:`build_market_inputs` are a mapping, not a decision: no
+balance is projected, no benefit is computed, no bracket is consulted. :func:`draw_deaths` is
+the one place this module consumes randomness — inverting a life table through a random draw is
+not a mapping — and it does so exactly once, before the loop starts, so the monthly step never
+reads a life table itself.
 
 This is the only scenario-to-engine boundary: ``engine.core.step.advance_month`` takes no
 scenario, only the state this module produces, so every field the scenario states is carried
@@ -31,6 +39,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.mortality import death_month_index, months_to_terminal, survival_curve
 from engine.core.state import (
     DEATH_NOT_DRAWN,
     BeneficiaryState,
@@ -50,10 +59,14 @@ from engine.core.state import (
     SpendingLevel,
     TaxableState,
     TfsaState,
+    freeze,
     select_spending_level,
+    updated,
 )
 from engine.mc.market import MarketInputs
 from engine.mc.moments import covariance_from_correlation
+from engine.mc.returns import RandomDraws, deterministic, generate
+from engine.params.loader import ParamSet
 from engine.scenario import (
     INVESTABLE_KINDS,
     Assumptions,
@@ -65,7 +78,13 @@ from engine.scenario import (
     Scenario,
 )
 
-__all__ = ["build_initial_state", "build_market_inputs"]
+__all__ = [
+    "build_deterministic_draws",
+    "build_draws",
+    "build_initial_state",
+    "build_market_inputs",
+    "draw_deaths",
+]
 
 
 def _month_offset(base_year: int, year: int, month: int) -> int:
@@ -220,6 +239,152 @@ def build_market_inputs(assumptions: Assumptions) -> MarketInputs:
         weights_by_kind=weights_by_kind,
         investable_kinds=INVESTABLE_KINDS,
     )
+
+
+def _n_months_for_household(scenario: Scenario, mortality: ParamSet) -> int:
+    """The month count the run must be prepared to simulate: the household maximum.
+
+    The **maximum** of :func:`~engine.core.mortality.months_to_terminal` across every person in
+    ``scenario.household.persons`` — not the first person's — since the run goes to the *second*
+    death and must not truncate whichever person happens to be longer-lived.
+    """
+    return max(
+        months_to_terminal(
+            person.birth_year, person.birth_month, person.sex, scenario.start_year, mortality
+        )
+        for person in scenario.household.persons
+    )
+
+
+def build_draws(
+    scenario: Scenario,
+    market: MarketInputs,
+    n_paths: int,
+    mortality: ParamSet,
+) -> RandomDraws:
+    """Generate the common random numbers a scenario's Monte Carlo run needs.
+
+    The month count is the household maximum, from :func:`_n_months_for_household` — the
+    longest of every person's :func:`~engine.core.mortality.months_to_terminal`, so the run
+    is never truncated by whichever person happens to die first. Delegates to
+    :func:`engine.mc.returns.generate`.
+
+    Args:
+        scenario: Supplies the seed and the persons the month count is derived from.
+        market: Supplies ``annual_means`` and ``annual_covariance``.
+        n_paths: Monte Carlo paths.
+        mortality: The ``mortality`` parameter set (``params["mortality"]``).
+
+    Returns:
+        A :class:`~engine.mc.returns.RandomDraws` sized for this household.
+    """
+    return generate(
+        seed=scenario.seed,
+        n_months=_n_months_for_household(scenario, mortality),
+        n_paths=n_paths,
+        annual_means=market.annual_means,
+        annual_covariance=market.annual_covariance,
+        n_persons=len(scenario.household.persons),
+    )
+
+
+def build_deterministic_draws(
+    scenario: Scenario,
+    market: MarketInputs,
+    mortality: ParamSet,
+) -> RandomDraws:
+    """Generate the zero-volatility draws for a scenario's deterministic check.
+
+    The same month count :func:`build_draws` would use, via
+    :func:`engine.mc.returns.deterministic`. No ``n_paths`` argument: it is always one.
+
+    Args:
+        scenario: Supplies the persons the month count is derived from.
+        market: Supplies ``annual_means``.
+        mortality: The ``mortality`` parameter set (``params["mortality"]``).
+
+    Returns:
+        A :class:`~engine.mc.returns.RandomDraws` with ``n_paths == 1`` and no dispersion.
+    """
+    return deterministic(
+        n_months=_n_months_for_household(scenario, mortality),
+        annual_means=market.annual_means,
+        n_persons=len(scenario.household.persons),
+    )
+
+
+def draw_deaths(
+    state: HouseholdState,
+    draws: RandomDraws,
+    mortality: ParamSet,
+) -> HouseholdState:
+    """Resolve every person's death month, once, before the run starts.
+
+    Per person, in positional order: builds that person's survival curve and inverts
+    ``draws.mortality[i]`` through it with :func:`engine.core.mortality.death_month_index`,
+    writing ``death_month_index`` and setting ``alive`` to ``death_month_index >
+    state.month_index``. This runs **before** :func:`engine.mc.simulate.run`, so the monthly
+    loop never reads a life table and stays a pure loop over already-resolved state.
+
+    From month zero onward, ``death_month_index`` is a future fact: only ``alive``, at the
+    current month, is knowable to a policy, and no policy may read ``death_month_index``.
+
+    Args:
+        state: Opening state, with ``month_index == 0``. ``survival_curve``'s ``start_year`` is
+            by definition the year of month index zero, so this uses ``state.year`` and
+            refuses any other opening month.
+        draws: Common random numbers; only ``draws.mortality`` is read here.
+        mortality: The ``mortality`` parameter set (``params["mortality"]``).
+
+    Returns:
+        ``state`` with every person's ``death_month_index`` and ``alive`` filled in.
+
+    Raises:
+        ValueError: If ``state.month_index != 0``; if ``draws.n_paths != state.n_paths``; if
+            ``draws.mortality.shape[0] != len(state.persons)``; or if a person's survival curve
+            is longer than ``draws.n_months`` — meaning ``draws`` was sized for a different
+            household or a different life table, and a ``death_month_index`` past
+            ``draws.n_months - 1`` would point at a month ``draws.real_returns`` does not have.
+            A silent mismatch on any of these would mis-assign one person's mortality draw to
+            another, or one path's death to another path.
+    """
+    if state.month_index != 0:
+        raise ValueError(
+            f"draw_deaths requires the opening state, month_index == 0, got "
+            f"{state.month_index!r}. survival_curve's start_year is by definition the year "
+            f"of month index zero, and state.year is only that year at the opening state."
+        )
+    if draws.n_paths != state.n_paths:
+        raise ValueError(
+            f"draws.n_paths ({draws.n_paths!r}) != state.n_paths ({state.n_paths!r}); a "
+            f"mismatch here would mis-assign one path's death draw to another."
+        )
+    if draws.mortality.shape[0] != len(state.persons):
+        raise ValueError(
+            f"draws.mortality has {draws.mortality.shape[0]} row(s), but state has "
+            f"{len(state.persons)} person(s); a mismatch here would mis-assign one "
+            f"person's mortality draw to another."
+        )
+
+    new_persons = []
+    for index, person in enumerate(state.persons):
+        curve = survival_curve(
+            person.birth_year, person.birth_month, person.sex, state.year, mortality
+        )
+        if len(curve) > draws.n_months:
+            raise ValueError(
+                f"person {person.person_id!r}: survival_curve has length {len(curve)!r}, "
+                f"longer than draws.n_months ({draws.n_months!r}); draws were sized for a "
+                f"different household or a different life table."
+            )
+        drawn = death_month_index(draws.mortality[index], curve)
+        # alive at month_index is exactly (death_month_index > month_index); written out even
+        # though month_index is 0 here, since it documents the invariant this state carries
+        # forward rather than hard-coding "not yet dead" as a bare True.
+        alive = drawn > state.month_index
+        new_persons.append(updated(person, death_month_index=freeze(drawn), alive=freeze(alive)))
+
+    return updated(state, persons=tuple(new_persons))
 
 
 def _select_policy(scenario: Scenario, policy: PolicySpec | None) -> PolicySpec:

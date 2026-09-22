@@ -22,8 +22,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState
-from engine.params.loader import ParamYear
 from engine.policy.base import Decision
 
 
@@ -56,7 +56,7 @@ class OrderedWithdrawalPolicy:
     cpp_start_age_months: dict[str, int]
     oas_start_age_months: dict[str, int]
 
-    def decide(self, state: HouseholdState, params: ParamYear) -> Decision:
+    def decide(self, state: HouseholdState, real_params: RealParamYear) -> Decision:
         """Choose this month's withdrawals.
 
         Reads opening balances, current ages, income accumulated so far this

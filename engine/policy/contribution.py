@@ -16,8 +16,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState
-from engine.params.loader import ParamYear
 from engine.policy.base import Decision
 
 
@@ -49,7 +49,7 @@ class SplitContributionPolicy:
     taxable_weight: float
     spill_order: tuple[str, ...]
 
-    def decide(self, state: HouseholdState, params: ParamYear) -> Decision:
+    def decide(self, state: HouseholdState, real_params: RealParamYear) -> Decision:
         """Split this month's savings budget according to the weights.
 
         Reads opening balances, the contribution room *still available* at this

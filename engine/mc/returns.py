@@ -10,8 +10,9 @@ are annual and converted to monthly exactly once, in
 
 There is no ``n_months`` derived here: the simulation runs every path to the second
 death with no separate horizon (``docs/limitations.md`` L10), so the caller derives
-the month count from the household's ages and the life table (in
-``engine/mc/simulate.py``) and hands it in.
+the month count from the household's ages and the life table
+(:func:`engine.core.mortality.months_to_terminal`, applied by
+``engine/core/build.py``) and hands it in.
 
 Attainability of the moments is checked in :mod:`engine.mc.moments`, called both
 here and by ``engine.scenario.schema.Assumptions`` when a scenario loads; this

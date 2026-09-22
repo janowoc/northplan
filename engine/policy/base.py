@@ -11,8 +11,8 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState
-from engine.params.loader import ParamYear
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,16 +56,17 @@ class Policy(Protocol):
     def decide(
         self,
         state: HouseholdState,
-        params: ParamYear,
+        real_params: RealParamYear,
     ) -> Decision:
         """Choose this month's contributions and withdrawals.
 
         Args:
             state: Opening state for the current month, carrying ``year`` and
-                ``month``. This, and the current tax year's ``params``, are
-                the only legitimate inputs. Income accumulated *so far* this
-                year is knowable; the year's eventual total is not.
-            params: Parameters for the current tax year.
+                ``month``. This, and the current tax year's ``real_params``,
+                are the only legitimate inputs. Income accumulated *so far*
+                this year is knowable; the year's eventual total is not.
+            real_params: Parameters for the current tax year, in the
+                scenario's real-dollar view.
 
         Returns:
             The month's :class:`Decision`.

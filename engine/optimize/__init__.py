@@ -10,6 +10,7 @@ decisions.
 
 Every candidate policy is evaluated against the same
 :class:`~engine.mc.returns.RandomDraws` (common random numbers); draws are
-never regenerated per candidate. Search is grid search; anything else must
-be validated against it.
+never regenerated per candidate. ``search`` evaluates an already-expanded
+list of candidates exhaustively; any cleverer method must be validated
+against it.
 """

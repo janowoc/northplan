@@ -22,7 +22,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from engine.core.mortality import death_month_index, monthly_hazard, survival_curve
+from engine.core.mortality import (
+    death_month_index,
+    monthly_hazard,
+    months_to_terminal,
+    survival_curve,
+)
 from engine.core.timeline import MONTHS_PER_YEAR
 from engine.params.loader import ParamSet, load_year
 
@@ -317,3 +322,31 @@ class TestGeometricDistribution:
         tolerance = self.TOLERANCE_IN_SE * standard_error
 
         assert deaths.mean() == pytest.approx(expected_mean, abs=tolerance)
+
+
+class TestMonthsToTerminal:
+    def test_matches_the_survival_curve_length(self, table: ParamSet) -> None:
+        assert months_to_terminal(START_YEAR, 1, "f", START_YEAR, table) == len(
+            survival_curve(START_YEAR, 1, "f", START_YEAR, table)
+        )
+
+    def test_the_last_month_of_the_curve_is_reachable_by_death_month_index(
+        self, table: ParamSet
+    ) -> None:
+        """Pins the bound at the end that matters, rather than restating the function body.
+
+        A ``u`` an infinitesimal step above 0 dies as late as ``death_month_index`` ever
+        allows; that must land exactly one before ``months_to_terminal``'s count, which is
+        the one bare fact ``test_matches_the_survival_curve_length`` above cannot show, since
+        it never calls ``death_month_index`` at all.
+        """
+        curve = survival_curve(START_YEAR, 1, "f", START_YEAR, table)
+        months = months_to_terminal(START_YEAR, 1, "f", START_YEAR, table)
+        u = np.array([np.nextafter(0.0, 1.0)])
+        assert death_month_index(u, curve)[0] == months - 1
+
+    def test_grows_as_birth_year_rises(self, table: ParamSet) -> None:
+        """A younger person has more months to run than an older one."""
+        older = months_to_terminal(START_YEAR - 40, 1, "f", START_YEAR, table)
+        younger = months_to_terminal(START_YEAR - 10, 1, "f", START_YEAR, table)
+        assert younger > older

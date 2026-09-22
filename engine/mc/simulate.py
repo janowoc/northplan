@@ -14,9 +14,10 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState
+from engine.mc.market import MarketInputs
 from engine.mc.returns import RandomDraws
-from engine.params.loader import ParamYear
 from engine.policy.base import Policy
 
 
@@ -36,7 +37,7 @@ class SimulationResult:
         years: Calendar years simulated, ``(n_years,)``.
         net_worth: Real household net worth at each 31 December,
             ``(n_years, n_paths)``.
-        spending: Real after-tax spending achieved over each year, summed
+        spending_achieved: Real after-tax spending achieved over each year, summed
             from the twelve months, ``(n_years, n_paths)``.
         tax_assessed: Real household tax *assessed* on each year's income,
             ``(n_years, n_paths)`` -- not paid; the cash leaves in the
@@ -49,7 +50,7 @@ class SimulationResult:
 
     years: NDArray[np.int64]
     net_worth: NDArray[np.float64]
-    spending: NDArray[np.float64]
+    spending_achieved: NDArray[np.float64]
     tax_assessed: NDArray[np.float64]
     depleted: NDArray[np.bool_]
     seed: int
@@ -59,29 +60,38 @@ def run(
     initial_state: HouseholdState,
     policy: Policy,
     draws: RandomDraws,
-    params_by_year: dict[int, ParamYear],
-    n_years: int,
+    market: MarketInputs,
+    real_params: RealParamYear,
 ) -> SimulationResult:
-    """Simulate ``n_years`` for every path under one policy, one month at a time.
+    """Simulate every path under one policy, one month at a time.
 
-    The loop is over ``12 * n_years`` months. ``initial_state`` need not open in
-    January — a scenario that begins mid-year begins mid-year, and the first
-    tax year is a short one. What the loop must not do is skip the year-opening
-    phase for that first partial year or double-count it.
+    The loop is over ``draws.n_months`` months, a count the caller derived
+    from the longest survival curve in the household
+    (:func:`engine.core.build.build_draws`). The run opens on 1 January of
+    the scenario's start year and has no separate horizon: it runs to the
+    second death (``docs/limitations.md`` L4, L10).
 
     Args:
         initial_state: Opening state for the first simulated month.
         policy: The policy being evaluated.
         draws: Common random numbers, monthly, generated once and shared across
             every policy. Never regenerate inside this function.
-        params_by_year: Loaded parameters keyed by tax year. Indexed by the
-            calendar year the current month falls in.
-        n_years: Horizon in years; the month count is twelve times it.
+        market: The asset-class allocation and yield mix each account's
+            balance grows under.
+        real_params: Parameters for the tax year the run opens in, in the
+            scenario's real-dollar view.
 
     Returns:
         A :class:`SimulationResult`, recorded per year.
 
     Raises:
-        ValueError: If ``draws.n_months`` is shorter than the horizon.
+        ValueError: A state whose ``death_month_index`` is still
+            :data:`engine.core.state.DEATH_NOT_DRAWN` on any person is
+            refused — :func:`engine.core.build.draw_deaths` runs before
+            ``run``, and a half-built opening state must fail loudly. Also
+            refused: ``draws.n_paths`` disagreeing with ``initial_state.n_paths``,
+            and ``draws.n_months`` less than or equal to the largest
+            ``death_month_index`` in the state, which means the draws are too
+            short to reach the last death.
     """
     raise NotImplementedError

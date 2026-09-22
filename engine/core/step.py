@@ -20,16 +20,18 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState
-from engine.params.loader import ParamYear
+from engine.mc.market import MarketInputs
 from engine.policy.base import Policy
 
 
 def advance_month(
     state: HouseholdState,
-    real_returns: NDArray[np.float64],
+    month_returns: NDArray[np.float64],
     policy: Policy,
-    params: ParamYear,
+    market: MarketInputs,
+    real_params: RealParamYear,
 ) -> HouseholdState:
     """Advance the household by one month, across every path. Order of operations:
 
@@ -56,10 +58,14 @@ def advance_month(
 
     Args:
         state: Opening state for ``state.year``/``state.month``.
-        real_returns: This month's real return per path and asset class,
+        month_returns: This month's real return per path and asset class,
             ``(n_assets, n_paths)``, monthly and real.
         policy: Decision rules, given only information available at this point.
-        params: Parameters for the tax year ``state.year`` falls in.
+        market: The asset-class allocation and yield mix each account's
+            balance grows under, so the step applies ``month_returns`` by
+            kind rather than as one number.
+        real_params: Parameters for the tax year ``state.year`` falls in,
+            in the scenario's real-dollar view.
 
     Returns:
         Opening state for the following month.
@@ -67,7 +73,7 @@ def advance_month(
     raise NotImplementedError
 
 
-def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
+def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
     """January phase: grant room, fix the year's annual limits, reset the ledger.
 
     Called by :func:`advance_month`, never directly.
@@ -89,7 +95,8 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
 
     Args:
         state: Opening state for January.
-        params: Parameters for the new tax year.
+        real_params: Parameters for the new tax year, in the scenario's
+            real-dollar view.
 
     Returns:
         State with the year's annual quantities established.
@@ -97,7 +104,7 @@ def open_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
     raise NotImplementedError
 
 
-def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
+def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
     """December phase: assess the year, record it, carry the balance forward.
 
     Called by :func:`advance_month`, never directly.
@@ -127,7 +134,8 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
 
     Args:
         state: State at the end of December, with twelve months accumulated.
-        params: Parameters for the tax year being closed.
+        real_params: Parameters for the tax year being closed, in the
+            scenario's real-dollar view.
 
     Returns:
         State with the year assessed and recorded.
@@ -135,11 +143,11 @@ def close_year(state: HouseholdState, params: ParamYear) -> HouseholdState:
     raise NotImplementedError
 
 
-def settle_tax_balance(state: HouseholdState, params: ParamYear) -> HouseholdState:
+def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
     """Filing-month phase: pay the prior year's balance owing in cash.
 
     Called by :func:`advance_month`, never directly. The month comes from
-    ``params``; it is not written into the code.
+    ``real_params``; it is not written into the code.
 
     This is the step that makes tax a cash flow rather than an accrual. The
     money leaves the household's accounts here, months after the income that
@@ -149,8 +157,8 @@ def settle_tax_balance(state: HouseholdState, params: ParamYear) -> HouseholdSta
 
     Args:
         state: State in the filing month, carrying a non-zero balance owing.
-        params: Parameters for the current tax year, supplying the filing
-            month.
+        real_params: Parameters for the current tax year, in the scenario's
+            real-dollar view, supplying the filing month.
 
     Returns:
         State with the balance discharged and the cash effect applied.
@@ -160,8 +168,7 @@ def settle_tax_balance(state: HouseholdState, params: ParamYear) -> HouseholdSta
 
 def resolve_deaths(
     state: HouseholdState,
-    mortality_draw: NDArray[np.float64],
-    params: ParamYear,
+    real_params: RealParamYear,
 ) -> HouseholdState:
     """Apply mortality for this month and its immediate consequences.
 
@@ -174,9 +181,8 @@ def resolve_deaths(
 
     Args:
         state: Opening state for the month.
-        mortality_draw: Uniform draws, ``(n_persons, n_paths)``, from the common random number
-            stream, so mortality is identical across policies.
-        params: Parameters for the current tax year.
+        real_params: Parameters for the current tax year, in the scenario's
+            real-dollar view.
 
     Returns:
         State with ``alive`` and any rollover applied.

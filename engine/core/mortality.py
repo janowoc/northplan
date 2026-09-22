@@ -18,7 +18,7 @@ from numpy.typing import ArrayLike, NDArray
 from engine.core.timeline import MONTHS_PER_YEAR, age_in_years, year_month
 from engine.params.loader import ParamSet
 
-__all__ = ["death_month_index", "monthly_hazard", "survival_curve"]
+__all__ = ["death_month_index", "monthly_hazard", "months_to_terminal", "survival_curve"]
 
 
 def monthly_hazard(q_annual: ArrayLike) -> NDArray[np.float64] | float:
@@ -84,6 +84,39 @@ def survival_curve(
     array = np.array(curve, dtype=np.float64)
     array.flags.writeable = False
     return array
+
+
+def months_to_terminal(
+    birth_year: int,
+    birth_month: int,
+    sex: str,
+    start_year: int,
+    table: ParamSet,
+) -> int:
+    """How many months the run must be prepared to simulate for one person.
+
+    ``len(survival_curve(...))``, not one less: :func:`death_month_index` returns at most
+    ``len(curve) - 1``, and a death drawn for month index ``k`` means the person is **not**
+    alive at the *opening* of month ``k`` (:func:`death_month_index`'s ``alive`` convention).
+    Month ``k`` must still be simulated anyway — it is the month ``resolve_deaths`` acts in,
+    and index ``k`` must exist in ``draws.real_returns``. Bare arguments, mirroring
+    :func:`survival_curve`.
+
+    Args:
+        birth_year: Calendar year of birth.
+        birth_month: Month of birth, ``1..12``.
+        sex: ``"f"`` or ``"m"``, selecting the life table.
+        start_year: The simulation's first calendar year — month index 0.
+        table: The ``mortality`` parameter set (``params["mortality"]``).
+
+    Returns:
+        The month count :func:`survival_curve` would produce a curve of that length for.
+
+    Raises:
+        MissingParameterError: See :func:`survival_curve`.
+        MalformedParamFileError: See :func:`survival_curve`.
+    """
+    return len(survival_curve(birth_year, birth_month, sex, start_year, table))
 
 
 def death_month_index(u: NDArray[np.float64], curve: NDArray[np.float64]) -> NDArray[np.int64]:

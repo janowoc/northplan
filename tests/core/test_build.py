@@ -25,10 +25,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from engine.core.build import _month_offset, build_initial_state, build_market_inputs
+from engine.core.build import (
+    _month_offset,
+    build_deterministic_draws,
+    build_draws,
+    build_initial_state,
+    build_market_inputs,
+    draw_deaths,
+)
+from engine.core.mortality import death_month_index, months_to_terminal, survival_curve
 from engine.core.state import DEATH_NOT_DRAWN, updated
 from engine.mc.market import DEFAULT_KIND
 from engine.mc.returns import generate
+from engine.params.loader import ParamSet, load_year
 from engine.scenario import (
     DEFAULT_ALLOCATION,
     Assumptions,
@@ -56,6 +65,69 @@ MINIMUM_ARRAYS = 50
 @pytest.fixture
 def scenario():
     return load_scenario(EXAMPLE)
+
+
+#: The mortality table used by ``TestBuildDraws`` and ``TestDrawDeaths`` below — a
+#: constant annual ``q`` at every age, one constant per sex, with the terminal row at
+#: ``1.0`` the engine's own convention requires, mirroring
+#: ``tests/core/test_mortality.py``'s fixture. Never presented as a real value.
+#: Comfortably above the example person's age at start (60 in 2026) and above the
+#: second, deliberately younger person used below (11 in 2026), so neither curve
+#: degenerates to the length-1 "already past terminal age" case.
+TERMINAL_AGE = 80
+SYNTHETIC_Q = 0.05
+
+
+@pytest.fixture
+def mortality(tmp_path: Path, scenario) -> ParamSet:
+    year_dir = tmp_path / str(scenario.start_year)
+    year_dir.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(f"    {age}: {SYNTHETIC_Q}" for age in range(TERMINAL_AGE))
+    text = f"""\
+# SYNTHETIC TEST FIXTURE -- flat q(x) per sex, not a real mortality curve.
+terminal_age_years: {TERMINAL_AGE}
+q_x:
+  f:
+{rows}
+    {TERMINAL_AGE}: 1.0
+  m:
+{rows}
+    {TERMINAL_AGE}: 1.0
+"""
+    (year_dir / "mortality.yaml").write_text(text, encoding="utf-8")
+    return load_year(scenario.start_year, tmp_path)["mortality"]
+
+
+@pytest.fixture
+def two_person_scenario(scenario):
+    """A household whose two persons' ``months_to_terminal`` differ, and whose sex differs too.
+
+    Person ``a`` is the example's 1966-born ``f`` adult; person ``b`` is a deliberately
+    much younger ``m`` copy, so the household's month count is not the first person's —
+    a build_draws that only read persons[0] would compute a month count too small for
+    ``b`` and this fixture is built specifically to make that failure visible. The sex
+    difference is harmless and mirrors a real household, but it does no work here:
+    ``SYNTHETIC_Q`` is identical for ``"f"`` and ``"m"``. What makes swapping the two
+    persons' rows change the answer is the birth-year difference together with the two
+    independent ``draws.mortality`` rows, so a ``draw_deaths`` that wrote
+    ``draws.mortality[0]`` for every person cannot pass a test built against this
+    fixture by coincidence.
+    """
+    person_a = scenario.household.persons[0]
+    person_b = person_a.model_copy(
+        update={"id": "b", "sex": "m", "birth_year": 2015, "birth_month": 1}
+    )
+    new_household = scenario.household.model_copy(update={"persons": (person_a, person_b)})
+
+    elections = scenario.policies[0].elections
+    new_elections = elections.model_copy(
+        update={
+            "cpp_start_age_years": {**elections.cpp_start_age_years, "b": 65},
+            "oas_start_age_years": {**elections.oas_start_age_years, "b": 65},
+        }
+    )
+    new_policy = scenario.policies[0].model_copy(update={"elections": new_elections})
+    return scenario.model_copy(update={"household": new_household, "policies": (new_policy,)})
 
 
 class TestBuildAgainstTheExample:
@@ -611,3 +683,181 @@ class TestSpendingMonthlySelection:
         new_scenario = scenario.model_copy(update={"spending": new_spending})
         state = build_initial_state(new_scenario, n_paths=N_PATHS)
         assert state.spending_monthly == pytest.approx(1_000.0)
+
+
+class TestBuildDraws:
+    """``build_draws`` and ``build_deterministic_draws``.
+
+    Does not exercise ``draw_deaths`` — see ``TestDrawDeaths`` below, which
+    shares this module's ``mortality`` and ``two_person_scenario`` fixtures.
+    """
+
+    def test_build_draws_month_count_is_the_household_maximum(
+        self, two_person_scenario, mortality: ParamSet
+    ) -> None:
+        market = build_market_inputs(two_person_scenario.assumptions)
+        persons = two_person_scenario.household.persons
+
+        months_a = months_to_terminal(
+            persons[0].birth_year,
+            persons[0].birth_month,
+            persons[0].sex,
+            two_person_scenario.start_year,
+            mortality,
+        )
+        months_b = months_to_terminal(
+            persons[1].birth_year,
+            persons[1].birth_month,
+            persons[1].sex,
+            two_person_scenario.start_year,
+            mortality,
+        )
+        # The fixture must actually make the two differ, and the younger
+        # person (b) must be the larger one, or this test would pass against
+        # a first-person implementation by coincidence.
+        assert months_b > months_a
+
+        draws = build_draws(two_person_scenario, market, n_paths=4, mortality=mortality)
+
+        assert draws.n_months == months_b
+        assert draws.real_returns.shape == (months_b, len(market.asset_class_names), 4)
+
+    def test_build_deterministic_draws_is_one_path_same_month_count(
+        self, two_person_scenario, mortality: ParamSet
+    ) -> None:
+        market = build_market_inputs(two_person_scenario.assumptions)
+        stochastic = build_draws(two_person_scenario, market, n_paths=4, mortality=mortality)
+        det = build_deterministic_draws(two_person_scenario, market, mortality)
+
+        assert det.n_paths == 1
+        assert det.n_months == stochastic.n_months
+
+
+class TestDrawDeaths:
+    #: Large enough that "every path" checks are meaningful, small enough to
+    #: run quickly against the ~250-month synthetic curve the module-level
+    #: ``mortality`` fixture builds.
+    N_PATHS = 3000
+
+    @pytest.fixture
+    def opening_state_and_draws(self, scenario, mortality: ParamSet):
+        market = build_market_inputs(scenario.assumptions)
+        state = build_initial_state(scenario, n_paths=self.N_PATHS)
+        draws = build_draws(scenario, market, n_paths=self.N_PATHS, mortality=mortality)
+        return state, draws
+
+    def test_every_path_gets_a_death_month_in_range_no_sentinel_left(
+        self, opening_state_and_draws, mortality: ParamSet
+    ) -> None:
+        state, draws = opening_state_and_draws
+        result = draw_deaths(state, draws, mortality)
+
+        for person in result.persons:
+            assert (person.death_month_index != DEATH_NOT_DRAWN).all()
+            assert (person.death_month_index >= 1).all()
+            assert (person.death_month_index <= draws.n_months - 1).all()
+            # At month zero, alive == (death_month_index > 0), which is true whenever
+            # death_month_index >= 1 -- already asserted above -- so the real content
+            # left to check is simply that everyone is alive at the opening state.
+            assert person.alive.all()
+
+    def test_the_same_draws_give_identical_death_months(
+        self, opening_state_and_draws, mortality: ParamSet
+    ) -> None:
+        state, draws = opening_state_and_draws
+        first = draw_deaths(state, draws, mortality)
+        second = draw_deaths(state, draws, mortality)
+
+        for person_first, person_second in zip(first.persons, second.persons, strict=True):
+            assert (person_first.death_month_index == person_second.death_month_index).all()
+            assert (person_first.alive == person_second.alive).all()
+
+    def test_rejects_a_state_not_at_month_index_zero(
+        self, opening_state_and_draws, mortality: ParamSet
+    ) -> None:
+        state, draws = opening_state_and_draws
+        later_state = updated(state, month_index=5)
+
+        with pytest.raises(ValueError, match="month_index"):
+            draw_deaths(later_state, draws, mortality)
+
+    def test_rejects_a_path_count_mismatch(self, scenario, mortality: ParamSet) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        state = build_initial_state(scenario, n_paths=5)
+        mismatched_draws = build_draws(scenario, market, n_paths=3, mortality=mortality)
+
+        with pytest.raises(ValueError, match="n_paths"):
+            draw_deaths(state, mismatched_draws, mortality)
+
+    def test_rejects_a_person_count_mismatch(self, scenario, mortality: ParamSet) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        state = build_initial_state(scenario, n_paths=4)
+        two_person_draws = generate(
+            seed=1,
+            n_months=10,
+            n_paths=4,
+            annual_means=market.annual_means,
+            annual_covariance=market.annual_covariance,
+            n_persons=2,
+        )
+
+        # "row" rather than "person": both the person-count message and the
+        # survival-curve-length message below begin "person '...':", so
+        # matching on "person" would pass here even if the two count checks
+        # ran after the loop instead of before it. Only the person-count
+        # message says "row(s)".
+        with pytest.raises(ValueError, match="row"):
+            draw_deaths(state, two_person_draws, mortality)
+
+    def test_rejects_a_survival_curve_longer_than_draws_n_months(
+        self, scenario, mortality: ParamSet
+    ) -> None:
+        market = build_market_inputs(scenario.assumptions)
+        state = build_initial_state(scenario, n_paths=4)
+        short_draws = generate(
+            seed=1,
+            n_months=10,
+            n_paths=4,
+            annual_means=market.annual_means,
+            annual_covariance=market.annual_covariance,
+            n_persons=1,
+        )
+
+        with pytest.raises(ValueError, match="longer than"):
+            draw_deaths(state, short_draws, mortality)
+
+    def test_each_person_s_death_month_index_comes_from_their_own_row(
+        self, two_person_scenario, mortality: ParamSet
+    ) -> None:
+        """The alignment brief-51 asked for: person ``i`` gets ``draws.mortality[i]``.
+
+        ``scenarios/example.yaml`` has one person, so every other test in this class
+        would pass an implementation that wrote ``draws.mortality[0]`` for every
+        person. ``two_person_scenario`` differs in both sex and birth year, so
+        swapping the two rows changes the answer.
+        """
+        market = build_market_inputs(two_person_scenario.assumptions)
+        state = build_initial_state(two_person_scenario, n_paths=self.N_PATHS)
+        draws = build_draws(two_person_scenario, market, n_paths=self.N_PATHS, mortality=mortality)
+
+        result = draw_deaths(state, draws, mortality)
+
+        persons = two_person_scenario.household.persons
+        for index, person_state in enumerate(result.persons):
+            curve = survival_curve(
+                persons[index].birth_year,
+                persons[index].birth_month,
+                persons[index].sex,
+                two_person_scenario.start_year,
+                mortality,
+            )
+            expected = death_month_index(draws.mortality[index], curve)
+            np.testing.assert_array_equal(person_state.death_month_index, expected)
+
+            assert person_state.death_month_index.dtype == np.int64
+            assert person_state.death_month_index.shape == (self.N_PATHS,)
+            assert not person_state.death_month_index.flags.writeable
+
+            assert person_state.alive.dtype == np.bool_
+            assert person_state.alive.shape == (self.N_PATHS,)
+            assert not person_state.alive.flags.writeable
