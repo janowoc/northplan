@@ -1139,6 +1139,12 @@ class Scenario(_Base):
         seed: Seed for the common random numbers. Fixed so the same scenario
             reproduces exactly, and shared across every policy so the optimizer
             compares policies rather than draws.
+        risk_aversion: Coefficient of relative risk aversion, a bare
+            coefficient and never a percentage. Zero is risk neutrality.
+            Scores a finished result; it changes no simulated number.
+            Optional, and ``None`` is not a risk preference — an objective
+            that needs one raises rather than choosing on the household's
+            behalf.
         household: The people.
         spending: What they spend.
         assumptions: Inflation and capital markets.
@@ -1153,6 +1159,7 @@ class Scenario(_Base):
     start_year: int
     n_paths: Annotated[int, Field(ge=1)]
     seed: int
+    risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] | None = None
     household: Household
     spending: Spending
     assumptions: Assumptions

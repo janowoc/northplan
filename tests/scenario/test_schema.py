@@ -612,6 +612,24 @@ REJECTIONS = [
         "crypto",
         sets("household.persons.0.accounts.crypto", {"balance": 1000}),
     ),
+    # --- Risk aversion --------------------------------------------------------
+    rejected(
+        "risk-aversion-negative",
+        "risk_aversion",
+        sets("risk_aversion", -1.0),
+    ),
+    rejected(
+        # The one of the three that fails if allow_inf_nan=False is dropped:
+        # ge=0.0 alone already refuses nan, but accepts inf.
+        "risk-aversion-infinite",
+        "risk_aversion",
+        sets("risk_aversion", float("inf")),
+    ),
+    rejected(
+        "risk-aversion-nan",
+        "risk_aversion",
+        sets("risk_aversion", float("nan")),
+    ),
 ]
 
 
@@ -736,6 +754,12 @@ ACCEPTANCES = [
         "a-person-born-in-january-of-the-start-year",
         sets("household.persons.0.birth_year", 2026),
         sets("household.persons.0.birth_month", 1),
+    ),
+    accepted(
+        # Zero is risk neutrality, a legal preference, and the only case that
+        # can tell ge=0.0 from gt=0.0.
+        "risk-aversion-zero",
+        sets("risk_aversion", 0.0),
     ),
 ]
 
@@ -863,6 +887,33 @@ def test_every_rejection_has_its_own_case_id() -> None:
     ids = [case.id for case in REJECTIONS] + [case.id for case in ACCEPTANCES]
 
     assert len(ids) == len(set(ids)), sorted({name for name in ids if ids.count(name) > 1})
+
+
+# --- Risk aversion ------------------------------------------------------
+
+
+def test_the_example_carries_its_risk_aversion(tmp_path: Path) -> None:
+    """The expected value is read out of the file, not written here.
+
+    Pinning the example's own coefficient in this test would make it a second
+    place the preference is written down, and would fail on a change to the
+    example this test has no opinion about.
+    """
+    expected = example_values()["risk_aversion"]
+    assert expected is not None
+
+    scenario = load_mutated(tmp_path, ())
+
+    assert scenario.risk_aversion == expected
+
+
+def test_a_scenario_with_no_risk_aversion_loads_as_none(tmp_path: Path) -> None:
+    """Not just another ACCEPTANCES entry: those only assert that a file
+    loads, so an absent preference could silently acquire a numeric default
+    and nothing in the acceptance list would notice."""
+    scenario = load_mutated(tmp_path, (deletes("risk_aversion"),))
+
+    assert scenario.risk_aversion is None
 
 
 # --- Attainability checked at load time, both entry points -----------------

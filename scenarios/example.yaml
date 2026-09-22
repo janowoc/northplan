@@ -29,6 +29,13 @@ start_year: 2026            # dollars per the header's convention; params/2026 s
 n_paths: 10000
 seed: 42                    # common random numbers: the same draws for every policy
 
+# A household PREFERENCE, not a fact about the household and not a tax rule: a
+# bare coefficient of relative risk aversion, never a percentage. Zero is legal
+# and means risk neutrality. It scores the finished result and changes no
+# simulated number. Optional — omit it and the objectives that need it refuse
+# to run rather than pick a preference for you.
+risk_aversion: 2.0
+
 household:
   province: ab              # province of RESIDENCE, for income tax
 
