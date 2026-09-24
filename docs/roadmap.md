@@ -79,6 +79,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 56 | Hand-check the couple scenario's death mechanics | human | 36, 55 | a spreadsheet is linked; a characterization test exists, created on instruction |
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
 | 58 | No scenario field may be infinite or nan | agent | — | every float field refuses `inf` and `nan`; a sum check rewritten as a rejection test fails a test |
+| 59 | Every float in the scenario schema is declared finite on its type, correlation entries and weights included | agent | 58 | a non-finite correlation entry or weight is refused at its own location; dropping the flag from any of the three containers fails a test |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -297,6 +298,16 @@ weight satisfies neither that comparison nor its opposite, so the check does
 not fire at all. It sits after 54 because it is the same kind of work, a guard
 against a file the engine cannot represent, and before 53, which still goes
 last.
+
+59 came out of 58's review. 58 left the entries of the correlation matrix and
+of the two weight mappings unflagged and relied on the positive-form checks to
+refuse them, which they do, but by whichever check trips first: a symmetric
+matrix holding `inf` is reported as not symmetric, and a `nan` weight as a sum
+of `nan` without saying which weight. Flagging the element types names the
+entry and leaves no float in the schema unflagged. The price is 58's own
+criterion — once no file can bring a `nan` to the sum check, no test can tell
+its positive form from the old one — and 59 records that as accepted debt. It
+sits right after 58 because it depends on it and edits the same two files.
 
 55 exists because `scenarios/example.yaml` has one person, so it cannot reach
 pension splitting, the survivor share, the spousal rollover, OAS ceasing at
