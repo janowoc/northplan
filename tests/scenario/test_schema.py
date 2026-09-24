@@ -250,6 +250,13 @@ REJECTIONS = [
         "employment:",
         sets("household.persons.0.employment.0.to_year", 2020),
     ),
+    rejected(
+        # ge=0.0 alone refuses nan but accepts inf, so this is the case that
+        # fails if the flag is dropped from Money.
+        "money-infinite",
+        "employment.0.annual",
+        sets("household.persons.0.employment.0.annual", float("inf")),
+    ),
     # --- Accounts -----------------------------------------------------------
     rejected(
         "negative-balance",
@@ -306,6 +313,14 @@ REJECTIONS = [
         "bridge-ends-before-the-pension-starts",
         "bridge",
         sets("household.persons.0.db_pensions.0.bridge_annual", 8000),
+    ),
+    rejected(
+        # Fraction's bounds refuse nan (ge) and inf (le) without the flag, so
+        # this case cannot tell whether the flag is present; it exists so
+        # that each alias has a case.
+        "fraction-nan",
+        "db_pensions.0.survivor_share",
+        sets("household.persons.0.db_pensions.0.survivor_share", float("nan")),
     ),
     rejected(
         "two-pensions-with-one-name",
@@ -395,6 +410,14 @@ REJECTIONS = [
         sets("assumptions.asset_classes.equity.dividend_yield", -0.02),
     ),
     rejected(
+        # ge=0.0 accepts inf and no later validator reads a yield, so the
+        # flag is the only guard and this is the case that fails if it is
+        # dropped.
+        "yield-infinite",
+        "interest_yield",
+        sets("assumptions.asset_classes.bonds.interest_yield", float("inf")),
+    ),
+    rejected(
         "no-asset-classes",
         "asset_classes",
         sets("assumptions.asset_classes", {}),
@@ -403,6 +426,11 @@ REJECTIONS = [
         "inflation-at-minus-one",
         "inflation",
         sets("assumptions.inflation", -1.0),
+    ),
+    rejected(
+        "inflation-infinite",
+        "assumptions.inflation",
+        sets("assumptions.inflation", float("inf")),
     ),
     # --- Correlation --------------------------------------------------------
     rejected(
@@ -456,7 +484,7 @@ REJECTIONS = [
     ),
     rejected(
         "a-real-mean-that-is-not-a-number",
-        "asset class 'equity': real_mean",
+        "asset_classes.equity.real_mean",
         sets("assumptions.asset_classes.equity.real_mean", float("nan")),
     ),
     # --- Allocations --------------------------------------------------------
@@ -485,6 +513,14 @@ REJECTIONS = [
         "allocations",
         sets("assumptions.allocations.default", {"equity": 1.4, "bonds": -0.4}),
     ),
+    rejected(
+        # The sum check is a positive test, because nan fails every ordered
+        # comparison, so a check of the form "if x > tol: raise" lets it
+        # through.
+        "allocation-weight-nan",
+        "allocations",
+        sets("assumptions.allocations.default", {"equity": float("nan"), "bonds": 0.4}),
+    ),
     # --- Contribution rule --------------------------------------------------
     rejected(
         "contribution-weights-do-not-sum-to-one",
@@ -510,6 +546,17 @@ REJECTIONS = [
         "spill-order-repeats-an-account",
         "contribution.spill_order",
         sets("policies.0.contribution.spill_order", ["tfsa", "tfsa", "taxable"]),
+    ),
+    rejected(
+        # The sum check is a positive test, because nan fails every ordered
+        # comparison, so a check of the form "if x > tol: raise" lets it
+        # through.
+        "contribution-weight-nan",
+        "contribution.weights",
+        sets(
+            "policies.0.contribution.weights",
+            {"rrsp": float("nan"), "tfsa": 0.3, "taxable": 0.2, "resp": 0.0},
+        ),
     ),
     # --- Withdrawal rule ----------------------------------------------------
     rejected(
@@ -594,6 +641,13 @@ REJECTIONS = [
         "grid-with-nothing-to-try",
         "grid[",
         sets("grid", {"elections.cpp_start_age_years.a": []}),
+    ),
+    rejected(
+        # Replace the whole mapping: the grid key contains dots, which
+        # sets() would split.
+        "grid-value-infinite",
+        "grid.`elections.cpp_start_age_years.a`",
+        sets("grid", {"elections.cpp_start_age_years.a": [60, float("inf"), 70]}),
     ),
     # --- Unknown keys -------------------------------------------------------
     rejected(

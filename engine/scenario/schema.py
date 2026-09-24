@@ -22,8 +22,8 @@ the engine holds everywhere, except a person's ``prior_year_net_income`` and
 **Amounts are what the household has, not what the rules allow.** Contribution
 room and the two years of net income are scenario inputs because they depend
 on a filing history the model does not have. The schema checks that a number is
-non-negative and self-consistent; it never checks a number against a statutory
-limit, since those live in ``params/`` for a particular year.
+finite, non-negative and self-consistent; it never checks a number against a
+statutory limit, since those live in ``params/`` for a particular year.
 
 What this module deliberately does not validate:
 
@@ -143,16 +143,16 @@ def _freeze[V](mapping: Mapping[str, V]) -> Mapping[str, V]:
 #: ``FrozenMapping[float]``; nests as ``FrozenMapping[FrozenMapping[float]]``.
 FrozenMapping = Annotated[Mapping[str, _V], AfterValidator(_freeze)]
 
-#: A dollar amount that cannot be negative. Real dollars of January of the
-#: scenario's start year, like every amount below except
+#: A finite dollar amount that cannot be negative. Real dollars of January of
+#: the scenario's start year, like every amount below except
 #: ``Person.prior_year_net_income`` and ``Person.net_income_two_years_prior``.
-Money = Annotated[float, Field(ge=0.0)]
+Money = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 
 #: A calendar month, January is 1.
 Month = Annotated[int, Field(ge=1, le=12)]
 
 #: A bare fraction in ``[0, 1]``, never a percentage.
-Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
+Fraction = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 
 #: A two-letter jurisdiction code, e.g. ``"ab"``. Lower case, so that the
 #: string can be handed to ``ParamYear.province`` and reach a file name
@@ -783,7 +783,7 @@ class Spending(_Base):
     """
 
     schedule: tuple[SpendingBand, ...]
-    survivor_share: Annotated[float, Field(gt=0.0, le=1.0)]
+    survivor_share: Annotated[float, Field(gt=0.0, le=1.0, allow_inf_nan=False)]
 
     @model_validator(mode="after")
     def _check_schedule_is_not_empty(self) -> Self:
@@ -830,11 +830,11 @@ class AssetClass(_Base):
             gains.
     """
 
-    real_mean: float
-    vol: Annotated[float, Field(ge=0.0)]
-    interest_yield: Annotated[float, Field(ge=0.0)]
-    dividend_yield: Annotated[float, Field(ge=0.0)]
-    distributed_gains_yield: Annotated[float, Field(ge=0.0)]
+    real_mean: Annotated[float, Field(allow_inf_nan=False)]
+    vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+    interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+    dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+    distributed_gains_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 
 
 class Assumptions(_Base):
@@ -864,7 +864,7 @@ class Assumptions(_Base):
             allocation names known classes and sums to one.
     """
 
-    inflation: Annotated[float, Field(gt=-1.0)]
+    inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False)]
     asset_classes: FrozenMapping[AssetClass]
     correlation: tuple[tuple[float, ...], ...]
     allocations: FrozenMapping[FrozenMapping[float]]
@@ -902,7 +902,7 @@ class Assumptions(_Base):
 
         matrix = np.array(self.correlation, dtype=float)
         off_diagonal = np.abs(matrix - matrix.T).max()
-        if off_diagonal > TOLERANCE:
+        if not off_diagonal <= TOLERANCE:
             raise ValueError(
                 f"assumptions.correlation: not symmetric; the largest gap "
                 f"between an entry and its mirror is {off_diagonal:g}. A "
@@ -911,7 +911,7 @@ class Assumptions(_Base):
             )
 
         diagonal_error = np.abs(np.diag(matrix) - 1.0).max()
-        if diagonal_error > TOLERANCE:
+        if not diagonal_error <= TOLERANCE:
             raise ValueError(
                 f"assumptions.correlation: the diagonal must be all ones, and "
                 f"is off by up to {diagonal_error:g}. An entry below one says a "
@@ -919,7 +919,7 @@ class Assumptions(_Base):
             )
 
         smallest = float(np.linalg.eigvalsh(matrix).min())
-        if smallest < -PSD_TOLERANCE:
+        if not smallest >= -PSD_TOLERANCE:
             raise ValueError(
                 f"assumptions.correlation: not positive semi-definite; its "
                 f"smallest eigenvalue is {smallest:g}. No set of random "
@@ -980,7 +980,7 @@ class Assumptions(_Base):
                     f"Declared: {', '.join(self.asset_class_names)}."
                 )
             total = sum(weights.values())
-            if abs(total - 1.0) > TOLERANCE:
+            if not abs(total - 1.0) <= TOLERANCE:
                 raise ValueError(
                     f"assumptions.allocations[{account!r}]: weights sum to "
                     f"{total!r}, not 1. An account holds all of itself."
@@ -1026,7 +1026,7 @@ class ContributionRule(_Base):
                 "contribution is a withdrawal, which the withdrawal rule owns."
             )
         total = sum(self.weights.values())
-        if abs(total - 1.0) > TOLERANCE:
+        if not abs(total - 1.0) <= TOLERANCE:
             raise ValueError(
                 f"contribution.weights: sum to {total!r}, not 1. The weights "
                 "split one contribution, so anything else silently invents or "
@@ -1151,8 +1151,8 @@ class Scenario(_Base):
         policies: At least one policy to evaluate.
         grid: Optional expansion of the policies. Each key is a dotted path
             into a policy naming a numeric field, and each value is the list of
-            values to try. Every key must resolve on every policy, because the
-            grid is expanded against all of them.
+            finite values to try. Every key must resolve on every policy,
+            because the grid is expanded against all of them.
     """
 
     name: str
@@ -1164,7 +1164,7 @@ class Scenario(_Base):
     spending: Spending
     assumptions: Assumptions
     policies: tuple[PolicySpec, ...]
-    grid: FrozenMapping[tuple[int | float, ...]] = Field(
+    grid: FrozenMapping[tuple[int | Annotated[float, Field(allow_inf_nan=False)], ...]] = Field(
         default_factory=lambda: MappingProxyType({})
     )
 
