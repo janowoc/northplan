@@ -27,12 +27,12 @@ appears, something has gone wrong.
 The parameter files for 2026 are populated and structurally tested. The
 loader, the scenario schema and loader, all of `engine/tax/`, all of
 `engine/benefits/`, and all of `engine/core/` and `engine/mc/` apart from the
-monthly step and the run loop are implemented. Accounts, the step, the loop,
-the policies and the optimizer are still stubs carrying their specification
-as a docstring. The build order is
-`docs/roadmap.md`; each step is a GitHub issue. Known simplifications are
-listed in `docs/limitations.md`, and a change that adds one adds its entry
-there.
+monthly step and the run loop are implemented, and so is `engine/accounts/`
+apart from `rrif.spousal_rollover`. The step, the loop, the policies and the
+optimizer are still stubs carrying their specification as a docstring. The
+build order is `docs/roadmap.md`; each step is a GitHub issue. Known
+simplifications are listed in `docs/limitations.md`, and a change that adds
+one adds its entry there.
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.

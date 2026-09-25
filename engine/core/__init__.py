@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""The deterministic monthly step: ``(state, month, policy) -> state``.
+"""The deterministic monthly step and the state it passes between months.
 
-There is exactly one simulation loop in this repository and it lives here. It
-is a loop over *months*. Monte Carlo (``engine/mc/``) drives this step across
-the horizon for all paths at once; the optimizer (``engine/optimize/``) drives
-Monte Carlo across policies. Neither reimplements the month.
+``step.advance_month(state, month_returns, policy, market, real_params)``
+returns the next month's state. It is the body of the one simulation loop,
+which lives in ``engine.mc.simulate`` and runs every path to the second death
+(L10); the optimizer (``engine/optimize/``) drives Monte Carlo across
+policies. Neither the loop nor the optimizer reimplements the month.
 
 Annual events — the tax assessment, contribution room, the RRIF minimum, the
 balance owing coming due in the filing month — happen as phases invoked by

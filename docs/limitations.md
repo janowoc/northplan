@@ -413,11 +413,13 @@ modelled. We assume the conditions for grants at 16 and 17 are met. Not
 modelled: the Canada Learning Bond, provincial grants.
 
 *Family income.* In reality the additional grant rate follows the primary
-caregiver's CCB adjusted income, which includes a cohabiting spouse's, and
-the source addresses no death. We model the sum of line 23600 across every
-person in the household, including a person who has died — their last filed
-figure keeps counting. Direction: counting a deceased spouse's income
-overstates family income and so lowers the rate; conservative.
+caregiver's CCB adjusted income, which includes a cohabiting spouse's, and the
+source addresses no death. We model the sum of line 23600 across every person
+in the household, including a person who has died, whose net income for the
+year before the last calendar year they were alive in — a full year's
+income, not the one on their terminal return — keeps counting. Direction:
+counting a deceased spouse's income overstates family income and so lowers the
+rate; conservative.
 
 *Stale income against this year's edges.* In reality the comparison is
 between a past year's nominal income and this year's published, nominal

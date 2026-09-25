@@ -360,8 +360,9 @@ class TestFreezeCannotBeFooledByAView:
     """
 
     def test_rejects_a_column_slice_of_a_bigger_buffer(self) -> None:
-        # engine.mc.simulate produces real_returns shaped (n_assets, n_paths)
-        # and hands slices of it downstream: this is that shape, not a
+        # engine.mc.returns.generate produces real_returns shaped
+        # (n_months, n_assets, n_paths) and the step is handed one month's
+        # (n_assets, n_paths) slice: this is that slice's shape, not a
         # contrived one.
         real_returns = np.zeros((5, N_PATHS))
         column = real_returns[0, :]

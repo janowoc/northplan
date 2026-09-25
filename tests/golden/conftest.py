@@ -752,7 +752,7 @@ def discover_cases(cases_dir: Path) -> list[GoldenCase]:
 
 
 def resolve_target(dotted: str) -> Callable[..., Any]:
-    """Import a dotted path to a callable, e.g. ``engine.tax.federal.tax_on_income``.
+    """Import a dotted path to a callable, e.g. ``engine.tax.brackets.tax_on_income``.
 
     Raises:
         GoldenCaseError: If ``dotted`` has no module component, if the module

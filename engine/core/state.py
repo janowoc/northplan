@@ -423,11 +423,15 @@ class PersonState:
             current year) nor by the GIS band indicator (a different income
             basis). At each December close the pair shifts — the older takes
             the value of the newer, the newer takes this year's line 23600 —
-            written for every person including one who has died (implemented
-            in #35). Both are taken as filed rather than converted to real
-            dollars, each replaced in turn: ``prior_year_net_income`` at the
-            first December close, ``net_income_two_years_prior`` only at the
-            second, once the shift has carried a real figure into it
+            for every person alive at any point in the calendar year, and
+            freezes thereafter. A person who has died keeps the two figures
+            written at the close of the last year they were alive in; the
+            older, the one the RESP reads, is their net income for the year
+            before that (implemented in #35). Both are taken as filed rather
+            than converted to real dollars, each replaced in turn:
+            ``prior_year_net_income`` at the first December close,
+            ``net_income_two_years_prior`` only at the second, once the shift
+            has carried a real figure into it
             (``engine.core.step.close_year``, item 5).
     """
 
@@ -463,13 +467,11 @@ class PersonState:
             )
         # This is only half of the invariant. The other half — alive is
         # exactly (death_month_index > month_index) — needs a month_index,
-        # which this class does not carry, and needs a decision nobody has
-        # made yet: a state is the *opening* position for its month, and
-        # deaths for that month are resolved inside advance_month's step 2,
-        # so whether a death drawn for month k means dead at the open of
-        # month k is issue 19's call, not this constructor's. Do not add
-        # that half here "for now" — it belongs wherever issue 19 settles
-        # the question, with month_index in hand to check it against.
+        # which this class does not carry. The semantics are already fixed:
+        # engine.core.mortality.death_month_index is the first month the
+        # person is not alive, so a death drawn for month k means dead at
+        # the open of month k. #36 tests it after advance_month's step 2,
+        # with month_index in hand. Do not add that half here "for now".
 
     def age_months(self, year: int, month: int) -> int:
         """Age in whole months at the start of ``(year, month)``.
