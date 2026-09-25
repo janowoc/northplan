@@ -91,7 +91,7 @@ def withdraw(state: RrspState, requested: ArrayLike) -> tuple[RrspState, Withdra
     Withholding tax at source is remitted in the month of withdrawal and
     reduces the balance owing settled in the following year's filing month;
     this function returns the gross withdrawal only — the step applies the
-    withholding and records it in ``remitted_ytd``.
+    withholding and records it in ``remitted``.
 
     Args:
         state: Opening RRSP state.

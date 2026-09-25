@@ -22,8 +22,9 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from engine.core.context import MonthContext
 from engine.core.indexation import RealParamYear
-from engine.core.state import HouseholdState
+from engine.core.state import Elections, HouseholdState
 from engine.policy.base import Decision
 
 
@@ -56,7 +57,9 @@ class OrderedWithdrawalPolicy:
     cpp_start_age_months: dict[str, int]
     oas_start_age_months: dict[str, int]
 
-    def decide(self, state: HouseholdState, real_params: RealParamYear) -> Decision:
+    def decide(
+        self, state: HouseholdState, context: MonthContext, real_params: RealParamYear
+    ) -> Decision:
         """Choose this month's withdrawals.
 
         Reads opening balances, current ages, income accumulated so far this
@@ -64,6 +67,14 @@ class OrderedWithdrawalPolicy:
         read this month's return, any later month's return, or any terminal
         value — and it must not assume the year's remaining income is known.
         """
+        raise NotImplementedError
+
+    def elections(self) -> Elections:
+        """Not yet implemented."""
+        raise NotImplementedError
+
+    def withdrawal_order(self) -> tuple[str, ...]:
+        """Not yet implemented."""
         raise NotImplementedError
 
     def free_parameters(self) -> dict[str, float]:

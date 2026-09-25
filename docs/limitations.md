@@ -258,6 +258,13 @@ the band each falls in, so the model **under-withholds**; cash timing only,
 the December assessment is unchanged. Same family of error as L16. Lives in
 `engine/accounts/rrif.py::withdraw` and `engine/accounts/lif.py::withdraw`.
 
+**L58. Withholding on the cash floor.** In reality every RRSP, RRIF and LIF
+withdrawal is withheld at source. When the step force-withdraws to restore
+negative cash to zero (L38), it withholds nothing: the withdrawal is income
+of the year, and its tax settles with the balance in the filing month.
+Direction: under-withholds; cash timing only, the December assessment is
+unchanged. Same family of error as L16. Lives in `engine/core/step.py`.
+
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
 credits. Not modelled: non-eligible dividends, foreign withholding tax, return
@@ -491,6 +498,12 @@ charitable bequests, graduated-rate estates.
 **L43. Depletion.** A path is depleted from the first month in which cash
 cannot be restored to zero. A locked-in balance capped by the LIF maximum may
 remain in a depleted path.
+
+When every non-RESP account is exhausted and cash is still short by more
+than the month's spending — a tax settlement or an education cost the plan
+no longer covers — spending achieved falls by the month's spending only, and
+the rest of the shortfall is forgiven. Direction: optimistic, on depleted
+paths only. Lives in `engine/core/step.py`.
 
 **L48. No birth after the run opens.** In reality a household can plan for a
 child not yet born — an RESP beneficiary a scenario states as "assume a child

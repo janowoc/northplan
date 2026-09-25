@@ -54,6 +54,38 @@ from engine.core.state import RespState, updated
 #: ``-_NET_INCOME_FIELDS`` rather than this constant directly.
 _NET_INCOME_FIELDS: Final[int] = 2
 
+#: Float-residue bound in dollars, not a tax parameter: erosion and growth arithmetic have
+#: been observed to leave an exhausted plan's value about 1e-13 below zero, several orders
+#: of magnitude inside this bound. Below it, a negative ``contributions + grants + income``
+#: is not float dust -- it is an upstream error, named and raised rather than clipped away.
+_VALUE_DUST_TOLERANCE_DOLLARS: Final[float] = -1e-6
+
+
+def _clip_value_or_raise(value: NDArray[np.float64], caller: str) -> NDArray[np.float64]:
+    """Clip ``value`` at zero, or raise if it is a real negative rather than float dust.
+
+    Args:
+        value: ``contributions + grants + income`` for one beneficiary, ``(n_paths,)``.
+        caller: Name of the calling function, for the message.
+
+    Returns:
+        ``value``, clipped at zero.
+
+    Raises:
+        ValueError: If ``value`` is below :data:`_VALUE_DUST_TOLERANCE_DOLLARS` on any
+            path, naming the value. Growth cannot take a plan's value below zero
+            (:func:`grow` multiplies by a strictly positive factor, L35), so a value this
+            far below zero did not come from here -- it is an upstream error.
+    """
+    if np.any(value < _VALUE_DUST_TOLERANCE_DOLLARS):
+        raise ValueError(
+            f"{caller}: contributions + grants + income is {value!r}, below "
+            f"{_VALUE_DUST_TOLERANCE_DOLLARS!r} on at least one path. That is not "
+            "float residue -- growth cannot take a plan's value below zero -- so it "
+            "is an upstream error, named here rather than silently clipped away."
+        )
+    return np.clip(value, 0, None)
+
 
 def grant_room_accrued(
     age_at_end_of_year: int,
@@ -405,14 +437,15 @@ def education_draw(state: RespState) -> tuple[RespState, WithdrawalResult]:
     The whole payment goes in ``result.tax_free`` — see the module docstring's
     note on L30; ``result.fully_taxable`` is always zero.
 
-    Assumes ``value = contributions + grants + income >= 0``, unlike
-    :func:`wind_up`, which clips it — deliberately, not an oversight: a
-    negative ``value`` would make ``payment`` negative too, since nothing
-    here floors it. The precondition holds because ``value`` changes only two
-    ways — :func:`contribute` adds a non-negative amount, and :func:`grow`
-    multiplies it by ``1 + monthly_real_return``, always strictly positive
-    for the lognormal draws L35 describes — so a plan that starts at zero can
-    never cross below it.
+    ``value = contributions + grants + income`` is clipped at zero before it is used:
+    float residue can leave an exhausted plan's value a few ulps below zero after
+    enough years of :func:`~engine.accounts.resp.erode_nominal` and :func:`grow` have
+    shuffled amounts between the three buckets, and that dust is clipped rather than
+    raised (see :func:`_clip_value_or_raise`). A value further below zero is not dust
+    and raises instead (see Raises). Since a clipped ``value`` of zero forces
+    ``payment`` to zero too, and both grant-and-income draws are floored at zero the
+    same way (``from_pool`` while income is positive, the grant draw while it is not),
+    the three buckets are left unchanged whenever there is nothing to pay.
 
     Args:
         state: Opening RESP state for one beneficiary.
@@ -420,8 +453,15 @@ def education_draw(state: RespState) -> tuple[RespState, WithdrawalResult]:
     Returns:
         ``(new_state, result)``. ``result.shortfall`` is the scheduled cost
         not covered because the plan's value fell short of it.
+
+    Raises:
+        ValueError: If ``contributions + grants + income`` is below
+            :data:`_VALUE_DUST_TOLERANCE_DOLLARS` on any path; see
+            :func:`_clip_value_or_raise`.
     """
-    value = state.contributions + state.grants + state.income
+    value = _clip_value_or_raise(
+        state.contributions + state.grants + state.income, "education_draw"
+    )
     payment = np.minimum(state.education_monthly_cost, value)
 
     grants = state.grants
@@ -430,9 +470,9 @@ def education_draw(state: RespState) -> tuple[RespState, WithdrawalResult]:
     income_positive = income > 0
 
     pool_safe = np.where(pool > 0, pool, 1.0)
-    from_pool = np.minimum(payment, pool)
+    from_pool = np.clip(np.minimum(payment, pool), 0, None)
     from_grants_if_positive = from_pool * grants / pool_safe
-    from_grants_if_nonpositive = np.minimum(payment, grants)
+    from_grants_if_nonpositive = np.clip(np.minimum(payment, grants), 0, None)
 
     from_grants = np.where(income_positive, from_grants_if_positive, from_grants_if_nonpositive)
     from_income = np.where(income_positive, from_pool - from_grants_if_positive, 0.0)
@@ -463,10 +503,16 @@ def wind_up(
 
     Matches CESP Provider User Guide ch. 3-3: the grant repayment is the
     lesser of the grant account balance and the plan's fair market value at
-    the time of the AIP. Conserves dollars on every path where the plan's
-    value is non-negative: ``to_cash_free + accumulated + grants_repaid ==
-    max(value, 0)``. Called by the step in the month **after** the education
-    window (``docs/limitations.md`` L32).
+    the time of the AIP. Every one of the three outputs is non-negative on
+    every path, and they conserve dollars exactly: ``to_cash_free +
+    accumulated + grants_repaid == max(value, 0)``, where ``value =
+    contributions + grants + income``. ``value`` itself is never below zero by
+    the time it is used here: a few ulps of float residue from years of erosion
+    and growth are clipped (see :func:`_clip_value_or_raise`), and anything
+    further below zero is an upstream error, raised there rather than reaching
+    this point at all -- ``grow`` cannot take a plan's value below zero on its
+    own. Called by the step in the month **after** the education window
+    (``docs/limitations.md`` L32).
 
     Args:
         state: Opening RESP state for one beneficiary.
@@ -475,11 +521,16 @@ def wind_up(
         ``(new_state, to_cash_tax_free, accumulated_income_to_subscriber,
         grants_repaid)``. ``new_state`` has all three buckets zeroed and
         ``wound_up`` set to ``True``.
+
+    Raises:
+        ValueError: If ``contributions + grants + income`` is below
+            :data:`_VALUE_DUST_TOLERANCE_DOLLARS` on any path; see
+            :func:`_clip_value_or_raise`.
     """
-    value = state.contributions + state.grants + state.income
-    grants_repaid = np.minimum(state.grants, np.clip(value, 0, None))
+    value = _clip_value_or_raise(state.contributions + state.grants + state.income, "wind_up")
+    grants_repaid = np.clip(np.minimum(state.grants, value), 0, None)
     remaining = value - grants_repaid
-    to_cash_free = np.minimum(state.contributions, remaining)
+    to_cash_free = np.clip(np.minimum(state.contributions, remaining), 0, None)
     accumulated = remaining - to_cash_free
 
     new_state = updated(

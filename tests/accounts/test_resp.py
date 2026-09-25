@@ -519,6 +519,101 @@ def test_education_draw_with_negative_income_draws_from_grant_alone() -> None:
     np.testing.assert_allclose(new_state.contributions, [1000.0])
 
 
+def test_education_draw_clips_float_dust_and_pays_nothing() -> None:
+    # SYNTHETIC dust: an exhausted plan whose three buckets sum to a few ulps
+    # below zero after years of erode_nominal/grow, not a real balance.
+    state = dataclasses.replace(
+        _state(contributions=0.0, grants=1e-13, income=-2e-13),
+        education_monthly_cost=100.0,
+    )
+    new_state, result = resp.education_draw(state)
+    np.testing.assert_allclose(result.gross, [0.0])
+    np.testing.assert_allclose(new_state.contributions, [0.0])
+    np.testing.assert_allclose(new_state.grants, [1e-13])
+    np.testing.assert_allclose(new_state.income, [-2e-13])
+
+
+def test_education_draw_raises_on_a_clearly_negative_value() -> None:
+    # Not dust: an upstream error large enough that contributions + grants +
+    # income is unambiguously below the float-residue tolerance -- growth
+    # cannot produce this on its own, so it must have come from somewhere else.
+    state = dataclasses.replace(
+        _state(contributions=100.0, grants=50.0, income=-500.0),
+        education_monthly_cost=200.0,
+    )
+    with pytest.raises(ValueError, match="contributions \\+ grants \\+ income"):
+        resp.education_draw(state)
+
+
+def test_education_draw_still_clips_a_dust_value_just_inside_the_tolerance() -> None:
+    # SYNTHETIC: 0.9x the tolerance is less negative than it, so this still clips
+    # rather than raising -- the boundary case for the tolerance itself, derived from
+    # the tolerance rather than restated as a literal.
+    income = 0.9 * resp._VALUE_DUST_TOLERANCE_DOLLARS
+    state = dataclasses.replace(
+        _state(contributions=0.0, grants=0.0, income=income),
+        education_monthly_cost=100.0,
+    )
+    new_state, result = resp.education_draw(state)
+    np.testing.assert_allclose(result.gross, [0.0])
+    np.testing.assert_allclose(new_state.income, [income])
+
+
+def test_education_draw_raises_just_outside_the_tolerance() -> None:
+    # SYNTHETIC: 1.1x the tolerance is more negative than it, so this raises -- the
+    # other side of the same boundary, derived from the tolerance rather than restated.
+    income = 1.1 * resp._VALUE_DUST_TOLERANCE_DOLLARS
+    state = dataclasses.replace(
+        _state(contributions=0.0, grants=0.0, income=income),
+        education_monthly_cost=100.0,
+    )
+    with pytest.raises(ValueError, match="contributions \\+ grants \\+ income"):
+        resp.education_draw(state)
+
+
+def test_education_draw_floors_the_pool_draw_so_a_zero_payment_never_shifts_buckets() -> None:
+    # SYNTHETIC dust: pool = grants + income is itself a few ulps negative, even though
+    # the clipped total value is exactly zero -- the case from_pool's own clip exists for.
+    state = dataclasses.replace(
+        _state(contributions=0.0, grants=-1e-13, income=5e-14),
+        education_monthly_cost=100.0,
+    )
+    new_state, result = resp.education_draw(state)
+    np.testing.assert_allclose(result.gross, [0.0])
+    np.testing.assert_allclose(new_state.contributions, [0.0])
+    np.testing.assert_allclose(new_state.grants, [-1e-13])
+    np.testing.assert_allclose(new_state.income, [5e-14])
+
+
+def test_education_draw_floors_the_grant_draw_when_income_is_zero() -> None:
+    # SYNTHETIC dust: grants holds a few ulps of negative dust and income is exactly
+    # zero (not positive), so this takes the from_grants_if_nonpositive branch, which
+    # from_grants_if_positive's fix does not touch.
+    state = dataclasses.replace(
+        _state(contributions=1e-13, grants=-1e-13, income=0.0),
+        education_monthly_cost=100.0,
+    )
+    new_state, result = resp.education_draw(state)
+    np.testing.assert_allclose(result.gross, [0.0])
+    np.testing.assert_allclose(new_state.contributions, [1e-13])
+    np.testing.assert_allclose(new_state.grants, [-1e-13])
+    np.testing.assert_allclose(new_state.income, [0.0])
+
+
+def test_education_draw_floors_the_grant_draw_when_income_is_negative() -> None:
+    # SYNTHETIC dust: grants holds a few ulps of negative dust and income is a few ulps
+    # negative too, again the from_grants_if_nonpositive branch.
+    state = dataclasses.replace(
+        _state(contributions=5e-14, grants=-1e-13, income=-1e-14),
+        education_monthly_cost=100.0,
+    )
+    new_state, result = resp.education_draw(state)
+    np.testing.assert_allclose(result.gross, [0.0])
+    np.testing.assert_allclose(new_state.contributions, [5e-14])
+    np.testing.assert_allclose(new_state.grants, [-1e-13])
+    np.testing.assert_allclose(new_state.income, [-1e-14])
+
+
 def test_wind_up_conserves_dollars_including_a_path_with_negative_income() -> None:
     # Path 0: an ordinary year, positive income. Path 1: a loss year, but the
     # plan's total value stays well above the grant balance, so the
@@ -564,6 +659,48 @@ def test_wind_up_conserves_dollars_including_a_path_with_negative_income() -> No
     np.testing.assert_allclose(new_state.grants, [0.0, 0.0, 0.0])
     np.testing.assert_allclose(new_state.income, [0.0, 0.0, 0.0])
     assert np.all(new_state.wound_up)
+
+
+def test_wind_up_clips_float_dust_to_zero() -> None:
+    # SYNTHETIC dust: same exhausted-plan shape as the education_draw dust
+    # test above, not a real balance.
+    state = _state(contributions=0.0, grants=1e-13, income=-2e-13)
+    _, to_cash_free, accumulated, grants_repaid = resp.wind_up(state)
+    value = state.contributions + state.grants + state.income
+    np.testing.assert_allclose(to_cash_free, [0.0])
+    np.testing.assert_allclose(accumulated, [0.0])
+    np.testing.assert_allclose(grants_repaid, [0.0])
+    np.testing.assert_allclose(to_cash_free + accumulated + grants_repaid, np.clip(value, 0, None))
+
+
+def test_wind_up_raises_on_a_clearly_negative_value() -> None:
+    # Not dust: an upstream error large enough that contributions + grants +
+    # income is unambiguously below the float-residue tolerance -- growth
+    # cannot produce this on its own, so it must have come from somewhere else.
+    state = _state(contributions=100.0, grants=50.0, income=-500.0)
+    with pytest.raises(ValueError, match="contributions \\+ grants \\+ income"):
+        resp.wind_up(state)
+
+
+def test_wind_up_still_clips_a_dust_value_just_inside_the_tolerance() -> None:
+    # SYNTHETIC: 0.9x the tolerance is less negative than it, so this still clips
+    # rather than raising -- the boundary case for the tolerance itself, derived from
+    # the tolerance rather than restated as a literal.
+    income = 0.9 * resp._VALUE_DUST_TOLERANCE_DOLLARS
+    state = _state(contributions=0.0, grants=0.0, income=income)
+    _, to_cash_free, accumulated, grants_repaid = resp.wind_up(state)
+    np.testing.assert_allclose(to_cash_free, [0.0])
+    np.testing.assert_allclose(accumulated, [0.0])
+    np.testing.assert_allclose(grants_repaid, [0.0])
+
+
+def test_wind_up_raises_just_outside_the_tolerance() -> None:
+    # SYNTHETIC: 1.1x the tolerance is more negative than it, so this raises -- the
+    # other side of the same boundary, derived from the tolerance rather than restated.
+    income = 1.1 * resp._VALUE_DUST_TOLERANCE_DOLLARS
+    state = _state(contributions=0.0, grants=0.0, income=income)
+    with pytest.raises(ValueError, match="contributions \\+ grants \\+ income"):
+        resp.wind_up(state)
 
 
 def test_aip_penalty_hand_computed(synth) -> None:
