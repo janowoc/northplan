@@ -80,6 +80,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
 | 58 | No scenario field may be infinite or nan | agent | — | every float field refuses `inf` and `nan`; a sum check rewritten as a rejection test fails a test |
 | 59 | Every float in the scenario schema is declared finite on its type, correlation entries and weights included | agent | 58 | a non-finite correlation entry or weight is refused at its own location; dropping the flag from any of the three containers fails a test |
+| 60 | A net capital loss for the year does not reduce other income | agent | 14 | a negative net gain assesses like a zero one; L17 states the direction |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -327,6 +328,15 @@ The withholding is new scope: T1171 establishes that an accumulated income
 payment is withheld on and publishes no formula, so the engine models the
 special tax as withheld at the payment, and that assumption needs an entry of
 its own before 57 is dispatched.
+
+60 came out of the review of 19. The step records a taxable withdrawal's
+realized gain with its sign, and `total_income` adds the year's net gain with
+no floor, so a year of losses would be deducted from employment, pension and
+RRIF income — the optimistic half of what L17 says is not modelled. No year is
+assessed until 35, so nothing is wrong yet. It sits right after 55 and before
+35, the first code that assesses a year, rather than inside 35: the fix is one
+line in `engine/tax/`, outside 35's module, and testable there on a hand-built
+ledger.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
