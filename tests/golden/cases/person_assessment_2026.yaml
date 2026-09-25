@@ -9,11 +9,13 @@
 # Named outputs, all in dollars for the year:
 #   federal        federal tax after non-refundable credits
 #   provincial     Alberta tax after non-refundable credits
-#   oas_repayment  OAS recovery tax (L23: this year's net income)
-#   total          the sum of the three
+#   oas_repayment  OAS recovery tax, line 23500 (L23: this year's net income)
+#   aip_penalty    special tax on an RESP accumulated income payment, line
+#                  41800; 0 unless the case sets resp_accumulated_income
+#   total          federal + provincial + oas_repayment + aip_penalty
 #   net_income     line 23400 — the one line every calculator shows; check it
 #                  first, since a mismatch here explains every other mismatch
-#   net_income_after_repayment  line 23600
+#   net_income_after_repayment  line 23600 (the AIP penalty never reaches it)
 # Delete any output line the source does not report, rather than guessing it.
 #
 # Write numbers unquoted. A quoted "60000" or a bare `interest:` (null) is

@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Household tax assessment: the pension-splitting election and the OAS repayment.
+"""Household tax assessment: pension splitting, the OAS repayment, and the AIP special tax.
 
 The single entry point the December close calls, once per simulated year, on
 income accumulated over that year's twelve monthly steps.
 ``household_assessment`` owns the household-level election that cannot be
 evaluated one person at a time — pension income splitting — and assesses
-every person at the elected split. The OAS repayment lives here too, as a
-line within each person's :class:`Assessment`: there is no separate
-``engine.tax.oas`` module.
+every person at the elected split. The OAS repayment and the RESP
+accumulated-income special tax both live here too, each as a line within
+each person's :class:`Assessment`: there is no separate ``engine.tax.oas``
+module.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from typing import Final
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from engine.accounts import resp
 from engine.core.indexation import RealParamSet, RealParamYear
 from engine.core.state import HouseholdState, IncomeLedger
 from engine.core.timeline import age_at_end_of_year as _age_at_end_of_year
@@ -46,7 +48,10 @@ class Assessment:
         federal: Federal tax payable after credits, ``(n_paths,)``.
         provincial: Provincial tax payable after credits, ``(n_paths,)``.
         oas_repayment: OAS recovery tax for the year, ``(n_paths,)``.
-        total: ``federal + provincial + oas_repayment``.
+        aip_penalty: Special tax on RESP accumulated-income payments (line
+            41800), ``(n_paths,)``. Additional tax only — it is excluded from
+            ``net_income`` and ``net_income_after_repayment``.
+        total: ``federal + provincial + oas_repayment + aip_penalty``.
         net_income: Net income at the elected split (line 23400), ``(n_paths,)``.
         net_income_after_repayment: ``net_income`` less ``oas_repayment`` (line
             23600, and taxable income with it), ``(n_paths,)``.
@@ -55,6 +60,7 @@ class Assessment:
     federal: NDArray[np.float64]
     provincial: NDArray[np.float64]
     oas_repayment: NDArray[np.float64]
+    aip_penalty: NDArray[np.float64]
     total: NDArray[np.float64]
     net_income: NDArray[np.float64]
     net_income_after_repayment: NDArray[np.float64]
@@ -100,14 +106,17 @@ def person_assessment(
     params: RealParamYear,
     january_month_index: int,
 ) -> Assessment:
-    """One person's federal and provincial assessment, including the OAS repayment.
+    """One person's federal and provincial assessment, including the OAS repayment and AIP tax.
 
     Taxable income is net income less the OAS repayment (line 23600), so
     ``gross_tax`` and the age amount are both evaluated on that figure, not on
     net income directly (L14). ``oas_received`` is not an argument: it is always
     ``ledger.oas``. The eligible pension income transferred carries its share
     of the pension income credit eligibility with it, which is what
-    ``eligible_pension_income - transfer_out + transfer_in`` does below.
+    ``eligible_pension_income - transfer_out + transfer_in`` does below. The
+    AIP special tax (line 41800) is computed from
+    ``ledger.resp_accumulated_income`` and is additional tax only; the
+    payment itself is already in net income.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -132,6 +141,7 @@ def person_assessment(
         + np.asarray(transfer_in, dtype=np.float64)
     )
     repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
+    penalty = resp.aip_penalty(ledger.resp_accumulated_income, params.resp)
     taxable = federal.taxable_income(net, repay)
     fed_tax = federal.net_tax(
         federal.gross_tax(taxable, fed, january_month_index),
@@ -164,7 +174,8 @@ def person_assessment(
         federal=fed_tax,
         provincial=prov_tax,
         oas_repayment=repay,
-        total=fed_tax + prov_tax + repay,
+        aip_penalty=penalty,
+        total=fed_tax + prov_tax + repay + penalty,
         net_income=net,
         net_income_after_repayment=taxable,
     )
@@ -180,8 +191,9 @@ def _stack_all(assessments: list[Assessment]) -> dict[str, NDArray[np.float64]]:
     """Every field of a list of candidate ``Assessment``s, each stacked once.
 
     One ``(n_candidates, n_paths)`` array per field, built once regardless of
-    how many times a caller needs to read from it — the ``argmin`` over
-    ``"total"`` and the later gather by ``best`` both read this same dict.
+    how many times a caller needs to read from it — the ``argmin`` over the
+    split-dependent lines and the later gather by ``best`` both read this
+    same dict.
     """
     return {
         field: np.stack([getattr(assessment, field) for assessment in assessments], axis=0)
@@ -198,11 +210,14 @@ def _select(
 def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[Assessment, ...]:
     """Assess every person in the household, at the tax-minimising pension split.
 
-    Elects pension income splitting to minimise ``sum(a.total for a in
-    result)``, per path — a within-year election on the completed year, which
-    must not consider future years (L15). The search is a grid of resolution
-    :data:`GRID_STEP` between zero and the statutory maximum share from
-    params/, plus the maximum itself (L51); it does not search every real
+    Elects pension income splitting to minimise, per path, the sum over both
+    persons of ``federal + provincial + oas_repayment`` — the lines the split
+    changes. The AIP penalty is excluded from that sum because it does not
+    depend on the split; each returned :class:`Assessment` still carries it
+    within ``total``. This is a within-year election on the completed year,
+    which must not consider future years (L15). The search is a grid of
+    resolution :data:`GRID_STEP` between zero and the statutory maximum share
+    from params/, plus the maximum itself (L51); it does not search every real
     fraction. A household of one skips the search and elects zero.
 
     Args:
@@ -281,7 +296,9 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
 
     stacked0 = _stack_all(assessments0)
     stacked1 = _stack_all(assessments1)
-    totals = stacked0["total"] + stacked1["total"]
+    totals = (stacked0["federal"] + stacked0["provincial"] + stacked0["oas_repayment"]) + (
+        stacked1["federal"] + stacked1["provincial"] + stacked1["oas_repayment"]
+    )
     best = np.argmin(totals, axis=0)
     idx = np.arange(state.n_paths)
 

@@ -260,8 +260,9 @@ before 19, the first code that has to assemble that figure.
 Issue 50 assesses the RESP wind-up penalty. 18 computes the penalty from the
 rate in `params/`, and nothing can charge it until `Assessment` carries a field
 for an additional tax that is not a reduction of income. It sits after 19 and
-before 35, whose December close is where the figure would be passed in, and it
-opens with questions for the human about which line the payment lands on.
+before 35. `person_assessment` computes the penalty from the accumulated income
+the step already books to the subscriber's ledger, so 35's December close
+passes nothing new; 57 adds the withholding at the wind-up.
 
 Pre-19 audit, 2026-09-21. The tree was read against the work left after 18
 landed — 19 to 24, plus 35, 36 and 50 — before any of it started. Twelve

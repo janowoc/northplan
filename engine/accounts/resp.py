@@ -551,10 +551,9 @@ def wind_up(
 def aip_penalty(accumulated_income: ArrayLike, params: RealParamSet) -> NDArray[np.float64]:
     """Penalty on the accumulated-income portion of a wind-up.
 
-    ``accumulated_income * aip.penalty_rate``. That is all this does —
-    assessing the penalty (which line it lands on, whether it enters net
-    income, wiring it through ``close_year``) is issue #50 and out of scope
-    here.
+    ``accumulated_income * aip.penalty_rate``, nothing more. Assessed as
+    line 41800 by ``engine.tax.combined.person_assessment`` on
+    ``IncomeLedger.resp_accumulated_income``, within ``Assessment.total``.
 
     Args:
         accumulated_income: The AIP paid to the subscriber, from

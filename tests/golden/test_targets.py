@@ -4,11 +4,14 @@
 """Tests for ``tests/golden/targets.py``.
 
 Never reads the real ``params/`` tree: every parameter used below is a
-synthetic fixture, written to ``tmp_path``, copied from
-``tests/tax/test_combined.py``'s ``SYNTHETIC_FEDERAL_FLAT_RATE_TIE``,
-``SYNTHETIC_AB_FLAT_RATE_TIE``, and ``SYNTHETIC_OAS_FLAT_RATE_TIE`` (they
-cannot be imported across test directories). Obviously synthetic, never a
-real tax parameter — see the ``SYNTHETIC TEST FIXTURE`` header on each.
+synthetic fixture, written to ``tmp_path``. The federal, ab, and oas files
+are copied from ``tests/tax/test_combined.py``'s
+``SYNTHETIC_FEDERAL_FLAT_RATE_TIE``, ``SYNTHETIC_AB_FLAT_RATE_TIE``, and
+``SYNTHETIC_OAS_FLAT_RATE_TIE`` (they cannot be imported across test
+directories). The resp file is local to this module, holding only
+``aip.penalty_rate``, which these tests never exercise with a non-zero AIP.
+Obviously synthetic, never a real tax parameter — see the ``SYNTHETIC TEST
+FIXTURE`` header on each.
 """
 
 from __future__ import annotations
@@ -131,6 +134,13 @@ recovery_tax:
   rate: 0.15
 """
 
+#: SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+_SYNTHETIC_RESP = """
+# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+aip:
+  penalty_rate: 0.55
+"""
+
 
 def _write_synthetic_params(root: Path) -> None:
     year_dir = root / str(_SYNTHETIC_YEAR)
@@ -138,11 +148,12 @@ def _write_synthetic_params(root: Path) -> None:
     (year_dir / "federal.yaml").write_text(_SYNTHETIC_FEDERAL, encoding="utf-8")
     (year_dir / "ab.yaml").write_text(_SYNTHETIC_AB, encoding="utf-8")
     (year_dir / "oas.yaml").write_text(_SYNTHETIC_OAS, encoding="utf-8")
+    (year_dir / "resp.yaml").write_text(_SYNTHETIC_RESP, encoding="utf-8")
 
 
 @pytest.fixture
 def params_root(tmp_path: Path) -> Path:
-    """A ``tmp_path/"params"`` root holding the three synthetic files, at ``_SYNTHETIC_YEAR``."""
+    """A ``tmp_path/"params"`` root holding the four synthetic files, at ``_SYNTHETIC_YEAR``."""
     root = tmp_path / "params"
     _write_synthetic_params(root)
     return root

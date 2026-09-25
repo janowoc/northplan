@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Household assessment: the pension-splitting election and the OAS repayment.
+"""Household assessment: pension splitting, the OAS repayment, and the AIP special tax.
 
 ``HouseholdState`` fixtures here are small, private builders local to this
 file (not imported from ``tests/core/test_state.py``), modelled on that
@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from engine.core.indexation import real_year
+from engine.core.indexation import RealParamYear, real_year
 from engine.core.state import (
     DEATH_NOT_DRAWN,
     BenefitState,
@@ -242,6 +242,357 @@ def test_assessment_total_equals_sum_of_parts(params) -> None:
     np.testing.assert_allclose(
         result.total, result.federal + result.provincial + result.oas_repayment
     )
+
+
+# =============================================================================
+# Assessment.aip_penalty: the RESP accumulated-income special tax
+# =============================================================================
+
+
+def test_aip_penalty_is_the_rate_times_the_amount_per_path(params) -> None:
+    rate = params.resp.number("aip.penalty_rate")
+    n = 3
+    fields = {name: _zeros(n) for name in LEDGER_FIELDS}
+    fields["employment"] = np.full(n, 40_000.0, dtype=np.float64)
+    fields["resp_accumulated_income"] = np.array([0.0, 10_000.0, 40_000.0], dtype=np.float64)
+    income = IncomeLedger(**fields)
+
+    result = person_assessment(income, 50, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    np.testing.assert_allclose(result.aip_penalty, income.resp_accumulated_income * rate)
+    assert result.aip_penalty[0] == 0.0
+    np.testing.assert_allclose(
+        result.total,
+        result.federal + result.provincial + result.oas_repayment + result.aip_penalty,
+    )
+
+
+def test_aip_penalty_is_isolated_from_every_other_line(params) -> None:
+    # interest is plain line-12100 income with no credit of its own, so moving
+    # the same amount from resp_accumulated_income to interest must leave
+    # every other line unchanged — the penalty is the only difference.
+    #
+    # Employment 80,000 + OAS 5,000 + AIP 20,000 is chosen so the repayment
+    # sits strictly between zero and OAS received (a repayment pinned at its
+    # cap would not move if the penalty leaked into the income test) and so
+    # net_income_after_repayment lands inside the federal age amount's
+    # phase-out band (a penalty leaking into the credits' income argument
+    # would otherwise go undetected).
+    n = 1
+    age = 66
+    amount = 20_000.0
+    income_a = _ledger(n, employment=80_000.0, oas=5_000.0, resp_accumulated_income=amount)
+    income_b = _ledger(n, employment=80_000.0, oas=5_000.0, interest=amount)
+
+    a = person_assessment(income_a, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+    b = person_assessment(income_b, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    # Control: proves this test actually exercises the OAS repayment path —
+    # a partial repayment, not one vacuously zero or pinned at its cap.
+    assert np.all((b.oas_repayment > 0) & (b.oas_repayment < income_b.oas))
+
+    # Control: proves this test actually exercises the age amount's
+    # phase-out, not just its full or fully-clawed-back ends.
+    fed = params.federal
+    age_threshold = fed.annual_amount("credits.age_amount.reduction_threshold_annual", JANUARY)
+    age_amount = fed.annual_amount("credits.age_amount.amount_annual", JANUARY)
+    age_rate = fed.number("credits.age_amount.reduction_rate")
+    assert np.all(
+        (b.net_income_after_repayment > age_threshold)
+        & (b.net_income_after_repayment < age_threshold + age_amount / age_rate)
+    )
+
+    np.testing.assert_allclose(a.federal, b.federal)
+    np.testing.assert_allclose(a.provincial, b.provincial)
+    np.testing.assert_allclose(a.oas_repayment, b.oas_repayment)
+    np.testing.assert_allclose(a.net_income, b.net_income)
+    np.testing.assert_allclose(a.net_income_after_repayment, b.net_income_after_repayment)
+    np.testing.assert_allclose(a.total - b.total, a.aip_penalty)
+
+
+def test_aip_penalty_is_isolated_from_the_alberta_age_amount_band(params) -> None:
+    # A second isolation case alongside test_aip_penalty_is_isolated_from_every
+    # _other_line: this one lands net_income_after_repayment inside Alberta's
+    # own age amount phase-out band rather than the federal one, since
+    # provincial.non_refundable_credits reads Alberta's own
+    # credits.age_amount.* keys and its band need not coincide with the
+    # federal band. No OAS is received, so the repayment is trivially zero
+    # regardless of net income -- a control below, not an assumption.
+    n = 1
+    age = 66
+    amount = 20_000.0
+    ab = params.province("ab")
+    threshold = ab.annual_amount("credits.age_amount.reduction_threshold_annual", JANUARY)
+    age_amount = ab.annual_amount("credits.age_amount.amount_annual", JANUARY)
+    reduction_rate = ab.number("credits.age_amount.reduction_rate")
+    lower = threshold
+    upper = threshold + age_amount / reduction_rate
+    target_net_income = (lower + upper) / 2.0
+    employment = target_net_income - amount
+
+    income_a = _ledger(n, employment=employment, resp_accumulated_income=amount)
+    income_b = _ledger(n, employment=employment, interest=amount)
+
+    a = person_assessment(income_a, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+    b = person_assessment(income_b, age, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    # Control: no OAS is received, so the repayment is trivially zero.
+    assert np.all(a.oas_repayment == 0.0)
+    assert np.all(b.oas_repayment == 0.0)
+
+    # Control: proves this test actually exercises Alberta's age amount
+    # phase-out, not just its full or fully-clawed-back ends.
+    assert np.all((b.net_income_after_repayment > lower) & (b.net_income_after_repayment < upper))
+
+    np.testing.assert_allclose(a.federal, b.federal)
+    np.testing.assert_allclose(a.provincial, b.provincial)
+    np.testing.assert_allclose(a.oas_repayment, b.oas_repayment)
+    np.testing.assert_allclose(a.net_income, b.net_income)
+    np.testing.assert_allclose(a.net_income_after_repayment, b.net_income_after_repayment)
+    np.testing.assert_allclose(a.total - b.total, a.aip_penalty)
+
+
+def test_aip_penalty_is_exactly_zero_with_no_aip(params) -> None:
+    n = 1
+    income = _ledger(n, employment=60_000.0, db_pension=5_000.0)
+    result = person_assessment(income, 66, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+
+    assert np.all(result.aip_penalty == 0.0)
+    np.testing.assert_allclose(
+        result.total, result.federal + result.provincial + result.oas_repayment
+    )
+
+
+def test_household_assessment_carries_the_aip_penalty_through_the_split_election(
+    params,
+) -> None:
+    rate = params.resp.number("aip.penalty_rate")
+    n = 1
+    amount = 15_000.0
+    db_pension = 60_000.0
+    income0 = _ledger(n, db_pension=db_pension, resp_accumulated_income=amount)
+    income1 = _ledger(n)
+    person0 = _person("a", n, birth_year=1950, income=income0)
+    person1 = _person("b", n, birth_year=1950, income=income1)
+    household = _household((person0, person1), year=2026, n=n)
+    a0, a1 = household_assessment(household, params)
+
+    control_income0 = _ledger(n, db_pension=db_pension, interest=amount)
+    control_person0 = _person("a", n, birth_year=1950, income=control_income0)
+    control_household = _household((control_person0, person1), year=2026, n=n)
+    control_a0, control_a1 = household_assessment(control_household, params)
+
+    for field in ("federal", "provincial", "oas_repayment", "net_income"):
+        np.testing.assert_allclose(getattr(a0, field), getattr(control_a0, field))
+        np.testing.assert_allclose(getattr(a1, field), getattr(control_a1, field))
+
+    np.testing.assert_allclose(a0.aip_penalty, amount * rate)
+    assert np.all(a1.aip_penalty == 0.0)
+    np.testing.assert_allclose(a0.total - control_a0.total, a0.aip_penalty)
+
+    # Control case: the elected split must actually be exercised here, or the
+    # equalities above would pass vacuously on a household that never splits.
+    zero = np.zeros(n, dtype=np.float64)
+    age = age_at_end_of_year(1950, 1, 2026)
+    unsplit0 = person_assessment(income0, age, zero, zero, "ab", params, JANUARY)
+    assert np.all(np.abs(a0.net_income - unsplit0.net_income) > 1e-6)
+
+
+def _pension_split_grid(
+    income0: IncomeLedger,
+    income1: IncomeLedger,
+    age: int,
+    params: RealParamYear,
+) -> tuple[list[Assessment], list[Assessment]]:
+    """The candidate grid ``household_assessment`` searches, built from ``person_assessment``.
+
+    Both transfer directions, in ``household_assessment``'s own grid order —
+    the same construction ``test_household_assessment_elects_as_the_grid_does_with_no_aip``
+    builds inline.
+
+    Assumes both persons are alive on every path and share one age at the end
+    of the year; household_assessment's both_alive mask and per-person ages are
+    not reproduced.
+    """
+    epi0 = federal.eligible_pension_income(income0, age, params.federal)
+    epi1 = federal.eligible_pension_income(income1, age, params.federal)
+
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    magnitudes: list[float] = []
+    k = 0
+    while k * GRID_STEP < maximum_share:
+        magnitudes.append(k * GRID_STEP)
+        k += 1
+    magnitudes.append(maximum_share)
+    fractions: list[float] = [*magnitudes, *(-m for m in magnitudes[1:])]
+
+    zero = np.zeros_like(epi0)
+    candidates0: list[Assessment] = []
+    candidates1: list[Assessment] = []
+    for fraction in fractions:
+        if fraction >= 0:
+            transfer = fraction * epi0
+            t_in0, t_out0 = zero, transfer
+            t_in1, t_out1 = transfer, zero
+        else:
+            transfer = -fraction * epi1
+            t_in0, t_out0 = transfer, zero
+            t_in1, t_out1 = zero, transfer
+        candidates0.append(person_assessment(income0, age, t_in0, t_out0, "ab", params, JANUARY))
+        candidates1.append(person_assessment(income1, age, t_in1, t_out1, "ab", params, JANUARY))
+    return candidates0, candidates1
+
+
+def test_household_assessment_election_is_blind_to_the_aip_penalty(params) -> None:
+    # A regression case: at these specific incomes, several split candidates
+    # give mathematically equal household tax before the AIP penalty.
+    # Because the penalty is the same for every candidate but
+    # still perturbs float rounding of "total", electing on "total" instead
+    # of the split-dependent lines picks a different tied candidate whenever
+    # the penalty happens to be present. Moving the same amount from
+    # resp_accumulated_income to interest removes the penalty without
+    # changing anything the split election should react to, so a correct
+    # election must land on the same split either way.
+    n = 1
+    db_pension0 = 137082.66972820694
+    amount = 16135.661503842332
+    db_pension1 = 132489.37310023705
+    income0_aip = _ledger(n, db_pension=db_pension0, resp_accumulated_income=amount)
+    income0_interest = _ledger(n, db_pension=db_pension0, interest=amount)
+    income1 = _ledger(n, db_pension=db_pension1)
+    person1 = _person("b", n, birth_year=1950, income=income1)
+
+    household_aip = _household(
+        (_person("a", n, birth_year=1950, income=income0_aip), person1), year=2026, n=n
+    )
+    household_interest = _household(
+        (_person("a", n, birth_year=1950, income=income0_interest), person1), year=2026, n=n
+    )
+    a0_aip, a1_aip = household_assessment(household_aip, params)
+    a0_interest, a1_interest = household_assessment(household_interest, params)
+
+    for field in ("net_income", "federal", "provincial", "oas_repayment"):
+        np.testing.assert_allclose(getattr(a0_aip, field), getattr(a0_interest, field))
+        np.testing.assert_allclose(getattr(a1_aip, field), getattr(a1_interest, field))
+
+    # Control: proves this couple still sits on a tie that electing on "total"
+    # would resolve differently from electing on the split-dependent lines --
+    # the bug this test guards against. If this fails after a parameter
+    # change, the tie has dissolved and a new tied couple is needed.
+    age = age_at_end_of_year(1950, 1, 2026)
+    grid0, grid1 = _pension_split_grid(income0_aip, income1, age, params)
+    total_argmin = int(
+        np.argmin(
+            np.stack([c0.total + c1.total for c0, c1 in zip(grid0, grid1, strict=True)], axis=0),
+            axis=0,
+        )[0]
+    )
+    elected_lines_argmin = int(
+        np.argmin(
+            np.stack(
+                [
+                    (c0.federal + c0.provincial + c0.oas_repayment)
+                    + (c1.federal + c1.provincial + c1.oas_repayment)
+                    for c0, c1 in zip(grid0, grid1, strict=True)
+                ],
+                axis=0,
+            ),
+            axis=0,
+        )[0]
+    )
+    assert total_argmin != elected_lines_argmin
+
+    # Ties the control above to the engine's actual election: proves the
+    # engine elects the same candidate the helper's elected-lines argmin
+    # does (so the helper's tie is the engine's tie), and that the two tied
+    # candidates genuinely differ in net_income -- the quantity the main
+    # assertion above compares.
+    assert (a0_aip.net_income == grid0[elected_lines_argmin].net_income).all()
+    assert (a1_aip.net_income == grid1[elected_lines_argmin].net_income).all()
+    assert (grid0[total_argmin].net_income != grid0[elected_lines_argmin].net_income).all()
+
+
+def test_household_assessment_elects_as_the_grid_does_with_no_aip(params) -> None:
+    # A regression test: household_assessment must sum each person's
+    # federal + provincial + oas_repayment left to right, in the same
+    # grouping person_assessment uses for "total", or a mathematically
+    # tied comparison elects a different split on rounding alone. With no
+    # AIP the penalty is zero for every candidate, so the split that
+    # minimises the elected lines is the same split that minimising "total"
+    # gives -- the election here must be the one electing on "total" gives.
+    n = 1
+    age = age_at_end_of_year(1950, 1, 2026)
+    db_pension0 = 119629.52337340865
+    db_pension1 = 144581.80318130302
+    income0 = _ledger(n, db_pension=db_pension0)
+    income1 = _ledger(n, db_pension=db_pension1)
+    person0 = _person("a", n, birth_year=1950, income=income0)
+    person1 = _person("b", n, birth_year=1950, income=income1)
+    household = _household((person0, person1), year=2026, n=n)
+
+    a0, a1 = household_assessment(household, params)
+
+    # The same candidate grid household_assessment searches, built entirely
+    # from person_assessment: both directions of transfer, since both
+    # persons here carry eligible pension income of their own.
+    np.testing.assert_allclose(
+        federal.eligible_pension_income(income0, age, params.federal), db_pension0
+    )
+    np.testing.assert_allclose(
+        federal.eligible_pension_income(income1, age, params.federal), db_pension1
+    )
+
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    magnitudes: list[float] = []
+    k = 0
+    while k * GRID_STEP < maximum_share:
+        magnitudes.append(k * GRID_STEP)
+        k += 1
+    magnitudes.append(maximum_share)
+    fractions: list[float] = [*magnitudes, *(-m for m in magnitudes[1:])]
+
+    zero = np.zeros(n, dtype=np.float64)
+    candidates0: list[Assessment] = []
+    candidates1: list[Assessment] = []
+    for fraction in fractions:
+        if fraction >= 0:
+            transfer = np.full(n, fraction * db_pension0)
+            t_in0, t_out0 = zero, transfer
+            t_in1, t_out1 = transfer, zero
+        else:
+            transfer = np.full(n, -fraction * db_pension1)
+            t_in0, t_out0 = transfer, zero
+            t_in1, t_out1 = zero, transfer
+        candidates0.append(person_assessment(income0, age, t_in0, t_out0, "ab", params, JANUARY))
+        candidates1.append(person_assessment(income1, age, t_in1, t_out1, "ab", params, JANUARY))
+
+    assert all(np.all(c.aip_penalty == 0.0) for c in (*candidates0, *candidates1))
+
+    grid_totals = np.stack(
+        [c0.total + c1.total for c0, c1 in zip(candidates0, candidates1, strict=True)], axis=0
+    )
+    best = int(np.argmin(grid_totals, axis=0)[0])
+
+    assert (a0.net_income == candidates0[best].net_income).all()
+    assert (a1.net_income == candidates1[best].net_income).all()
+
+    # Control: proves this couple still sits on a tie that distinguishes the
+    # grouping household_assessment sums in (each person's federal +
+    # provincial + oas_repayment first, then across persons) from a wrong
+    # grouping (each line across both persons first) that lands on the same
+    # total mathematically but differs on float rounding. If this fails
+    # after a parameter change, the tie has dissolved and a new tied couple
+    # is needed.
+    wrong = np.stack(
+        [
+            (c0.federal + c1.federal)
+            + (c0.provincial + c1.provincial)
+            + (c0.oas_repayment + c1.oas_repayment)
+            for c0, c1 in zip(candidates0, candidates1, strict=True)
+        ],
+        axis=0,
+    )
+    assert int(np.argmin(wrong, axis=0)[0]) != int(np.argmin(grid_totals, axis=0)[0])
 
 
 # =============================================================================
@@ -792,12 +1143,20 @@ recovery_tax:
   rate: 0.15
 """
 
+#: SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+SYNTHETIC_RESP_FLAT_RATE_TIE = """
+# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+aip:
+  penalty_rate: 0.37
+"""
+
 
 @pytest.fixture
 def synth_params_flat_rate_tie(tmp_path: Path):
     _write(tmp_path, "federal", SYNTHETIC_FEDERAL_FLAT_RATE_TIE)
     _write(tmp_path, "ab", SYNTHETIC_AB_FLAT_RATE_TIE)
     _write(tmp_path, "oas", SYNTHETIC_OAS_FLAT_RATE_TIE)
+    _write(tmp_path, "resp", SYNTHETIC_RESP_FLAT_RATE_TIE)
     return real_year(load_year(2026, tmp_path), 0.0)
 
 
@@ -848,6 +1207,24 @@ def test_household_assessment_ties_default_to_no_split(synth_params_flat_rate_ti
     # confirmed bit-for-bit equal to elected_total before writing this.
     assert (forward0.total + forward1.total == elected_total).all()
     assert (backward0.total + backward1.total == elected_total).all()
+
+
+def test_aip_penalty_uses_the_rate_from_params_not_a_hardcoded_value(
+    synth_params_flat_rate_tie, params
+) -> None:
+    synthetic_rate = synth_params_flat_rate_tie.resp.number("aip.penalty_rate")
+    # Control: proves this test would notice person_assessment reading the
+    # wrong file, rather than the synthetic and real rates coinciding.
+    assert synthetic_rate != params.resp.number("aip.penalty_rate")
+
+    n = 1
+    amount = 10_000.0
+    income = _ledger(n, employment=40_000.0, resp_accumulated_income=amount)
+    result = person_assessment(
+        income, 50, np.zeros(n), np.zeros(n), "ab", synth_params_flat_rate_tie, JANUARY
+    )
+
+    np.testing.assert_allclose(result.aip_penalty, amount * synthetic_rate)
 
 
 # =============================================================================
@@ -1154,6 +1531,13 @@ recovery_tax:
   rate: 0.15
 """
 
+#: SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+SYNTHETIC_RESP_FOR_MAX_SHARE = """
+# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.
+aip:
+  penalty_rate: 0.42
+"""
+
 
 def _write(root: Path, name: str, text: str) -> Path:
     year_dir = root / "2026"
@@ -1168,6 +1552,7 @@ def synth_params_non_multiple_max_share(tmp_path: Path):
     _write(tmp_path, "federal", SYNTHETIC_FEDERAL_NON_MULTIPLE_MAX_SHARE)
     _write(tmp_path, "ab", SYNTHETIC_AB_FOR_MAX_SHARE)
     _write(tmp_path, "oas", SYNTHETIC_OAS_FOR_MAX_SHARE)
+    _write(tmp_path, "resp", SYNTHETIC_RESP_FOR_MAX_SHARE)
     return real_year(load_year(2026, tmp_path), 0.0)
 
 
@@ -1231,6 +1616,7 @@ def test_person_assessment_returns_float64_arrays(params) -> None:
         "federal",
         "provincial",
         "oas_repayment",
+        "aip_penalty",
         "total",
         "net_income",
         "net_income_after_repayment",
@@ -1254,6 +1640,7 @@ def test_household_assessment_returns_float64_arrays_for_two_persons(params) -> 
             "federal",
             "provincial",
             "oas_repayment",
+            "aip_penalty",
             "total",
             "net_income",
             "net_income_after_repayment",
