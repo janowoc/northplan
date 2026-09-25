@@ -140,8 +140,13 @@ def _freeze[V](mapping: Mapping[str, V]) -> Mapping[str, V]:
 
 
 #: A mapping that cannot be written to after validation. Use as
-#: ``FrozenMapping[float]``; nests as ``FrozenMapping[FrozenMapping[float]]``.
+#: ``FrozenMapping[Finite]``; nests as ``FrozenMapping[FrozenMapping[Finite]]``.
 FrozenMapping = Annotated[Mapping[str, _V], AfterValidator(_freeze)]
+
+#: A float that is neither infinite nor nan. Every float in this schema is
+#: finite, either through this alias or through ``allow_inf_nan=False``
+#: alongside its own bounds.
+Finite = Annotated[float, Field(allow_inf_nan=False)]
 
 #: A finite dollar amount that cannot be negative. Real dollars of January of
 #: the scenario's start year, like every amount below except
@@ -830,7 +835,7 @@ class AssetClass(_Base):
             gains.
     """
 
-    real_mean: Annotated[float, Field(allow_inf_nan=False)]
+    real_mean: Finite
     vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
     interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
     dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
@@ -856,18 +861,18 @@ class Assumptions(_Base):
         asset_classes: Named classes, at least one. Declaration order is the
             order of ``correlation``.
         correlation: Correlation matrix of real annual returns, square,
-            symmetric, unit diagonal, positive semi-definite, and the same size
-            as ``asset_classes``, and realisable, together with each class's
-            ``real_mean`` and ``vol``, by a lognormal distribution.
+            symmetric, unit diagonal, positive semi-definite, finite, and the
+            same size as ``asset_classes``, and realisable, together with each
+            class's ``real_mean`` and ``vol``, by a lognormal distribution.
         allocations: Portfolio weights by account kind, plus the required
             ``default`` used by any account without an entry of its own. Each
-            allocation names known classes and sums to one.
+            allocation names known classes, is finite, and sums to one.
     """
 
     inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False)]
     asset_classes: FrozenMapping[AssetClass]
-    correlation: tuple[tuple[float, ...], ...]
-    allocations: FrozenMapping[FrozenMapping[float]]
+    correlation: tuple[tuple[Finite, ...], ...]
+    allocations: FrozenMapping[FrozenMapping[Finite]]
 
     @property
     def asset_class_names(self) -> tuple[str, ...]:
@@ -999,14 +1004,14 @@ class ContributionRule(_Base):
     """Where a policy puts money it has to invest.
 
     Attributes:
-        weights: Share of each contribution by account kind, non-negative and
-            summing to one. A kind may be given zero; leaving it out means the
-            same thing and is clearer.
+        weights: Share of each contribution by account kind, finite,
+            non-negative and summing to one. A kind may be given zero; leaving
+            it out means the same thing and is clearer.
         spill_order: Where a contribution goes when the account its weight
             names has no room left. Tried in order, each kind at most once.
     """
 
-    weights: FrozenMapping[float]
+    weights: FrozenMapping[Finite]
     spill_order: tuple[str, ...]
 
     @model_validator(mode="after")
@@ -1164,7 +1169,7 @@ class Scenario(_Base):
     spending: Spending
     assumptions: Assumptions
     policies: tuple[PolicySpec, ...]
-    grid: FrozenMapping[tuple[int | Annotated[float, Field(allow_inf_nan=False)], ...]] = Field(
+    grid: FrozenMapping[tuple[int | Finite, ...]] = Field(
         default_factory=lambda: MappingProxyType({})
     )
 

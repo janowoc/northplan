@@ -23,14 +23,17 @@ model refuses to accept.
 
 from __future__ import annotations
 
+import collections.abc
 import copy
+import types
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 import pydantic
 import pytest
 import yaml
+from pydantic.fields import FieldInfo
 
 from engine.scenario import (
     Assumptions,
@@ -40,6 +43,7 @@ from engine.scenario import (
     load_scenario,
     resolve_policy_path,
 )
+from engine.scenario.schema import Finite, FrozenMapping
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
@@ -458,6 +462,19 @@ REJECTIONS = [
         "correlation",
         sets("assumptions.correlation", [[1.0, 1.5], [1.5, 1.0]]),
     ),
+    rejected(
+        # The matrix is symmetric, so a refusal blaming asymmetry would be
+        # the wrong diagnosis; allow_inf_nan=False on the element type
+        # catches it before any model validator runs.
+        "correlation-entry-infinite",
+        "assumptions.correlation.0.1",
+        sets("assumptions.correlation", [[1.0, float("inf")], [float("inf"), 1.0]]),
+    ),
+    rejected(
+        "correlation-diagonal-nan",
+        "assumptions.correlation.0.0",
+        sets("assumptions.correlation", [[float("nan"), 0.1], [0.1, 1.0]]),
+    ),
     # --- Attainability of the return assumptions -----------------------------
     rejected(
         "correlation-minus-one-at-five-percent-vol",
@@ -514,11 +531,12 @@ REJECTIONS = [
         sets("assumptions.allocations.default", {"equity": 1.4, "bonds": -0.4}),
     ),
     rejected(
-        # The sum check is a positive test, because nan fails every ordered
-        # comparison, so a check of the form "if x > tol: raise" lets it
-        # through.
+        # Pins allow_inf_nan=False on the element type: nan is refused at its
+        # own location, which the sum check's message
+        # ("assumptions.allocations['default']: weights sum to ...") never
+        # contains.
         "allocation-weight-nan",
-        "allocations",
+        "assumptions.allocations.default.equity",
         sets("assumptions.allocations.default", {"equity": float("nan"), "bonds": 0.4}),
     ),
     # --- Contribution rule --------------------------------------------------
@@ -548,11 +566,11 @@ REJECTIONS = [
         sets("policies.0.contribution.spill_order", ["tfsa", "tfsa", "taxable"]),
     ),
     rejected(
-        # The sum check is a positive test, because nan fails every ordered
-        # comparison, so a check of the form "if x > tol: raise" lets it
-        # through.
+        # Pins allow_inf_nan=False on the element type: nan is refused at its
+        # own location, which the sum check's message
+        # ("contribution.weights: sum to ...") never contains.
         "contribution-weight-nan",
-        "contribution.weights",
+        "contribution.weights.rrsp",
         sets(
             "policies.0.contribution.weights",
             {"rrsp": float("nan"), "tfsa": 0.3, "taxable": 0.2, "resp": 0.0},
@@ -941,6 +959,230 @@ def test_every_rejection_has_its_own_case_id() -> None:
     ids = [case.id for case in REJECTIONS] + [case.id for case in ACCEPTANCES]
 
     assert len(ids) == len(set(ids)), sorted({name for name in ids if ids.count(name) > 1})
+
+
+# --- Every float in the schema is finite ------------------------------------
+
+
+def _finite_metadata(metadata: Iterable[Any]) -> bool:
+    """Whether any item of ``metadata`` pins ``allow_inf_nan=False``."""
+    return any(getattr(item, "allow_inf_nan", None) is False for item in metadata)
+
+
+def _expand_metadata(raw: Iterable[Any]) -> list[Any]:
+    """Flatten ``raw``, pulling a nested ``FieldInfo``'s own metadata out.
+
+    A ``Field(...)`` used inside a nested ``Annotated`` (an element of a tuple
+    or a mapping value, rather than the field's own top-level type) shows up
+    as a bare ``FieldInfo`` object among the ``Annotated`` metadata, with the
+    actual constraints one level further in, on ``FieldInfo.metadata``.
+    """
+    expanded: list[Any] = []
+    for item in raw:
+        if isinstance(item, FieldInfo):
+            expanded.extend(item.metadata)
+        else:
+            expanded.append(item)
+    return expanded
+
+
+#: Leaf annotations the walk accepts without descending further, because none
+#: of them can ever be a bare float: a field of one of these types is never a
+#: site :func:`_bare_float_sites` needs to flag.
+_SAFE_LEAVES = (str, int, bool, type(None))
+
+#: Generic origins the walk treats as transparent containers whose type
+#: arguments it descends into. Any other origin — a generic pydantic
+#: dataclass, a generic ``TypedDict``, a parameterised ``type X[T] = ...``
+#: alias, or anything else this schema does not use — is reported as
+#: unverifiable instead: such a generic resolves its own fields (or its
+#: ``__value__``) by a route this walk does not retrace, so treating its type
+#: arguments as if they were the whole story would silently miss a float
+#: living inside it.
+_CONTAINER_ORIGINS = frozenset(
+    {
+        tuple,
+        list,
+        set,
+        frozenset,
+        dict,
+        collections.abc.Mapping,
+        collections.abc.MutableMapping,
+        collections.abc.Sequence,
+        collections.abc.Set,
+        Union,
+        types.UnionType,
+    }
+)
+
+
+def _bare_float_sites(root: type[pydantic.BaseModel]) -> list[str]:
+    """Every ``Model.field`` reachable from ``root`` that is a bare, non-finite
+    float, or that the walk cannot rule out being one.
+
+    Walks ``field.annotation`` together with ``field.metadata`` (where
+    pydantic moves an outer ``Annotated``'s metadata), descending through a
+    nested ``Annotated`` (collecting its own metadata, via
+    :func:`_expand_metadata`), the type arguments — keys and values alike,
+    ``Ellipsis`` and ``NoneType`` skipped — of a generic whose origin is in
+    :data:`_CONTAINER_ORIGINS`, and nested pydantic models, each visited
+    once. Does not descend into ``Literal`` values. Metadata from an outer
+    container never carries down to its elements: each recursive call starts
+    from either the fresh metadata of its own ``Annotated`` layer or none at
+    all.
+
+    Fails closed: a leaf that is not ``float`` and not one of
+    :data:`_SAFE_LEAVES`, and a parameterised generic whose origin is not in
+    :data:`_CONTAINER_ORIGINS`, are both reported — an unresolved ``TypeVar``,
+    ``Any``, a bare ``dict`` or ``tuple``, a dataclass, a forward reference,
+    or anything else the walk has no rule for — marked ``(cannot check:
+    ...)`` so it reads as "unverifiable" rather than as a confirmed
+    non-finite float. A caller that wants only the confirmed floats filters
+    on the absence of ``"cannot check"``.
+
+    Returns each site once, sorted.
+    """
+    sites: set[str] = set()
+    visited_models: set[type[pydantic.BaseModel]] = set()
+
+    def visit_model(model: type[pydantic.BaseModel]) -> None:
+        if model in visited_models:
+            return
+        visited_models.add(model)
+        for field_name, field in model.model_fields.items():
+            walk(model.__name__, field_name, field.annotation, list(field.metadata))
+
+    def walk(model_name: str, field_name: str, annotation: Any, metadata: list[Any]) -> None:
+        site = f"{model_name}.{field_name}"
+
+        if hasattr(annotation, "__metadata__"):
+            walk(
+                model_name,
+                field_name,
+                annotation.__origin__,
+                _expand_metadata(annotation.__metadata__),
+            )
+            return
+
+        if annotation is float:
+            if not _finite_metadata(metadata):
+                sites.add(site)
+            return
+
+        if isinstance(annotation, type) and issubclass(annotation, pydantic.BaseModel):
+            visit_model(annotation)
+            return
+
+        origin = get_origin(annotation)
+        if origin is Literal:
+            return
+
+        args = get_args(annotation)
+        if origin in _CONTAINER_ORIGINS and args:
+            for arg in args:
+                if arg is Ellipsis or arg is type(None):
+                    continue
+                walk(model_name, field_name, arg, [])
+            return
+
+        if annotation in _SAFE_LEAVES:
+            return
+
+        sites.add(f"{site} (cannot check: {annotation!r})")
+
+    visit_model(root)
+    return sorted(sites)
+
+
+def test_every_float_in_the_scenario_schema_is_finite() -> None:
+    """No field anywhere under :class:`Scenario` accepts a bare, non-finite float,
+    and the walk can account for every leaf it visits.
+
+    Every float either uses the ``Finite`` alias or carries
+    ``allow_inf_nan=False`` alongside its own bounds — including the elements
+    of a correlation row, an allocation, and a contribution-weight mapping,
+    not just the tuple or mapping that holds them. If this ever lists a site
+    marked "cannot check", the walk has met a leaf type or a generic origin
+    the schema does not use today; extend :data:`_SAFE_LEAVES`,
+    :data:`_CONTAINER_ORIGINS` or the walk, don't loosen this assertion.
+    """
+    sites = _bare_float_sites(Scenario)
+
+    assert not sites, (
+        "sites that accept a bare, non-finite float, or that the walk "
+        f"cannot verify: {', '.join(sites)}"
+    )
+
+
+class _NestedSyntheticModel(pydantic.BaseModel):
+    """Reached only through :class:`_SyntheticModel`'s ``nested`` field.
+
+    Exists so the control test can tell a walker that visits only the top
+    level from one that actually recurses into a nested model.
+    """
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    inner: float
+
+
+#: A parameterised ``type X[T] = ...`` alias, used as ``_SyntheticAlias[str]``
+#: below. Its origin (``_SyntheticAlias`` itself) is not in
+#: :data:`_CONTAINER_ORIGINS`, so the walk must not expand its ``__value__``
+#: and report the field as unverifiable instead — the same shape a generic
+#: pydantic dataclass or a generic ``TypedDict`` would present.
+type _SyntheticAlias[T] = dict[T, float]
+
+
+def test_the_walk_helper_finds_every_bare_float_in_a_synthetic_model() -> None:
+    """A control model, so a walker that under-visits or fails open cannot pass.
+
+    Obviously synthetic, never a real scenario type. Covers a nested model, a
+    bare tuple, ``float | None``, and a mixed-type tuple — each a shape a
+    walker that only checks the top level or only ``float``/``Annotated``/
+    ``BaseModel`` would miss — a pinned ``FrozenMapping[Finite]`` that must
+    *not* be reported, an unparameterized ``FrozenMapping``, an ``Any`` field,
+    and a parameterised type alias that the walk cannot verify and must
+    report as such, and an ``Annotated`` tuple whose own
+    ``allow_inf_nan=False`` must not be mistaken for its element's: the pin
+    belongs to the tuple, not the float inside it, so the element is still a
+    bare float that must be reported.
+    """
+
+    class _SyntheticModel(pydantic.BaseModel):
+        model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+        bare: float
+        weights: FrozenMapping[float]
+        rate: Finite
+        nested: _NestedSyntheticModel
+        tuple_of_floats: tuple[float, ...]
+        optional_float: float | None
+        mixed_tuple: tuple[int | float, ...]
+        pinned_mapping: FrozenMapping[Finite]
+        unbound_mapping: FrozenMapping
+        anything: Any
+        alias_field: _SyntheticAlias[str]
+        outer_pinned: Annotated[tuple[float, ...], pydantic.Field(allow_inf_nan=False)]
+
+    sites = _bare_float_sites(_SyntheticModel)
+    confirmed = [site for site in sites if "cannot check" not in site]
+    unverifiable = [site for site in sites if "cannot check" in site]
+
+    assert confirmed == [
+        "_NestedSyntheticModel.inner",
+        "_SyntheticModel.bare",
+        "_SyntheticModel.mixed_tuple",
+        "_SyntheticModel.optional_float",
+        "_SyntheticModel.outer_pinned",
+        "_SyntheticModel.tuple_of_floats",
+        "_SyntheticModel.weights",
+    ]
+    assert {site.split(" ", 1)[0] for site in unverifiable} == {
+        "_SyntheticModel.alias_field",
+        "_SyntheticModel.anything",
+        "_SyntheticModel.unbound_mapping",
+    }
 
 
 # --- Risk aversion ------------------------------------------------------
