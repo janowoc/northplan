@@ -267,8 +267,14 @@ unchanged. Same family of error as L16. Lives in `engine/core/step.py`.
 
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
-credits. Not modelled: non-eligible dividends, foreign withholding tax, return
-of capital, capital losses and their carry-forward, the superficial loss rule.
+credits. In reality a net capital loss for the year is carried back three
+years or forward indefinitely against capital gains, and in the year of death
+is understood to be deductible against other income as well (ITA 111(2); not
+yet checked against the source, see #36); we offset losses against gains of
+the same year only and drop a net loss, in the year of death too. Direction:
+conservative on tax and on the OAS repayment. Not modelled: non-eligible
+dividends, foreign withholding tax, return of capital, the superficial loss
+rule. Lives in `engine/tax/federal.py`.
 
 ## Public pensions
 

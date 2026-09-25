@@ -368,8 +368,9 @@ class IncomeLedger:
         employment, cpp, db_pension, rrsp_withdrawals, rrif_lif_withdrawals, interest:
             Income by component and source.
         eligible_dividends: Eligible dividends from taxable holdings, before gross-up.
-        capital_gains: Capital gains from taxable holdings, realized on disposition or
-            distributed by the holding without a sale, before the inclusion rate.
+        capital_gains: Net capital gains from taxable holdings, realized on disposition or
+            distributed by the holding without a sale, before the inclusion rate. Signed:
+            a realized loss reduces it and the year's total may be negative (L17).
         oas, resp_accumulated_income: Gross OAS received (repayment assessed in
             December), and accumulated-income payments from an RESP wind-up.
         rrsp_deductions, cpp_enhanced_contributions, cpp_base_contributions, ei_premiums:

@@ -202,6 +202,31 @@ def test_total_income_applies_transfers(fed) -> None:
     np.testing.assert_allclose(with_transfer_out, [5_000.0])
 
 
+def test_a_net_capital_loss_does_not_reduce_total_net_or_taxable_income(fed) -> None:
+    loss_ledger = _ledger(employment=60_000.0, capital_gains=-10_526.0)
+    zero_ledger = _ledger(employment=60_000.0, capital_gains=0.0)
+
+    loss_total = federal.total_income(loss_ledger, fed, 0.0, 0.0)
+    zero_total = federal.total_income(zero_ledger, fed, 0.0, 0.0)
+    np.testing.assert_array_equal(loss_total, zero_total)
+
+    loss_net = federal.net_income(loss_ledger, fed, 0.0, 0.0)
+    zero_net = federal.net_income(zero_ledger, fed, 0.0, 0.0)
+    np.testing.assert_array_equal(loss_net, zero_net)
+
+    np.testing.assert_array_equal(
+        federal.taxable_income(loss_net, 0.0), federal.taxable_income(zero_net, 0.0)
+    )
+
+
+def test_the_capital_loss_floor_is_per_path(fed) -> None:
+    inclusion_rate = fed.number("investment_income.capital_gains_inclusion_rate")
+    ledger = _ledger(n_paths=2, employment=60_000.0, capital_gains=np.array([-10_526.0, 2_000.0]))
+    result = federal.total_income(ledger, fed, 0.0, 0.0)
+    np.testing.assert_array_equal(result[0], 60_000.0)
+    np.testing.assert_allclose(result[1], 60_000.0 + 2_000.0 * inclusion_rate)
+
+
 # =============================================================================
 # Non-zero inflation: an unindexed credit decays with the tax year; an
 # indexed one, and gross_tax, do not

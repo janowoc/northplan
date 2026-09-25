@@ -50,6 +50,11 @@ def total_income(
     ``net_income``, but an income-tested rule wanting a pre-election figure
     must not read this.
 
+    A net capital loss for the year (a negative ``ledger.capital_gains``) is
+    floored at zero before the inclusion rate, so it never reduces other
+    income; the ledger stays signed, so losses still offset gains of the same
+    year (L17).
+
     Args:
         ledger: This person's income components, accumulated over the year.
         params: The ``federal`` parameter set for the tax year.
@@ -72,7 +77,7 @@ def total_income(
         + ledger.rrif_lif_withdrawals
         + ledger.interest
         + ledger.eligible_dividends * (1 + gross_up_rate)
-        + ledger.capital_gains * inclusion_rate
+        + np.maximum(ledger.capital_gains, 0.0) * inclusion_rate
         + ledger.resp_accumulated_income
         + np.asarray(transfer_in, dtype=np.float64)
         - np.asarray(transfer_out, dtype=np.float64)

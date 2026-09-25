@@ -14,6 +14,7 @@ implementation reads.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -242,6 +243,50 @@ def test_assessment_total_equals_sum_of_parts(params) -> None:
     np.testing.assert_allclose(
         result.total, result.federal + result.provincial + result.oas_repayment
     )
+
+
+def test_person_assessment_with_a_net_capital_loss_equals_the_zero_gain_assessment(
+    params,
+) -> None:
+    n = 1
+    loss_income = _ledger(n, rrif_lif_withdrawals=40_000.0, oas=8_000.0, capital_gains=-10_526.0)
+    zero_income = _ledger(n, rrif_lif_withdrawals=40_000.0, oas=8_000.0, capital_gains=0.0)
+
+    loss_result = person_assessment(
+        loss_income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY
+    )
+    zero_result = person_assessment(
+        zero_income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY
+    )
+
+    for field in dataclasses.fields(Assessment):
+        np.testing.assert_array_equal(
+            getattr(loss_result, field.name), getattr(zero_result, field.name)
+        )
+
+
+def test_person_assessment_with_a_net_capital_loss_equals_the_zero_gain_assessment_above_the_oas_threshold(
+    params,
+) -> None:
+    n = 1
+    loss_income = _ledger(n, rrif_lif_withdrawals=100_000.0, oas=8_000.0, capital_gains=-10_526.0)
+    zero_income = _ledger(n, rrif_lif_withdrawals=100_000.0, oas=8_000.0, capital_gains=0.0)
+
+    loss_result = person_assessment(
+        loss_income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY
+    )
+    zero_result = person_assessment(
+        zero_income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY
+    )
+
+    threshold = params.oas.annual_amount("recovery_tax.threshold_annual", JANUARY)
+    assert (zero_result.net_income > threshold).all()
+    assert (zero_result.oas_repayment > 0).all()
+
+    for field in dataclasses.fields(Assessment):
+        np.testing.assert_array_equal(
+            getattr(loss_result, field.name), getattr(zero_result, field.name)
+        )
 
 
 # =============================================================================
