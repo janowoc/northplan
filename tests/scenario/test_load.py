@@ -6,7 +6,9 @@
 Everything here is about the *file* rather than the household: a path that is
 not there, bytes that are not YAML, and the one thing a file can express that a
 mapping cannot — the same key twice. The validation rules themselves are in
-``test_schema.py``.
+``test_schema.py``. This module also pins the two committed scenarios
+themselves: that each loads, passes the run-opening checks, builds, and holds
+the mechanisms it exists for.
 """
 
 from __future__ import annotations
@@ -16,21 +18,38 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from engine.core.build import build_initial_state
+from engine.core.indexation import real_year
+from engine.core.mortality import months_to_terminal
+from engine.core.state import DEATH_NOT_DRAWN
+from engine.params.loader import ParamYear, load_year
 from engine.scenario import (
     InvalidScenarioError,
     MalformedScenarioFileError,
     Scenario,
     ScenarioError,
     ScenarioFileMissingError,
+    check_lifespan,
+    check_start_ages,
     load_scenario,
 )
 from engine.scenario.load import DuplicateKeyError
+from engine.tax.combined import household_assessment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The committed example. Every later issue runs against this file, so a change
-#: that stops it loading breaks the whole roadmap below issue 10, not just here.
+#: The committed single-person example. Every later issue that does not need a
+#: second person runs against this file, so a change that stops it loading
+#: breaks the whole roadmap below issue 10, not just here.
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
+
+#: The committed two-person fixture: the couple decumulation path, used
+#: wherever a later issue needs a second person, a spousal rollover, or a
+#: survivor share.
+COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
+
+#: Small enough that building state for both committed scenarios stays cheap.
+N_PATHS = 3
 
 
 def write(tmp_path: Path, text: str) -> Path:
@@ -44,8 +63,8 @@ def test_the_committed_example_loads() -> None:
     """``load_scenario("scenarios/example.yaml")`` returns a ``Scenario``.
 
     The first success criterion of issue 10, and the reason the file is
-    committed: it is the fixture every later issue builds a state, a run, and a
-    search from.
+    committed: it is the single-person fixture every later issue builds a
+    state, a run, and a search from, when it does not need a second person.
     """
     scenario = load_scenario(EXAMPLE)
 
@@ -236,4 +255,141 @@ def test_the_example_path_in_the_success_criterion_is_the_one_that_is_committed(
     with the reason, rather than as a confusing missing-file error in every
     later issue's fixtures.
     """
-    assert EXAMPLE.is_file(), f"{EXAMPLE} is the fixture every later issue runs against."
+    assert EXAMPLE.is_file(), (
+        f"{EXAMPLE} is the single-person fixture every later issue that does "
+        "not need a second person runs against."
+    )
+
+
+# --- The committed couple ----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def params() -> ParamYear:
+    return load_year(2026)
+
+
+def test_the_couple_loads() -> None:
+    """``load_scenario("scenarios/late_life_couple.yaml")`` returns a two-person ``Scenario``."""
+    scenario = load_scenario(COUPLE)
+
+    assert isinstance(scenario, Scenario)
+    assert scenario.name == "late-life-couple"
+    assert scenario.start_year == 2026
+    assert scenario.household.person_ids == ("a", "b")
+    assert scenario.household.beneficiaries == ()
+
+
+def test_the_couple_passes_the_run_opening_checks(params: ParamYear) -> None:
+    """Neither of the two checks that gate a run refuses this household."""
+    scenario = load_scenario(COUPLE)
+
+    check_start_ages(scenario, params)  # must not raise
+    check_lifespan(scenario, params)  # must not raise
+
+
+def test_the_couple_exercises_what_it_is_for() -> None:
+    """Structural assertions on the loaded ``Scenario``.
+
+    Reads the mechanisms the header says this file is for: two distinct
+    birth dates, CPP and OAS already in pay, a funded RRIF and no RRSP for
+    each person, a funded LIF registered in Alberta, a DB pension with a
+    positive survivor share, and a survivor share below one. No numeric
+    literal from the YAML appears below other than 0 and 1; ``"ab"`` is a
+    jurisdiction code, not a number.
+    """
+    scenario = load_scenario(COUPLE)
+    persons = scenario.household.persons
+
+    birth_dates = [(person.birth_year, person.birth_month) for person in persons]
+    assert len(set(birth_dates)) == len(birth_dates)
+
+    for person in persons:
+        assert person.cpp.in_pay_monthly is not None
+        assert person.oas.in_pay_monthly is not None
+        assert person.accounts.rrsp.balance == 0
+        assert person.accounts.rrif.balance > 0
+        assert person.accounts.tfsa.balance > 0
+        assert 0 < person.accounts.taxable.acb < person.accounts.taxable.balance
+
+    funded_lifs = [person for person in persons if person.accounts.lif.balance > 0]
+    assert funded_lifs
+    for person in funded_lifs:
+        assert person.accounts.lif.jurisdiction == "ab"
+
+    assert any(pension.survivor_share > 0 for person in persons for pension in person.db_pensions)
+    assert scenario.spending.survivor_share < 1
+
+
+def test_the_couple_builds_two_persons() -> None:
+    """``build_initial_state`` gives the couple a two-person opening state.
+
+    Checks every field this file exists to make non-trivial: both persons
+    alive with no death drawn yet, a RRIF opened the year before the run for
+    each, CPP and OAS already in pay with no start-age election, and a LIF
+    opened the year before the run for each person who holds one.
+    """
+    scenario = load_scenario(COUPLE)
+    state = build_initial_state(scenario, N_PATHS)
+
+    assert len(state.persons) == 2
+    for person in state.persons:
+        assert person.alive.all()
+        assert (person.death_month_index == DEATH_NOT_DRAWN).all()
+        assert person.rrif.opened_year == scenario.start_year - 1
+        assert person.cpp.start_age_months is None
+        assert person.oas.start_age_months is None
+        assert person.cpp.in_pay_monthly is not None
+        assert person.oas.in_pay_monthly is not None
+        if person.lif.balance[0] > 0:
+            assert person.lif.opened_year == scenario.start_year - 1
+
+
+def test_the_couple_s_run_is_materially_shorter_than_the_example_s(params: ParamYear) -> None:
+    """The couple's longest survival curve is much shorter than the example's.
+
+    Each scenario's household month count is the maximum, across its
+    persons, of ``months_to_terminal``; the couple opens with both persons
+    already old, the example with one middle-aged person. Neither month
+    count is hard-coded: both derive from ``terminal_age_years``, a
+    parameter, via the same public function the builder uses to size a run.
+    """
+    example = load_scenario(EXAMPLE)
+    couple = load_scenario(COUPLE)
+
+    def household_months(scenario: Scenario) -> int:
+        return max(
+            months_to_terminal(
+                person.birth_year,
+                person.birth_month,
+                person.sex,
+                scenario.start_year,
+                params["mortality"],
+            )
+            for person in scenario.household.persons
+        )
+
+    example_months = household_months(example)
+    couple_months = household_months(couple)
+
+    assert couple_months * 3 < example_months * 2
+
+
+def test_the_couple_reaches_the_two_person_branch_of_household_assessment(
+    params: ParamYear,
+) -> None:
+    """``household_assessment`` returns one ``Assessment`` per person.
+
+    A one-person household returns one ``Assessment``; the couple returning
+    two is what proves its two-person branch — pension income splitting —
+    ran at all. Until #35 fills in ``close_year``'s assessment (its items
+    2-5), nothing in a run calls ``household_assessment``, so this is what
+    makes that success criterion checkable.
+    """
+    scenario = load_scenario(COUPLE)
+    state = build_initial_state(scenario, N_PATHS)
+    real_params = real_year(params, scenario.assumptions.inflation)
+
+    assessments = household_assessment(state, real_params)
+
+    assert len(assessments) == 2

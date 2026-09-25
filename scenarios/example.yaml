@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# The example scenario. Every later issue runs against this file.
+# The example scenario: the single-person accumulation path, and what #21
+# hand-checks. scenarios/late_life_couple.yaml is the couple decumulation
+# path, for whatever a later issue needs a second person to reach.
 #
 # THE HOUSEHOLD IS FICTIONAL. The names, dates, balances, salary and school
 # fees below were made up to exercise the schema, not taken from anyone's

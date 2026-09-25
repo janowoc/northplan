@@ -1,0 +1,155 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The couple decumulation path: two deaths, the spousal rollover, the DB
+# pension survivor share, the spending survivor share, OAS ceasing at the
+# first death, and pension income splitting
+# (engine/tax/combined.py::household_assessment's two-person branch). None of
+# that is reachable from a one-person household, which is what
+# scenarios/example.yaml is and stays: the single-person accumulation path,
+# and what #21 hand-checks. This file is the two-person fixture issues #35
+# and #36 will use instead of inventing a couple inline.
+#
+# THE HOUSEHOLD IS FICTIONAL. The dates, balances, and benefit amounts
+# already in pay below were made up to exercise the engine, not taken from
+# anyone's finances. A real household's figures belong in a `*.local.yaml`
+# file, which is gitignored.
+#
+# Conventions:
+#   - Every dollar amount is a REAL dollar of January 2026, the start year,
+#     except prior_year_net_income and net_income_two_years_prior, which are
+#     taken as filed.
+#     Do not inflate the benefit amounts already in pay, the pension, or
+#     spending; the engine works in this January's purchasing power and
+#     converts once, at display.
+#   - Rates and shares are bare fractions (0.02), never percentages (2).
+#   - Nothing here is a tax rule. Brackets, credits, benefit formulas, the
+#     RRIF factor and the contribution ceilings all live under params/2026/
+#     and are never restated in a scenario.
+#   - Nothing here is checked against a statutory limit. A start age outside
+#     the legal window, or contribution room larger than any year allows, is
+#     the engine's business, and it reads those bounds from params/.
+#
+# Riders, recorded here so nobody later "fixes" them:
+#   - The RRSP spousal rollover at death is unreachable from this file.
+#     Neither person holds an RRSP: both are past the RRSP conversion age
+#     (params/2026/rrif.yaml's conversion_age_years) and start already
+#     converted, in a RRIF. rrsp.spousal_rollover does not exist yet; #36
+#     will add it, with its own account-level unit test in tests/accounts/.
+#     This file will cover the step-level integration of the rollovers it
+#     can reach, once #36 wires them. The RRSP-to-RRIF conversion is
+#     likewise unreachable here. Do not add a younger spouse just to reach
+#     either one.
+#   - The DB pension bridge is zero, as in example.yaml: a bridge ends
+#     decades before this run opens. No committed scenario exercises a
+#     non-zero bridge end to end; engine/benefits/pension.py's bridge branch
+#     has unit coverage only.
+#   - No RESP beneficiary. limitations.md L34 (the RESP is excluded from the
+#     estate) is not covered by either committed scenario; #22's oracle
+#     scenario is the natural place for it.
+#   - GIS is not modelled in the first version (params/gis_not_implemented.yaml),
+#     so the couple GIS threshold is not exercised here despite the
+#     household's shape.
+#
+# Read by: engine/scenario/load.py, and the tests that need a two-person
+# scenario.
+
+name: late-life-couple
+start_year: 2026            # dollars per the header's convention; params/2026 serves the run
+n_paths: 10000
+seed: 42                    # common random numbers: the same draws for every policy
+
+# A household PREFERENCE, not a fact about the household and not a tax rule: a
+# bare coefficient of relative risk aversion, never a percentage. Zero is legal
+# and means risk neutrality. It scores the finished result and changes no
+# simulated number. Optional — omit it and the objectives that need it refuse
+# to run rather than pick a preference for you.
+risk_aversion: 2.0
+
+household:
+  province: ab              # province of RESIDENCE, for income tax
+
+  persons:
+    - id: a
+      birth_year: 1939
+      birth_month: 11          # 86 at the opening
+      sex: m                                      # f | m, selects the life table
+      cpp: {in_pay_monthly: 1150}      # already in pay: no start-age election
+      oas: {in_pay_monthly: 760}       # already in pay: no start-age election
+      prior_year_net_income: 62000               # as filed for the prior year, not restated
+      net_income_two_years_prior: 60500           # as filed two years before start, not restated
+      db_pensions:
+        - name: employer
+          start_year: 2004
+          start_month: 12
+          annual: 24000
+          indexation: full             # the example's pension is "none"; this exercises the other branch
+          bridge_annual: 0             # see the riders above; bridge_to_age_years omitted
+          survivor_share: 0.6
+      accounts:
+        cash:    {balance: 15000}
+        rrif:    {balance: 180000}     # open: a minimum is fixed in the first January
+        tfsa:    {balance: 60000, room: 12000}
+        taxable: {balance: 120000, acb: 70000}   # ACB below balance: a gain at the deemed disposition
+        # jurisdiction of REGISTRATION; both LIFs here are "ab" on purpose —
+        # #36 will refuse a cross-jurisdiction LIF rollover to a survivor's
+        # LIF, and no jurisdiction other than Alberta has a parameter file
+        # yet (limitations.md L3).
+        lif:     {balance: 50000, jurisdiction: ab}
+    - id: b
+      birth_year: 1943
+      birth_month: 6            # 82 at the opening
+      sex: f
+      cpp: {in_pay_monthly: 640}
+      oas: {in_pay_monthly: 730}
+      prior_year_net_income: 23000
+      net_income_two_years_prior: 22500
+      accounts:
+        cash:    {balance: 10000}
+        rrif:    {balance: 90000}
+        tfsa:    {balance: 45000, room: 9500}
+        taxable: {balance: 60000, acb: 40000}
+        lif:     {balance: 30000, jurisdiction: ab}
+
+spending:
+  # Bands run until the next one begins; the last runs to the second death.
+  schedule:
+    - {from_year: 2026, annual: 72000}
+  survivor_share: 0.7      # of household spending, from the month after the first death
+
+assumptions:
+  inflation: 0.02           # constant for the run; returns below are real
+
+  # The yields are the TAX CHARACTER of the return, not additions to it: price
+  # change is real_mean less the three yields.
+  asset_classes:
+    equity: {real_mean: 0.05, vol: 0.16, interest_yield: 0.00, dividend_yield: 0.020, distributed_gains_yield: 0.005}
+    bonds:  {real_mean: 0.01, vol: 0.05, interest_yield: 0.03, dividend_yield: 0.000, distributed_gains_yield: 0.000}
+
+  # ROW ORDER IS THE ORDER asset_classes IS WRITTEN IN, above: equity, bonds.
+  # Nothing in this matrix names a class, so reordering that block reinterprets
+  # every off-diagonal entry without changing a number here.
+  correlation: [[1.0, 0.1], [0.1, 1.0]]
+
+  # `default` is required and is what any account without its own entry holds.
+  # No resp entry: there is no RESP in this household.
+  allocations:
+    default: {equity: 0.4, bonds: 0.6}
+
+policies:
+  - name: registered-first
+    contribution:
+      weights: {tfsa: 1.0}
+      spill_order: [tfsa, taxable]
+    withdrawal:
+      order: [rrif, lif, taxable, tfsa]
+      taxable_ceiling_bracket: 1                 # index into the federal bracket table, from 0
+      fill_pension_credit: true
+    elections:
+      cpp_start_age_years: {}      # both already in pay: no election needed
+      oas_start_age_years: {}      # both already in pay: no election needed
+      # Inert: neither person holds an RRSP, so there is nothing to convert.
+      # 71 is not a statutory figure asserted here — the schema does not
+      # check elections against the conversion age, and this file exercises
+      # no RRSP rollover (see the riders above).
+      rrif_conversion: {age_years: 71, fraction: 1.0}
