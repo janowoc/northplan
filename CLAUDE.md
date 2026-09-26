@@ -80,6 +80,10 @@
 - One logical change per commit. Conventional commit messages.
 - Do not refactor code outside the module you were asked to change.
 - Do not add dependencies without asking.
+- Run `ruff format` on each whole file you touch. The tree is fully formatted
+  and `tests/test_formatting.py` holds it there. ruff is pinned in
+  `pyproject.toml`; a version bump is a commit of its own that reformats the
+  tree.
 
 ## Doing the work on an issue
 - When I ask for work on an issue, the default is that you dispatch the

@@ -161,6 +161,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ruff check .
+ruff format .
 ```
 
 ## Build order

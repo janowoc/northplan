@@ -22,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.6",
+    "ruff==0.16.4",
 ]
 
 [project.scripts]
@@ -71,6 +71,13 @@ empty_parameter_set_mark = "fail_at_collect"
 target-version = "py312"
 line-length = 100
 extend-exclude = ["web"]
+force-exclude = true
+
+[tool.ruff.format]
+# ruff also formats Python blocks inside Markdown. The formatter is kept to
+# .py files so that `ruff format .` never rewrites params/taxes_benefits.md,
+# which only the human edits.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 # `explicit-preview-rules` is load-bearing, not cosmetic. Bare `preview = true`
