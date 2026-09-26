@@ -33,6 +33,7 @@ from engine.core.build import (
     build_market_inputs,
     draw_deaths,
 )
+from engine.core.indexation import as_filed_to_real_factor
 from engine.core.mortality import death_month_index, months_to_terminal, survival_curve
 from engine.core.state import DEATH_NOT_DRAWN, updated
 from engine.mc.market import DEFAULT_KIND
@@ -202,17 +203,31 @@ class TestBuildAgainstTheExample:
         assert lif.jurisdiction == ""
         assert lif.opened_year is None
 
-    def test_prior_year_net_income_is_broadcast_from_the_scenario(self, scenario) -> None:
-        state = build_initial_state(scenario, n_paths=N_PATHS)
-        assert (state.persons[0].prior_year_net_income == 92_000.0).all()
-
-    def test_the_two_years_of_net_income_are_broadcast_and_not_crossed(self, scenario) -> None:
-        """The example's two figures (92000, 88000) differ on purpose (brief-49 s8): a
-        test that only checked one field could pass with the two swapped in build.py.
+    def test_prior_year_net_income_is_restated_from_the_scenario(self, scenario) -> None:
+        """The example states 92000 as filed for 2025 at 2% inflation. Restated to January
+        2026 dollars from mid-2025, half a year earlier: 92000 * 1.02**0.5 (L5).
         """
         state = build_initial_state(scenario, n_paths=N_PATHS)
-        assert (state.persons[0].prior_year_net_income == 92_000.0).all()
-        assert (state.persons[0].net_income_two_years_prior == 88_000.0).all()
+        expected = 92_000.0 * 1.02**0.5  # 92915.45
+        assert state.persons[0].prior_year_net_income == pytest.approx(
+            np.full(N_PATHS, expected), rel=1e-12
+        )
+
+    def test_the_two_years_of_net_income_are_restated_and_not_crossed(self, scenario) -> None:
+        """The example's two figures (92000, 88000) differ on purpose (brief-49 s8): a
+        test that only checked one field could pass with the two swapped in build.py.
+        Each is restated from the middle of its own year: half a year for 2025, a year
+        and a half for 2024 (L5).
+        """
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        expected_prior = 92_000.0 * 1.02**0.5  # 92915.45
+        expected_two_prior = 88_000.0 * 1.02**1.5  # 90653.16
+        assert state.persons[0].prior_year_net_income == pytest.approx(
+            np.full(N_PATHS, expected_prior), rel=1e-12
+        )
+        assert state.persons[0].net_income_two_years_prior == pytest.approx(
+            np.full(N_PATHS, expected_two_prior), rel=1e-12
+        )
 
     def test_education_start_month_index(self, scenario) -> None:
         state = build_initial_state(scenario, n_paths=N_PATHS)
@@ -244,6 +259,39 @@ class TestBuildAgainstTheExample:
         state = build_initial_state(scenario, n_paths=N_PATHS)
         truncated = updated(state, beneficiaries=())
         assert walk(truncated, N_PATHS) < MINIMUM_ARRAYS
+
+
+class TestAsFiledRestatementFactor:
+    """The opening pair equals the scenario figure times the restatement factor."""
+
+    def test_the_built_pair_equals_the_scenario_figure_times_the_factor(self, scenario) -> None:
+        inflation = scenario.assumptions.inflation
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        person = scenario.household.persons[0]
+        expected_prior = person.prior_year_net_income * as_filed_to_real_factor(inflation, 1)
+        expected_two_prior = person.net_income_two_years_prior * as_filed_to_real_factor(
+            inflation, 2
+        )
+        assert state.persons[0].prior_year_net_income == pytest.approx(
+            np.full(N_PATHS, expected_prior)
+        )
+        assert state.persons[0].net_income_two_years_prior == pytest.approx(
+            np.full(N_PATHS, expected_two_prior)
+        )
+
+    def test_zero_inflation_leaves_the_pair_equal_to_the_scenario_figure(self, scenario) -> None:
+        zero_inflation_assumptions = scenario.assumptions.model_copy(update={"inflation": 0.0})
+        zero_inflation_scenario = scenario.model_copy(
+            update={"assumptions": zero_inflation_assumptions}
+        )
+        state = build_initial_state(zero_inflation_scenario, n_paths=N_PATHS)
+        person = zero_inflation_scenario.household.persons[0]
+        assert state.persons[0].prior_year_net_income == pytest.approx(
+            np.full(N_PATHS, person.prior_year_net_income)
+        )
+        assert state.persons[0].net_income_two_years_prior == pytest.approx(
+            np.full(N_PATHS, person.net_income_two_years_prior)
+        )
 
 
 class TestBuildMarketInputs:

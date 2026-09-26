@@ -17,7 +17,8 @@ ignored misspelled key would corrupt a whole run without a visible error.
 
 **Dollars are real dollars of January of ``start_year``**, the same convention
 the engine holds everywhere, except a person's ``prior_year_net_income`` and
-``net_income_two_years_prior``, taken as filed, not restated.
+``net_income_two_years_prior``, stated as filed; ``engine.core.build`` restates
+them to real dollars.
 
 **Amounts are what the household has, not what the rules allow.** Contribution
 room and the two years of net income are scenario inputs because they depend
@@ -503,13 +504,13 @@ class Person(_Base):
         accounts: Opening balances.
         prior_year_net_income: Net income (line 23600) for the calendar year
             before ``start_year``, as reported on that year's return (an
-            estimate if not yet filed) — not restated in start-year dollars,
-            one of the two amounts in a scenario that are not real dollars.
-            Required, no default: zero is a legitimate value the author
-            types.
+            estimate if not yet filed) — stated as filed, one of the two
+            amounts in a scenario that are not real dollars;
+            ``engine.core.build`` restates it. Required, no default: zero is
+            a legitimate value the author types.
         net_income_two_years_prior: Net income (line 23600) for the calendar
             year two years before ``start_year``, on the same terms as
-            ``prior_year_net_income`` — as filed, not restated, required with
+            ``prior_year_net_income`` — stated as filed, required with
             no default because zero is a legitimate value the author types.
     """
 

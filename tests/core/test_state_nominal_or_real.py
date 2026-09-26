@@ -210,17 +210,17 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
     ),
     ("PersonState", "prior_year_net_income"): (
         Basis.REAL,
-        "Written at each December close from that year's real income. The opening figure a "
-        "scenario states is the documented exception, taken as filed (engine/__init__.py, "
-        "and L5's second sentence); it is one year stale on purpose and is not decayed.",
+        "The opening figure a scenario states as filed is restated to real dollars at build "
+        "(engine.core.build.build_initial_state, via "
+        "engine.core.indexation.as_filed_to_real_factor); the field is then rewritten from "
+        "that year's real income at each December close.",
     ),
     ("PersonState", "net_income_two_years_prior"): (
         Basis.REAL,
-        "Written at each December close from what prior_year_net_income held all year, so "
-        "it too is eventually a real figure. The opening figure a scenario states is the "
-        "documented exception, taken as filed (engine/__init__.py, and L5's second "
-        "sentence); it is two years stale on purpose, rather than its sibling's one, and is "
-        "likewise not decayed.",
+        "The opening figure a scenario states as filed is restated to real dollars at build "
+        "(engine.core.build.build_initial_state, via "
+        "engine.core.indexation.as_filed_to_real_factor); the field is then rewritten from "
+        "what prior_year_net_income held all year at each December close.",
     ),
     ("RespState", "contributions"): (
         Basis.NOMINAL,

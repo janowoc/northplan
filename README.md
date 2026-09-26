@@ -56,18 +56,18 @@ Scope of the first version: Alberta residents, no GIS, no Quebec. See
 4. **Household is a list of persons from day one.** Pension splitting,
    survivor benefits, the RRIF spousal rollover, OAS ceasing at first death,
    and two mortality timelines all require two people.
-5. **Real dollars internally, January dollars of the start year.** The
-   exception is the two years of net income a scenario states for each
-   person, taken as filed; a December close replaces each with a real
-   figure in turn. One parameter year serves the whole run. An indexed
-   amount is constant in real terms except for the erosion it suffers
-   between adjustment dates, which is a constant factor per indexation
-   schedule computed once per scenario in `engine/core/indexation.py`. An
-   amount fixed in nominal terms by statute — the pension income amount,
-   the CESG figures, a non-indexed DB pension — decays without limit and is
-   decayed explicitly. Which amounts are on which schedule is declared in
-   the parameter files, not in code. Conversion to nominal happens only at
-   display.
+5. **Real dollars internally, January dollars of the start year.** A scenario
+   states the two years of net income for each person as filed; the builder
+   restates the opening pair to real dollars before the run starts, and a
+   December close then replaces each with that year's real figure in turn. One
+   parameter year serves the whole run. An indexed amount is constant in real
+   terms except for the erosion it suffers between adjustment dates, which is a
+   constant factor per indexation schedule computed once per scenario in
+   `engine/core/indexation.py`. An amount fixed in nominal terms by statute —
+   the pension income amount, the CESG figures, a non-indexed DB pension —
+   decays without limit and is decayed explicitly. Which amounts are on which
+   schedule is declared in the parameter files, not in code. Conversion to
+   nominal happens only at display.
 6. **The timestep is one month.** Life events happen mid-year, benefits are
    paid monthly, and the balance owing on a tax year is paid in the filing
    month of the next one. Annual events — the assessment, contribution room,

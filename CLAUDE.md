@@ -41,11 +41,12 @@
   Do not start work that is not an issue.
 
 ## Conventions the engine holds everywhere
-- Real dollars are January dollars of the scenario's start year, except the
-  prior-year net income a scenario states for each person, which is taken as
-  filed. One parameter year serves the whole run. Indexed amounts are
-  constant in real terms except for a per-schedule erosion factor; unindexed
-  amounts decay.
+- Real dollars are January dollars of the scenario's start year. The two
+  years of prior net income a scenario states for each person are stated as
+  filed and restated to real dollars when the opening state is built, each
+  valued at the middle of the year it was earned in. One parameter year
+  serves the whole run. Indexed amounts are constant in real terms except
+  for a per-schedule erosion factor; unindexed amounts decay.
   Which is which is declared in each parameter file's `indexation` block and
   resolved once per scenario in `engine/core/indexation.py`, never at a call
   site.

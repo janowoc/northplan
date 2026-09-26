@@ -428,11 +428,10 @@ class PersonState:
             freezes thereafter. A person who has died keeps the two figures
             written at the close of the last year they were alive in; the
             older, the one the RESP reads, is their net income for the year
-            before that (implemented in #35). Both are taken as filed rather
-            than converted to real dollars, each replaced in turn:
-            ``prior_year_net_income`` at the first December close,
-            ``net_income_two_years_prior`` only at the second, once the shift
-            has carried a real figure into it
+            before that. Both open as real figures: a scenario states them as filed, and
+            ``engine.core.build.build_initial_state`` restates the opening pair to real
+            dollars (``engine.core.indexation.as_filed_to_real_factor``) before the state ever
+            carries them. Each is then rewritten in turn at every December close that follows
             (``engine.core.step.close_year``, item 5).
     """
 

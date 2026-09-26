@@ -58,6 +58,7 @@ __all__ = [
     "RealParamYear",
     "RoutedParameterError",
     "UnroutedParameterError",
+    "as_filed_to_real_factor",
     "erosion_factor",
     "nominal_carry_factor",
     "real_year",
@@ -189,6 +190,40 @@ def nominal_carry_factor(inflation_rate: float) -> float:
         ValueError: If ``inflation_rate`` is at or below -1.
     """
     return unindexed_factor(inflation_rate, MONTHS_PER_YEAR)
+
+
+def as_filed_to_real_factor(inflation_rate: float, years_before_start: int) -> float:
+    """The multiplier that restates an as-filed net-income figure to January of the start year.
+
+    A scenario states a person's net income for a calendar year as it was filed: nominal
+    dollars of that year, valued at the year's mean (L5's "annual amounts are valued at the
+    year's mean"). It is the one scenario figure not already stated in real dollars, so
+    :func:`build_initial_state <engine.core.build.build_initial_state>` restates it once, at
+    build. ``years_before_start == 1`` is the prior year, valued at its mean, half a year
+    before the start year's January — hence the exponent ``years_before_start - 0.5``:
+    ``0.5`` for the prior year, ``1.5`` for the year before that. Write the half-year as
+    ``0.5``; it is a convention, not a tax constant.
+
+    Args:
+        inflation_rate: Assumed annual inflation as a bare fraction.
+        years_before_start: How many calendar years before the scenario's start year the figure
+            was filed for. At least 1: the filed figures are always for a year strictly before
+            the start year.
+
+    Returns:
+        A multiplier, exactly 1 at zero inflation.
+
+    Raises:
+        ValueError: If ``years_before_start`` is less than 1, or ``inflation_rate`` is at or
+            below -1.
+    """
+    if years_before_start < 1:
+        raise ValueError(
+            f"years_before_start must be at least 1: the filed figures are always for a year "
+            f"strictly before the scenario's start year, got {years_before_start!r}."
+        )
+    _check_inflation(inflation_rate)
+    return (1 + inflation_rate) ** (years_before_start - 0.5)
 
 
 def _check_inflation(inflation_rate: float) -> None:

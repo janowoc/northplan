@@ -18,7 +18,8 @@
 # Conventions:
 #   - Every dollar amount is a REAL dollar of January 2026, the start year,
 #     except prior_year_net_income and net_income_two_years_prior, which are
-#     taken as filed.
+#     stated as filed; the engine restates them when it builds the opening
+#     state.
 #     Do not inflate the benefit amounts already in pay, the pension, or
 #     spending; the engine works in this January's purchasing power and
 #     converts once, at display.
@@ -76,8 +77,8 @@ household:
       sex: m                                      # f | m, selects the life table
       cpp: {in_pay_monthly: 1150}      # already in pay: no start-age election
       oas: {in_pay_monthly: 760}       # already in pay: no start-age election
-      prior_year_net_income: 62000               # as filed for the prior year, not restated
-      net_income_two_years_prior: 60500           # as filed two years before start, not restated
+      prior_year_net_income: 62000               # as filed for the prior year; restated at build
+      net_income_two_years_prior: 60500          # as filed two years before start; restated at build
       db_pensions:
         - name: employer
           start_year: 2004

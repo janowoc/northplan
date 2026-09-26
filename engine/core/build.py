@@ -5,8 +5,10 @@
 :class:`~engine.mc.market.MarketInputs`, and the run's common random numbers.
 
 The one place a :class:`~engine.scenario.schema.Scenario` — real dollars of January of its
-start year, except each person's prior-year net income, taken as filed — is turned into the
-array-valued state and draws the monthly loop steps forward. Five public functions:
+start year, except each person's two years of prior net income, which the scenario states as
+filed and this module restates to real dollars (:func:`_build_person`, via
+:func:`engine.core.indexation.as_filed_to_real_factor`) — is turned into the array-valued state
+and draws the monthly loop steps forward. Five public functions:
 :func:`build_initial_state` and :func:`build_market_inputs` map the scenario; :func:`build_draws`
 and :func:`build_deterministic_draws` generate the run's :class:`~engine.mc.returns.RandomDraws`;
 :func:`draw_deaths` resolves every person's death month from those draws.
@@ -39,6 +41,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+from engine.core.indexation import as_filed_to_real_factor
 from engine.core.mortality import death_month_index, months_to_terminal, survival_curve
 from engine.core.state import (
     DEATH_NOT_DRAWN,
@@ -146,8 +149,9 @@ def build_initial_state(
     chosen = _select_policy(scenario, policy)
     start_year = scenario.start_year
 
+    inflation = scenario.assumptions.inflation
     persons = tuple(
-        _build_person(person, n_paths, start_year, chosen)
+        _build_person(person, n_paths, start_year, chosen, inflation)
         for person in scenario.household.persons
     )
     beneficiaries = tuple(
@@ -437,6 +441,7 @@ def _build_person(
     n_paths: int,
     start_year: int,
     policy: PolicySpec,
+    inflation: float,
 ) -> PersonState:
     accounts = person.accounts
     lira = accounts.lira
@@ -527,8 +532,14 @@ def _build_person(
         pensions=pensions,
         income=_empty_income_ledger(n_paths),
         balance_owing=_zeros(n_paths),
-        prior_year_net_income=_broadcast(person.prior_year_net_income, n_paths),
-        net_income_two_years_prior=_broadcast(person.net_income_two_years_prior, n_paths),
+        # The scenario states both figures as filed; restated here to January dollars of
+        # start_year, so no field on PersonState is ever taken as filed.
+        prior_year_net_income=_broadcast(
+            person.prior_year_net_income * as_filed_to_real_factor(inflation, 1), n_paths
+        ),
+        net_income_two_years_prior=_broadcast(
+            person.net_income_two_years_prior * as_filed_to_real_factor(inflation, 2), n_paths
+        ),
     )
 
 

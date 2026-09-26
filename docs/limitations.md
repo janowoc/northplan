@@ -77,16 +77,20 @@ scenario's start year with balances as at that date, and model no income
 earned earlier in that year. Lives in `engine/scenario/`.
 
 **L5. Real dollars are January dollars of the start year.** All amounts in a
-scenario are stated in the purchasing power of January of the start year,
-except a person's prior-year net income, which is taken as filed; one
-parameter year serves the whole run. Indexed amounts are constant in real
-terms except for the within-cycle erosion an amount suffers between its
-adjustment dates, applied as a constant factor per indexation schedule.
-Amounts fixed in nominal terms by statute decay without limit. The routing is
-declared in each parameter file's `indexation` block. Lives in
-`engine/core/indexation.py`. Not modelled: the quarter-to-quarter oscillation
-around the erosion mean (bounded, mean zero), and the rounding of the TFSA
-limit to five-hundred-dollar steps (treated as annually indexed).
+scenario are stated in the purchasing power of January of the start year. A
+person's two years of prior net income are the one exception to that statement,
+not to the rule: a scenario states them as filed, and the builder restates each
+to January dollars of the start year, valuing the figure at the middle of the
+calendar year it was earned in, at the scenario's inflation rate
+(`engine.core.indexation.as_filed_to_real_factor`). One parameter year serves
+the whole run. Indexed amounts are constant in real terms except for the
+within-cycle erosion an amount suffers between its adjustment dates, applied as
+a constant factor per indexation schedule. Amounts fixed in nominal terms by
+statute decay without limit. The routing is declared in each parameter file's
+`indexation` block. Lives in `engine/core/indexation.py`. Not modelled: the
+quarter-to-quarter oscillation around the erosion mean (bounded, mean zero),
+and the rounding of the TFSA limit to five-hundred-dollar steps (treated as
+annually indexed).
 
 Nor is the CPI lag. In reality an adjustment is computed from a price window
 that closed some months before it takes effect, so the step back up restores an
@@ -110,9 +114,10 @@ the plan: it understates tax against a bracket edge or a credit, and lets more
 through a cap than the law would. For a household drawing monthly the error is
 close to zero.
 
-**L6. Inflation is a constant scenario assumption.** It is used only for the
-erosion factor and for the decay of unindexed amounts. Returns are real. There
-is no stochastic inflation.
+**L6. Inflation is a constant scenario assumption.** It is used for the
+erosion factor, for the decay of unindexed amounts, and for restating a
+person's two years of prior net income from as filed to real dollars at
+build (L5). Returns are real. There is no stochastic inflation.
 
 **L57. Erosion of nominal state balances.** In reality a contribution room,
 a lifetime total, or an adjusted cost base fixed in nominal terms loses real
@@ -434,14 +439,12 @@ income, not the one on their terminal return — keeps counting. Direction:
 counting a deceased spouse's income overstates family income and so lowers the
 rate; conservative.
 
-*Stale income against this year's edges.* In reality the comparison is
-between a past year's nominal income and this year's published, nominal
-cut-offs. We compare a real-dollar income with a cut-off the engine has
-deflated, so the income runs high by roughly half a year of inflation in the
-start year, a year and a half in year two, and two and a half years
-thereafter. Direction: conservative — a household crosses a cut-off slightly
-early — and small: at most one rate step on the eligible window per
-beneficiary per year.
+*Stale income against this year's edges.* In reality the comparison is between
+a past year's nominal income and this year's published, nominal cut-offs. We
+compare a real-dollar income with a cut-off the engine has deflated, so the
+income runs high by roughly two years of inflation. Direction: conservative — a
+household crosses a cut-off slightly early — and small: at most one rate step
+on the eligible window per beneficiary per year.
 
 **L34. RESP at death.** The plan is excluded from the estate calculation and is
 assumed to pass to the beneficiary intact.

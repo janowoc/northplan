@@ -20,8 +20,8 @@ indexation period, and the real-terms parameter view that is the only route
 from a dollar in ``params/`` to the engine. ``mortality`` owns the survival
 curve and the per-path death draw. ``state`` is what passes between months.
 
-All amounts are real dollars, except the opening
-``PersonState.prior_year_net_income`` and
-``PersonState.net_income_two_years_prior``, which are the scenario's figures
-as filed. All arrays are shape ``(n_paths,)``.
+All amounts are real dollars. A scenario states ``PersonState.prior_year_net_income`` and
+``PersonState.net_income_two_years_prior`` as filed; ``engine.core.build.build_initial_state``
+restates the opening pair to real dollars before the state carries them. All arrays are shape
+``(n_paths,)``.
 """

@@ -14,10 +14,12 @@ Invariants that hold everywhere below this package:
   (tax assessment, RRIF/LIF minimums, contribution room) are phases on that
   monthly timeline, not a second loop.
 - Every dollar amount crossing a function boundary is real (constant
-  purchasing power) dollars in the scenario's base year, except the opening
+  purchasing power) dollars in the scenario's base year. A scenario states
   ``PersonState.prior_year_net_income`` and
-  ``PersonState.net_income_two_years_prior``, taken as filed until the
-  December closes that replace them with real figures.
+  ``PersonState.net_income_two_years_prior`` as filed, and
+  ``engine.core.build.build_initial_state`` restates the opening pair to real
+  dollars before either ever crosses a boundary; the December close then
+  rewrites each in turn from that year's real assessment.
 - Indexed amounts are constant in real terms except for a per-schedule
   erosion factor (``engine.core.indexation.erosion_factor``) covering the
   within-cycle erosion between adjustment dates; the CPI lag is separate,

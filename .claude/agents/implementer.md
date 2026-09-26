@@ -77,9 +77,10 @@ a menu of assumptions you have already coded against.
   maximum, a bracket ceiling a policy fills to — is enforced against the
   year-to-date total, never against a single month's amount. Enforced per
   month it permits twelve times the limit and nothing raises.
-- Real dollars internally, except the two years of net income a scenario
-  states for each person, which are taken as filed until a December close
-  replaces each with a real figure in turn. Convert to nominal only at
+- Real dollars internally. A scenario states the two years of net income for
+  each person as filed; the builder restates the opening pair to real dollars
+  before the run starts, and a December close then replaces each with a real
+  figure in turn. Convert to nominal only at
   display. The erosion a periodic adjustment leaves between its adjustment
   dates costs a *constant* in real terms, computed once per scenario in
   `engine.core.indexation` and applied by `RealParamSet.amount` and its

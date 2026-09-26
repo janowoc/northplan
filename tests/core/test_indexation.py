@@ -29,6 +29,7 @@ from engine.core.indexation import (
     RealParamSet,
     RoutedParameterError,
     UnroutedParameterError,
+    as_filed_to_real_factor,
     erosion_factor,
     nominal_carry_factor,
     real_year,
@@ -261,6 +262,45 @@ class TestNominalCarryFactor:
     def test_the_closed_form_at_two_percent(self) -> None:
         """An independent check, so the test does not merely restate the delegation."""
         assert nominal_carry_factor(0.02) == pytest.approx(1 / 1.02)
+
+
+# --- as_filed_to_real_factor --------------------------------------------------
+
+
+class TestAsFiledToRealFactor:
+    """Restates a person's as-filed net income to January dollars of the start year."""
+
+    @pytest.mark.parametrize("years_before_start", [1, 2, 3])
+    def test_zero_inflation_is_exactly_one(self, years_before_start: int) -> None:
+        assert as_filed_to_real_factor(0.0, years_before_start) == 1.0
+
+    def test_the_prior_year_s_exponent_is_a_half(self) -> None:
+        """A hand-written rate, not the function's own formula: 1.10 ** 0.5."""
+        rate = 0.10  # SYNTHETIC: round enough to hand-check, not a real inflation figure.
+        assert as_filed_to_real_factor(rate, 1) == pytest.approx(1.10**0.5)
+
+    def test_two_years_before_start_s_exponent_is_one_and_a_half(self) -> None:
+        rate = 0.10  # SYNTHETIC, same rate as above.
+        assert as_filed_to_real_factor(rate, 2) == pytest.approx(1.10**1.5)
+
+    def test_a_more_distant_year_carries_a_larger_factor(self) -> None:
+        """The exponent grows with years_before_start, so the multiplier does too."""
+        rate = 0.10  # SYNTHETIC
+        assert as_filed_to_real_factor(rate, 2) > as_filed_to_real_factor(rate, 1)
+
+    def test_years_before_start_of_zero_is_refused(self) -> None:
+        """The filed figures are always for a year strictly before the start year."""
+        with pytest.raises(ValueError, match="at least 1"):
+            as_filed_to_real_factor(0.02, 0)
+
+    def test_a_negative_years_before_start_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="at least 1"):
+            as_filed_to_real_factor(0.02, -1)
+
+    @pytest.mark.parametrize("rate", [-1.0, -1.5, -2])
+    def test_a_rate_at_or_below_minus_one_is_refused(self, rate: float) -> None:
+        with pytest.raises(ValueError, match="greater than -1"):
+            as_filed_to_real_factor(rate, 1)
 
 
 # --- schedule ---------------------------------------------------------------
