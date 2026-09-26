@@ -1179,8 +1179,7 @@ class Scenario(_Base):
         """At least one policy, checked here for the reason given on ``persons``."""
         if not self.policies:
             raise ValueError(
-                "policies: none given, so the run has no decision rule and "
-                "nothing to evaluate."
+                "policies: none given, so the run has no decision rule and nothing to evaluate."
             )
         return self
 
@@ -1373,8 +1372,7 @@ def resolve_policy_path(policy: PolicySpec, path: str) -> float:
 
     if isinstance(current, bool) or not isinstance(current, (int, float)):
         raise ValueError(
-            f"{path} is a {type(current).__name__}, and only a number can be "
-            "put on a grid."
+            f"{path} is a {type(current).__name__}, and only a number can be put on a grid."
         )
     return float(current)
 

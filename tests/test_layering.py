@@ -161,9 +161,7 @@ def test_moments_imports_nothing_from_the_scenario_package() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "module", scenario_modules(), ids=lambda p: str(p.relative_to(REPO_ROOT))
-)
+@pytest.mark.parametrize("module", scenario_modules(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_the_scenario_package_imports_only_moments_from_mc(module: Path) -> None:
     """The scenario package's one permitted dependency on ``engine/mc`` is
     ``engine.mc.moments``, in any import form, ``from engine.mc import

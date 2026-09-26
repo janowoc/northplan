@@ -1457,9 +1457,7 @@ def test_household_assessment_january_index_derivation_over_year_month_pairs(
 
 
 def test_transferee_gains_the_pension_credit_the_transfer_carries(params) -> None:
-    pension_amount = params.federal.annual_amount(
-        "credits.pension_income_amount_annual", JANUARY
-    )
+    pension_amount = params.federal.annual_amount("credits.pension_income_amount_annual", JANUARY)
     valuation_rate = params.federal.number("credits.valuation_rate")
 
     n = 1

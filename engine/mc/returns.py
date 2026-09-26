@@ -140,8 +140,7 @@ def _check_covariance(
         )
     if annual_covariance.ndim != 2 or annual_covariance.shape[0] != annual_covariance.shape[1]:
         raise ValueError(
-            f"annual_covariance: expected a square matrix, got shape "
-            f"{annual_covariance.shape}."
+            f"annual_covariance: expected a square matrix, got shape {annual_covariance.shape}."
         )
     if annual_covariance.shape[0] != n_assets:
         raise ValueError(

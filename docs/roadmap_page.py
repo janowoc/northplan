@@ -97,9 +97,22 @@ LIST_ITEM = re.compile(r"^(\s*)(- \[ \] |- |\d+\. )(.*)$")
 def fetch_issues() -> dict[int, dict]:
     """Every issue in the repository, keyed by number, via ``gh``."""
     out = subprocess.run(
-        ["gh", "issue", "list", "--repo", REPO, "--state", "all", "--limit", "200",
-         "--json", "number,title,body,state,labels"],
-        capture_output=True, text=True, check=True,
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            REPO,
+            "--state",
+            "all",
+            "--limit",
+            "200",
+            "--json",
+            "number,title,body,state,labels",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return {issue["number"]: issue for issue in json.loads(out)}
 
@@ -394,10 +407,13 @@ def render_page(issues: dict[int, dict], order: list[int], generated_on: str) ->
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--out", type=Path, default=Path(__file__).with_name("roadmap.html"))
     parser.add_argument(
-        "--standalone", action="store_true",
+        "--standalone",
+        action="store_true",
         help="wrap the fragment in a full HTML document for opening in a browser",
     )
     args = parser.parse_args()

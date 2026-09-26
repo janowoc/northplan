@@ -230,9 +230,7 @@ class TestCashIdentityDoNothing:
         assert len(recorder.calls) == draws.n_months
 
         floor_fired = False
-        for record, (seen_state, seen_context) in zip(
-            result.trace, recorder.calls, strict=True
-        ):
+        for record, (seen_state, seen_context) in zip(result.trace, recorder.calls, strict=True):
             _assert_identities_hold(record)
             # Requirement 7: the state a policy is shown really does carry cash equal to
             # context.cash_after_flows -- the two are supposed to be the same number by
@@ -414,7 +412,9 @@ class TestRrifMinimumOutByDecember:
         draws = build_deterministic_draws(new_scenario, market, mortality)
         state = build_initial_state(new_scenario, n_paths=1)
         state = draw_deaths(state, draws, mortality)
-        real_params = real_year(load_year(new_scenario.start_year), new_scenario.assumptions.inflation)
+        real_params = real_year(
+            load_year(new_scenario.start_year), new_scenario.assumptions.inflation
+        )
 
         policy = DoNothingPolicy(state.elections, withdrawal_order)
         recorder = RecordingPolicy(policy)
@@ -423,7 +423,9 @@ class TestRrifMinimumOutByDecember:
         for m in range(11):
             assert recorder.calls[m][0].persons[0].rrif.withdrawn_ytd[0] == pytest.approx(0.0)
 
-        age_start = timeline.age_at_start_of_year(new_person.birth_year, new_person.birth_month, 2026)
+        age_start = timeline.age_at_start_of_year(
+            new_person.birth_year, new_person.birth_month, 2026
+        )
         expected_minimum = rrif.minimum_withdrawal(
             np.array([rrif_balance]), age_start, 2025, 2026, real_params.rrif
         )
@@ -840,7 +842,9 @@ class TestDepletion:
         draws = build_deterministic_draws(new_scenario, market, mortality)
         state = build_initial_state(new_scenario, n_paths=1)
         state = draw_deaths(state, draws, mortality)
-        real_params = real_year(load_year(new_scenario.start_year), new_scenario.assumptions.inflation)
+        real_params = real_year(
+            load_year(new_scenario.start_year), new_scenario.assumptions.inflation
+        )
 
         policy = DoNothingPolicy(state.elections, withdrawal_order)
         result = run(state, policy, draws, market, real_params, trace_path=0)
@@ -863,7 +867,9 @@ class TestWriteOffCap:
         draws = build_deterministic_draws(new_scenario, market, mortality)
         state = build_initial_state(new_scenario, n_paths=1)
         state = draw_deaths(state, draws, mortality)
-        real_params = real_year(load_year(new_scenario.start_year), new_scenario.assumptions.inflation)
+        real_params = real_year(
+            load_year(new_scenario.start_year), new_scenario.assumptions.inflation
+        )
 
         policy = DoNothingPolicy(state.elections, withdrawal_order)
         result = run(state, policy, draws, market, real_params, trace_path=0)
@@ -891,11 +897,18 @@ class TestTransferRefusal:
             advance_month(opening_state, draws.real_returns[0], policy, market, real_params)
         assert repr(transfer) in str(excinfo.value)
 
-    def test_neither_side_is_cash(self, opening_state, draws, market, real_params, withdrawal_order):
+    def test_neither_side_is_cash(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
         n_paths = draws.n_paths
         t = Transfer(person_index=0, from_kind="rrsp", to_kind="tfsa", amount=np.zeros(n_paths))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "exactly one of from_kind/to_kind must be 'cash'",
         )
 
@@ -903,7 +916,12 @@ class TestTransferRefusal:
         n_paths = draws.n_paths
         t = Transfer(person_index=0, from_kind="cash", to_kind="cash", amount=np.zeros(n_paths))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "exactly one of from_kind/to_kind must be 'cash'",
         )
 
@@ -913,7 +931,12 @@ class TestTransferRefusal:
         n_paths = draws.n_paths
         t = Transfer(person_index=0, from_kind="resp", to_kind="cash", amount=np.zeros(n_paths))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "is not in WITHDRAWAL_KINDS",
         )
 
@@ -923,7 +946,12 @@ class TestTransferRefusal:
         n_paths = draws.n_paths
         t = Transfer(person_index=0, from_kind="cash", to_kind="rrif", amount=np.zeros(n_paths))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "is not in CONTRIBUTION_KINDS",
         )
 
@@ -933,14 +961,27 @@ class TestTransferRefusal:
         n_paths = draws.n_paths
         t = Transfer(person_index=7, from_kind="rrsp", to_kind="cash", amount=np.zeros(n_paths))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t, "out of range",
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
+            "out of range",
         )
 
     def test_negative_amount(self, opening_state, draws, market, real_params, withdrawal_order):
         n_paths = draws.n_paths
-        t = Transfer(person_index=0, from_kind="rrsp", to_kind="cash", amount=np.full(n_paths, -1.0))
+        t = Transfer(
+            person_index=0, from_kind="rrsp", to_kind="cash", amount=np.full(n_paths, -1.0)
+        )
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "amount is negative on at least one path",
         )
 
@@ -950,14 +991,25 @@ class TestTransferRefusal:
             person_index=0, from_kind="rrsp", to_kind="cash", amount=np.full(n_paths, np.nan)
         )
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t,
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
             "amount is not finite on every path",
         )
 
     def test_wrong_shape(self, opening_state, draws, market, real_params, withdrawal_order):
         t = Transfer(person_index=0, from_kind="rrsp", to_kind="cash", amount=np.zeros(2))
         self._expect_refusal(
-            opening_state, draws, market, real_params, withdrawal_order, t, "amount shape",
+            opening_state,
+            draws,
+            market,
+            real_params,
+            withdrawal_order,
+            t,
+            "amount shape",
         )
 
     def test_resp_contribution_after_the_education_window_has_ended(
@@ -1006,9 +1058,7 @@ class TestContributionCappedAtCash:
     ):
         n_paths = draws.n_paths
         huge = np.full(n_paths, 1e9)
-        script = {
-            0: (Transfer(person_index=0, from_kind="cash", to_kind="taxable", amount=huge),)
-        }
+        script = {0: (Transfer(person_index=0, from_kind="cash", to_kind="taxable", amount=huge),)}
         policy = ScriptedPolicy(opening_state.elections, withdrawal_order, script)
         _new_state, record = advance_month_traced(
             opening_state, draws.real_returns[0], policy, market, real_params
@@ -1075,9 +1125,7 @@ class TestWindUpRunsOnce:
         # still growing) is still funded when the window closes, unlike the real example.
         small_education = beneficiary.education.model_copy(update={"annual_cost": 3_000.0})
         new_beneficiary = beneficiary.model_copy(update={"education": small_education})
-        new_household = scenario.household.model_copy(
-            update={"beneficiaries": (new_beneficiary,)}
-        )
+        new_household = scenario.household.model_copy(update={"beneficiaries": (new_beneficiary,)})
         new_scenario = scenario.model_copy(update={"household": new_household})
 
         draws = build_deterministic_draws(new_scenario, market, mortality)
@@ -1143,9 +1191,7 @@ class TestConservation:
             update={
                 "accounts": person_a.accounts.model_copy(
                     update={
-                        "rrif": person_a.accounts.rrif.model_copy(
-                            update={"balance": rrif_balance}
-                        ),
+                        "rrif": person_a.accounts.rrif.model_copy(update={"balance": rrif_balance}),
                         "lif": LifAccount(balance=lif_balance, jurisdiction="ab"),
                     }
                 )
@@ -1186,12 +1232,18 @@ class TestConservation:
         script = {
             5: (
                 Transfer(
-                    person_index=0, from_kind="rrsp", to_kind="cash", amount=np.full(n_paths, 3_000.0)
+                    person_index=0,
+                    from_kind="rrsp",
+                    to_kind="cash",
+                    amount=np.full(n_paths, 3_000.0),
                 ),
             ),
             6: (
                 Transfer(
-                    person_index=0, from_kind="cash", to_kind="tfsa", amount=np.full(n_paths, 1_000.0)
+                    person_index=0,
+                    from_kind="cash",
+                    to_kind="tfsa",
+                    amount=np.full(n_paths, 1_000.0),
                 ),
                 Transfer(
                     person_index=0,

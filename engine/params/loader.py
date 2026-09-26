@@ -170,8 +170,7 @@ class ParamSet:
         value = self.get(path)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a number, found "
-                f"{type(value).__name__} ({value!r})."
+                f"{self._where(path)}: expected a number, found {type(value).__name__} ({value!r})."
             )
         return float(value)
 
@@ -190,8 +189,7 @@ class ParamSet:
         value = self.get(path)
         if not isinstance(value, tuple):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a list, found "
-                f"{type(value).__name__} ({value!r})."
+                f"{self._where(path)}: expected a list, found {type(value).__name__} ({value!r})."
             )
         return value
 
@@ -379,8 +377,7 @@ def _read_yaml(path: Path) -> Mapping[str, Any]:
         return MappingProxyType({})
     if not isinstance(raw, Mapping):
         raise MalformedParamFileError(
-            f"{path} must contain a YAML mapping at its top level, found "
-            f"{type(raw).__name__}."
+            f"{path} must contain a YAML mapping at its top level, found {type(raw).__name__}."
         )
     return _freeze(raw)
 

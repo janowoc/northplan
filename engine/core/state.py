@@ -598,8 +598,7 @@ def select_spending_level(schedule: tuple[SpendingLevel, ...], year: int) -> flo
     if not candidates:
         earliest = min(level.from_year for level in schedule)
         raise ValueError(
-            f"no level in spending_schedule has from_year <= {year}; the "
-            f"earliest is {earliest}."
+            f"no level in spending_schedule has from_year <= {year}; the earliest is {earliest}."
         )
     return max(candidates, key=lambda level: level.from_year).monthly_level
 

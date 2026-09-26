@@ -173,7 +173,7 @@ class TestTheGuardBites:
         make this test depend on a sentence staying exactly as worded.
         """
         source = (
-            'def f() -> None:\n'
+            "def f() -> None:\n"
             '    """Uses real_params.raw["mortality"] as an example of the convention."""\n'
         )
         assert find_raw_accesses(source, "synthetic/docstring_only.py") == set()

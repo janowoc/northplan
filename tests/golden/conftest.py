@@ -100,18 +100,20 @@ CASES_DIR: Path = Path(__file__).parent / "cases"
 #: this table, but an imported target module could otherwise mutate it at
 #: import time and silently widen every case discovered afterwards — exactly
 #: the kind of widening route this module exists to close.
-ROUNDING_TOLERANCES: Mapping[str, float] = types.MappingProxyType({
-    # Half the last displayed digit is 0.005; 0.01 leaves room for float
-    # representation.
-    "source_rounds_to_cent": 0.01,
-    # Half the last displayed digit.
-    "source_rounds_to_dollar": 0.50,
-    # Half the last displayed digit.
-    "source_rounds_to_ten_dollars": 5.00,
-    # A monthly figure rounded to the cent, multiplied by 12, compounds
-    # ±0.005 twelve times.
-    "monthly_cent_times_twelve": 0.06,
-})
+ROUNDING_TOLERANCES: Mapping[str, float] = types.MappingProxyType(
+    {
+        # Half the last displayed digit is 0.005; 0.01 leaves room for float
+        # representation.
+        "source_rounds_to_cent": 0.01,
+        # Half the last displayed digit.
+        "source_rounds_to_dollar": 0.50,
+        # Half the last displayed digit.
+        "source_rounds_to_ten_dollars": 5.00,
+        # A monthly figure rounded to the cent, multiplied by 12, compounds
+        # ±0.005 twelve times.
+        "monthly_cent_times_twelve": 0.06,
+    }
+)
 
 #: The ``rounding`` value assumed when a case omits the field entirely.
 _DEFAULT_ROUNDING = "source_rounds_to_cent"
@@ -127,11 +129,13 @@ _DEFAULT_ROUNDING = "source_rounds_to_cent"
 #: id stayed unsuffixed, which is exactly the invisible loosening the suffix
 #: exists to prevent. Wrapped in :class:`types.MappingProxyType` for the same
 #: reason as :data:`ROUNDING_TOLERANCES`.
-_ROUNDING_ID_SUFFIXES: Mapping[str, str] = types.MappingProxyType({
-    "source_rounds_to_dollar": "dollar",
-    "source_rounds_to_ten_dollars": "ten_dollars",
-    "monthly_cent_times_twelve": "monthly_cent_x12",
-})
+_ROUNDING_ID_SUFFIXES: Mapping[str, str] = types.MappingProxyType(
+    {
+        "source_rounds_to_dollar": "dollar",
+        "source_rounds_to_ten_dollars": "ten_dollars",
+        "monthly_cent_times_twelve": "monthly_cent_x12",
+    }
+)
 
 #: Fields a case entry may set. Anything else is a typo, not an extension —
 #: see the module docstring on why an unknown field is rejected rather than
@@ -305,8 +309,7 @@ def _validate_source(path: Path, name: str, value: Any) -> str:
     """
     if not isinstance(value, str) or not value.strip():
         raise GoldenCaseError(
-            f"{path}: case {name!r} has 'source' = {value!r}, which must be a "
-            f"non-empty string."
+            f"{path}: case {name!r} has 'source' = {value!r}, which must be a non-empty string."
         )
     return value
 
@@ -702,14 +705,10 @@ def discover_cases(cases_dir: Path) -> list[GoldenCase]:
                     f"Allowed fields are {sorted(_ALLOWED_CASE_FIELDS)}."
                 )
             if "source" not in entry:
-                raise GoldenCaseError(
-                    f"{path}: case {name!r} is missing required field 'source'."
-                )
+                raise GoldenCaseError(f"{path}: case {name!r} is missing required field 'source'.")
             source = _validate_source(path, name, entry["source"])
             if "checked" not in entry:
-                raise GoldenCaseError(
-                    f"{path}: case {name!r} is missing required field 'checked'."
-                )
+                raise GoldenCaseError(f"{path}: case {name!r} is missing required field 'checked'.")
             checked = _parse_checked(path, name, entry["checked"])
             if "expected" not in entry:
                 raise GoldenCaseError(
@@ -910,9 +909,7 @@ def _lookup_output(case: GoldenCase, result: Any, output_name: str) -> Any:
         try:
             return result[output_name]
         except KeyError:
-            raise GoldenCaseError(
-                f"{case.id}: result has no key {output_name!r}."
-            ) from None
+            raise GoldenCaseError(f"{case.id}: result has no key {output_name!r}.") from None
 
     field_names = _declared_field_names(result)
     if field_names is None:
@@ -989,8 +986,5 @@ def run_case(case: GoldenCase) -> None:
         # (`name (dollar)[output]`). Rebuilding the label from the base name
         # keeps `[output_name]` adjacent to the name it qualifies, with the
         # suffix trailing both.
-        label = (
-            f"{case.file.stem}::{case.name}[{output_name}]"
-            f"{_rounding_id_suffix(case.rounding)}"
-        )
+        label = f"{case.file.stem}::{case.name}[{output_name}]{_rounding_id_suffix(case.rounding)}"
         _compare_one(case, label, expected_value, actual_raw)

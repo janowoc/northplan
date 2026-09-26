@@ -174,8 +174,7 @@ def advance_month_traced(
     n_assets = len(market.asset_class_names)
     month_returns = np.asarray(month_returns, dtype=np.float64)
     assert month_returns.shape == (n_assets, n_paths), (
-        f"month_returns shape {month_returns.shape} != ({n_assets}, {n_paths}) "
-        f"(n_assets, n_paths)."
+        f"month_returns shape {month_returns.shape} != ({n_assets}, {n_paths}) (n_assets, n_paths)."
     )
 
     cash_opening = state.cash.balance
@@ -560,8 +559,10 @@ def _phase3_inflows(
 
 def _in_education_window(beneficiary: BeneficiaryState, month_index: int) -> bool:
     resp = beneficiary.resp
-    in_window = resp.education_start_month_index <= month_index < (
-        resp.education_start_month_index + resp.education_months
+    in_window = (
+        resp.education_start_month_index
+        <= month_index
+        < (resp.education_start_month_index + resp.education_months)
     )
     return in_window and not np.all(resp.wound_up)
 
@@ -834,8 +835,7 @@ def _validate_transfer(
 
     if not 0 <= transfer.person_index < limit:
         raise ValueError(
-            f"{transfer!r}: person_index {transfer.person_index} out of range "
-            f"[0, {limit})."
+            f"{transfer!r}: person_index {transfer.person_index} out of range [0, {limit})."
         )
 
     if transfer.to_kind == "resp":
@@ -888,9 +888,7 @@ def _phase8_transfers(
     for transfer in decision.transfers:
         _validate_transfer(transfer, n_paths, len(persons), beneficiaries, month_index)
 
-    withdrawal_amounts = [
-        {kind: np.zeros(n_paths) for kind in WITHDRAWAL_KINDS} for _ in persons
-    ]
+    withdrawal_amounts = [{kind: np.zeros(n_paths) for kind in WITHDRAWAL_KINDS} for _ in persons]
     withdrawal_withholding_amounts = [np.zeros(n_paths) for _ in persons]
 
     for transfer in decision.transfers:
@@ -1128,9 +1126,7 @@ def _phase10_growth(
             eligible_dividends=person.income.eligible_dividends + dividends,
             capital_gains=person.income.capital_gains + gains,
         )
-        taxable_after_price = taxable_mod.price_growth(
-            person.taxable, r_taxable, weighted_yields
-        )
+        taxable_after_price = taxable_mod.price_growth(person.taxable, r_taxable, weighted_yields)
         new_taxable = taxable_mod.reinvest(taxable_after_price, distributions)
 
         new_persons.append(
@@ -1236,9 +1232,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
         rrif_annual_minimum = rrif_mod.minimum_withdrawal(
             rrif_state.balance, age_start, rrif_state.opened_year, year, real_params.rrif
         )
-        rrif_state = updated(
-            rrif_state, annual_minimum=rrif_annual_minimum, withdrawn_ytd=zeros
-        )
+        rrif_state = updated(rrif_state, annual_minimum=rrif_annual_minimum, withdrawn_ytd=zeros)
 
         lif_state = person.lif
         if lif_state.jurisdiction == "":

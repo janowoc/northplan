@@ -610,11 +610,7 @@ def _build_beneficiary(
     persons: tuple[Person, ...],
 ) -> BeneficiaryState:
     subscriber_index = next(
-        (
-            index
-            for index, person in enumerate(persons)
-            if person.id == beneficiary.resp.subscriber
-        ),
+        (index for index, person in enumerate(persons) if person.id == beneficiary.resp.subscriber),
         None,
     )
     if subscriber_index is None:

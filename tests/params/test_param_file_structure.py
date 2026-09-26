@@ -181,8 +181,7 @@ def test_credit_valuation_rate_is_not_above_the_lowest_bracket_rate(year: ParamY
         valuation = params.number("credits.valuation_rate")
         lowest = params.numbers("brackets.rates")[0]
         assert valuation <= lowest, (
-            f"{name}: credits valued at {valuation} against a lowest bracket rate "
-            f"of {lowest}."
+            f"{name}: credits valued at {valuation} against a lowest bracket rate of {lowest}."
         )
 
 
@@ -271,7 +270,7 @@ def test_lif_tables_start_at_the_unlocking_age(year: ParamYear) -> None:
 
 
 def test_lif_has_maximum_is_a_boolean_and_agrees_with_the_table(year: ParamYear) -> None:
-    """"No maximum" and "no data" stay distinguishable.
+    """ "No maximum" and "no data" stay distinguishable.
 
     ``has_maximum`` exists so that an uncapped jurisdiction is expressible
     without the loader raising on an absent table. That only works if the flag
@@ -542,8 +541,7 @@ def test_every_dollar_amount_is_on_a_schedule(year: ParamYear) -> None:
             {
                 _routable(path)
                 for path, _ in _leaves(params.values)
-                if not path.startswith("indexation.")
-                and _stem(path).endswith(AMOUNT_SUFFIXES)
+                if not path.startswith("indexation.") and _stem(path).endswith(AMOUNT_SUFFIXES)
             }
             - routed
         )
@@ -582,9 +580,7 @@ def test_every_rate_is_a_fraction_not_a_percentage(year: ParamYear) -> None:
     for name in year.names():
         for path, value in _leaves(year[name].values):
             leaf = _stem(path)
-            if leaf in {"rate", "rates"} or leaf.endswith(
-                ("_rate", "_rates", "_rate_per_month")
-            ):
+            if leaf in {"rate", "rates"} or leaf.endswith(("_rate", "_rates", "_rate_per_month")):
                 assert isinstance(value, (int, float)), f"{name}.{path} is not numeric."
                 assert 0 <= value <= 1, (
                     f"{name}.{path} is {value}, outside [0, 1]. Rates are bare "
@@ -832,17 +828,14 @@ def _check_only_the_terminal_row_is_certain_death(name: str, params: ParamSet) -
     for sex, table in params.get("q_x").items():
         path = f"{name}.q_x.{sex}"
         assert str(terminal) in table, (
-            f"{path} has no row at the terminal age {terminal}, so no path is "
-            f"ever certain to die."
+            f"{path} has no row at the terminal age {terminal}, so no path is ever certain to die."
         )
         last = table[str(terminal)]
         assert not isinstance(last, bool) and last == 1.0, (
             f"{path}.{terminal} is {last!r}, not 1.0. The terminal row is death "
             f"by construction; paths surviving it run off the end of the table."
         )
-        early = {
-            age: q for age, q in table.items() if age != str(terminal) and q == 1.0
-        }
+        early = {age: q for age, q in table.items() if age != str(terminal) and q == 1.0}
         assert not early, (
             f"{path}: q is 1.0 below the terminal age {terminal} at {sorted(early)}. "
             f"Every path would die at that age, silently."
@@ -1427,8 +1420,7 @@ def _check_every_unverified_line_carries_the_marker(template: Path, lines: list[
     """
     assignments = [line for line in lines if _ASSIGNS_A_VALUE.match(line)]
     assert assignments, (
-        f"{template.name} assigns no values at all, so this check asserted "
-        f"nothing about it."
+        f"{template.name} assigns no values at all, so this check asserted nothing about it."
     )
     exempt_comment = _TEMPLATE_EXEMPT_COMMENT.get(template)
     unmarked = [
@@ -1522,13 +1514,9 @@ def test_removing_any_one_marker_from_a_template_is_caught(template: Path) -> No
     """
     lines = template.read_text(encoding="utf-8").splitlines()
     marked = [
-        index
-        for index, line in enumerate(lines)
-        if _ASSIGNS_A_VALUE.match(line) and MARKER in line
+        index for index, line in enumerate(lines) if _ASSIGNS_A_VALUE.match(line) and MARKER in line
     ]
-    assert marked, (
-        f"{template.name} has no marked line, so this test broke nothing."
-    )
+    assert marked, f"{template.name} has no marked line, so this test broke nothing."
     for index in marked:
         broken = list(lines)
         broken[index] = broken[index].replace(MARKER, "")
@@ -1580,8 +1568,7 @@ def _check_the_terminal_rows_are_exempt_not_unmarked(lines: list[str]) -> None:
     )
     for line in terminal_rows:
         assert MARKER not in line, (
-            f"The terminal row is 1.0 by construction and must not be marked "
-            f"unverified: {line!r}"
+            f"The terminal row is 1.0 by construction and must not be marked unverified: {line!r}"
         )
         value = line.split(":", 1)[1].split("#", 1)[0].strip()
         assert value == "1.0", f"A terminal row holds {value!r}, not 1.0: {line!r}"
@@ -1627,9 +1614,7 @@ def test_breaking_a_terminal_row_is_caught(
     """
     lines = MORTALITY_TEMPLATE.read_text(encoding="utf-8").splitlines()
     first = next(
-        index
-        for index, line in enumerate(lines)
-        if line.rstrip().endswith(TERMINAL_ROW_COMMENT)
+        index for index, line in enumerate(lines) if line.rstrip().endswith(TERMINAL_ROW_COMMENT)
     )
     broken = list(lines)
     broken[first] = mutate(broken[first])

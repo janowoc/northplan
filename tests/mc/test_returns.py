@@ -148,12 +148,12 @@ class TestAcceptedShapes:
             std_se = vol[i] / np.sqrt(2 * self.N_PATHS)
             sample_mean = annual[i].mean()
             sample_std = annual[i].std(ddof=1)
-            assert sample_mean == pytest.approx(
-                mu[i], abs=self.TOLERANCE_IN_SE * mean_se
-            ), f"asset {i}: sample mean {sample_mean} vs specified {mu[i]}"
-            assert sample_std == pytest.approx(
-                vol[i], abs=self.TOLERANCE_IN_SE * std_se
-            ), f"asset {i}: sample std {sample_std} vs specified {vol[i]}"
+            assert sample_mean == pytest.approx(mu[i], abs=self.TOLERANCE_IN_SE * mean_se), (
+                f"asset {i}: sample mean {sample_mean} vs specified {mu[i]}"
+            )
+            assert sample_std == pytest.approx(vol[i], abs=self.TOLERANCE_IN_SE * std_se), (
+                f"asset {i}: sample std {sample_std} vs specified {vol[i]}"
+            )
 
     def test_a_single_asset_class(self) -> None:
         mu = np.array([0.06])

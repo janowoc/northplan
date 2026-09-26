@@ -115,7 +115,9 @@ class TestResultRows:
 class TestRunRefusals:
     """Requirement 13: every documented refusal actually refuses."""
 
-    def test_death_not_drawn_is_refused(self, scenario, draws, market, real_params, withdrawal_order):
+    def test_death_not_drawn_is_refused(
+        self, scenario, draws, market, real_params, withdrawal_order
+    ):
         state = build_initial_state(scenario, n_paths=1)  # draw_deaths never ran
         policy = DoNothingPolicy(state.elections, withdrawal_order)
         with pytest.raises(ValueError, match="DEATH_NOT_DRAWN"):
@@ -144,7 +146,9 @@ class TestRunRefusals:
         with pytest.raises(ValueError, match="n_paths"):
             run(state, policy, mismatched_draws, market, real_params)
 
-    def test_draws_too_short_is_refused(self, opening_state, draws, market, real_params, withdrawal_order):
+    def test_draws_too_short_is_refused(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
         short_months = 5
         short_draws = RandomDraws(
             seed=draws.seed,

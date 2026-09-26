@@ -192,7 +192,14 @@ def synthetic_params_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
 
 _LEDGER_FIELD_NAMES = frozenset(f.name for f in dataclasses.fields(IncomeLedger))
 _NON_LEDGER_NAMES = frozenset(
-    {"age_at_end_of_year", "province", "params", "january_month_index", "transfer_in", "transfer_out"}
+    {
+        "age_at_end_of_year",
+        "province",
+        "params",
+        "january_month_index",
+        "transfer_in",
+        "transfer_out",
+    }
 )
 _REQUIRED_NAMES = frozenset({"age_at_end_of_year", "province", "params", "january_month_index"})
 

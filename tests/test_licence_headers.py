@@ -150,7 +150,9 @@ def test_the_file_enumeration_is_not_empty() -> None:
     out from under it, the header tests would report green over zero files.
     """
     in_scope = [path for path in tracked_files() if is_in_scope(path)]
-    assert in_scope, f"No tracked in-scope files found under {REPO_ROOT}; the header tests are vacuous."
+    assert in_scope, (
+        f"No tracked in-scope files found under {REPO_ROOT}; the header tests are vacuous."
+    )
 
 
 def test_every_in_scope_file_carries_the_licence_header() -> None:
@@ -208,22 +210,18 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
 
     # Read as bytes: one exemption is a binary ODF package, and decoding it as
     # text raises before the assertion it is here to satisfy.
-    annotated = sorted(
-        path for path in EXEMPT if b"SPDX-" in (REPO_ROOT / path).read_bytes()
-    )
+    annotated = sorted(path for path in EXEMPT if b"SPDX-" in (REPO_ROOT / path).read_bytes())
     assert not annotated, (
         "These files are listed as exempt but carry SPDX text anyway, so the "
         "exemption is recording something that is not true. Either the file "
-        "should be in scope, or the text should come off it:\n"
-        + "\n".join(annotated)
+        "should be in scope, or the text should come off it:\n" + "\n".join(annotated)
     )
 
     overlapping = sorted(path for path in EXEMPT if is_in_scope(path))
     assert not overlapping, (
         "These files are both exempt and in scope, so two tests here now give "
         "contradictory instructions about them — one demands the header, the "
-        "other demands its absence. The two sets must stay disjoint:\n"
-        + "\n".join(overlapping)
+        "other demands its absence. The two sets must stay disjoint:\n" + "\n".join(overlapping)
     )
 
 
@@ -234,7 +232,9 @@ def test_every_tracked_file_is_either_in_scope_or_exempt() -> None:
     checked nor deliberately exempted: it would simply fall outside every
     assertion here and ship unlicensed.
     """
-    unclassified = [path for path in tracked_files() if not is_in_scope(path) and path not in EXEMPT]
+    unclassified = [
+        path for path in tracked_files() if not is_in_scope(path) and path not in EXEMPT
+    ]
 
     assert not unclassified, (
         "These tracked files are neither covered by the licence-header check nor "
@@ -250,7 +250,9 @@ def test_the_header_detector_rejects_a_file_without_one() -> None:
     Without this, a regex that matched everything would make every file look
     compliant.
     """
-    hash_form = "# SPDX-FileCopyrightText: 2026 Jan Owoc\n# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    hash_form = (
+        "# SPDX-FileCopyrightText: 2026 Jan Owoc\n# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    )
     html_form = (
         "<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->\n"
         "<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->\n"
@@ -282,12 +284,18 @@ def test_the_header_must_be_the_first_thing_in_the_file() -> None:
     header sitting correctly below a frontmatter block must pass however long
     that block grows.
     """
-    header = "# SPDX-FileCopyrightText: 2026 Jan Owoc\n# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    header = (
+        "# SPDX-FileCopyrightText: 2026 Jan Owoc\n# SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    )
     both = ["SPDX-FileCopyrightText", "SPDX-License-Identifier"]
 
     assert header_fields_missing_from(header) == []
-    assert header_fields_missing_from("\n\n\n" + header) == [], "Leading blank lines are not content."
-    assert header_fields_missing_from("import os\n" + header) == both, "A header below code is not a header."
+    assert header_fields_missing_from("\n\n\n" + header) == [], (
+        "Leading blank lines are not content."
+    )
+    assert header_fields_missing_from("import os\n" + header) == both, (
+        "A header below code is not a header."
+    )
     assert header_fields_missing_from("# A note.\n" + header) == both, (
         "A header below another comment is not a header."
     )
@@ -311,7 +319,9 @@ def test_the_header_must_actually_be_a_comment() -> None:
     have. Matching the comment opener is what keeps this sweep from certifying
     a parameter file that has been silently changed.
     """
-    uncommented = "SPDX-FileCopyrightText: 2026 Jan Owoc\nSPDX-License-Identifier: AGPL-3.0-or-later\n"
+    uncommented = (
+        "SPDX-FileCopyrightText: 2026 Jan Owoc\nSPDX-License-Identifier: AGPL-3.0-or-later\n"
+    )
     assert header_fields_missing_from(uncommented) == [
         "SPDX-FileCopyrightText",
         "SPDX-License-Identifier",

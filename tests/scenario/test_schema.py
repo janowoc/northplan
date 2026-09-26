@@ -859,8 +859,7 @@ def test_an_invalid_scenario_is_rejected_and_the_message_names_the_field(
 
     message = str(excinfo.value)
     assert expected in message, (
-        f"The rejection must name {expected!r} so the reader knows what to "
-        f"change. Got:\n{message}"
+        f"The rejection must name {expected!r} so the reader knows what to change. Got:\n{message}"
     )
 
 

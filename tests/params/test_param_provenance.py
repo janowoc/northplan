@@ -123,8 +123,7 @@ def test_check_dates_are_real_and_not_in_the_future(path: Path) -> None:
             checked = dt.date.fromisoformat(stamp)
         except ValueError:
             pytest.fail(
-                f"{path.parent.name}/{path.name}:{number}: {stamp!r} is not a "
-                f"calendar date.",
+                f"{path.parent.name}/{path.name}:{number}: {stamp!r} is not a calendar date.",
             )
         if checked > today:
             pytest.fail(

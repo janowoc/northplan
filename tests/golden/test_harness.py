@@ -1711,9 +1711,7 @@ def test_list_rounding_fails_discovery(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "synthetic.yaml",
-        _well_formed_case(
-            "rounding is a list", expected=14.0, rounding="[source_rounds_to_cent]"
-        ),
+        _well_formed_case("rounding is a list", expected=14.0, rounding="[source_rounds_to_cent]"),
     )
 
     with pytest.raises(GoldenCaseError) as excinfo:

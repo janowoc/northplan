@@ -575,9 +575,7 @@ class TestAlreadyInProgress:
         assert band.from_month_index < 0
         assert band.to_month_index < 0
 
-    def test_a_bridge_that_pays_has_its_end_computed_from_the_birth_date(
-        self, scenario
-    ) -> None:
+    def test_a_bridge_that_pays_has_its_end_computed_from_the_birth_date(self, scenario) -> None:
         """The only birth-date arithmetic in the builder, and the only test that runs it.
 
         Every other scenario here carries ``bridge_annual: 0``, so
