@@ -611,8 +611,11 @@ class YearRecord:
     Attributes:
         year, net_worth, spending: Calendar year, net worth at 31 December, and
             spending over it.
-        after_tax_net_worth: Equal to ``net_worth`` (a copy, not the same array) until #36
-            replaces it with the liquidation value from the terminal-return arithmetic.
+        after_tax_net_worth: The liquidation value as if every person in the household died on
+            31 December of this year, with no spousal rollover: this year's ledger plus every
+            person's registered balances and the deemed gain on their taxable holding, each
+            assessed alone (``engine.core.step._deemed_single_assessments``, with
+            ``died_in_year=True`` for everyone). Comes out ``0`` on a finished path.
         tax_assessed: Tax assessed *for* this year at the December close, not paid
             in cash during it.
         net_income: Line 23600 (``engine.tax.combined.Assessment.net_income_after_repayment``)
@@ -657,7 +660,11 @@ class HouseholdState:
         spending_schedule, spending_monthly, spending_survivor_share: Full
             schedule; derived spending for one month at full share (must equal
             ``select_spending_level(...)``, recomputed at the year roll); and the
-            survivor's continuing share after death.
+            survivor's continuing share after the first death. The per-path figure
+            actually paid a month -- ``spending_monthly`` scaled by
+            ``spending_survivor_share`` after the first death, or by zero on a
+            finished household -- is derived fresh in ``engine.core.step.advance_month``
+            (``docs/limitations.md`` L40) and never stored on this state.
         spending_achieved_ytd, depleted, estate_after_tax, history: What has
             actually been spent this year; whether out of money (monotonic);
             estate value after tax (NaN until the second death); and the

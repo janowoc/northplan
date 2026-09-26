@@ -20,9 +20,13 @@ may be an annualised approximation rather than the calendar year's income
 (L16).
 
 ``net_income`` is line 23400 and is never adjusted downward afterward;
-:func:`taxable_income` is line 23600, net income less the OAS repayment, and
-line 26000 with it. Parameters come from ``params/{year}/federal.yaml``.
-Nothing numeric lives in this file.
+:func:`taxable_income` is line 23600, net income less the OAS repayment.
+Line 26000 equals line 23600 except in a person's year of death, when the
+ITA 111(2) deduction (:func:`death_year_capital_loss_deduction`,
+``docs/limitations.md`` L17) reduces it further; that reduction is applied
+by ``engine.tax.combined.person_assessment``, not by this module, since it
+never changes net income or the OAS repayment. Parameters come from
+``params/{year}/federal.yaml``. Nothing numeric lives in this file.
 """
 
 from __future__ import annotations
@@ -119,7 +123,7 @@ def taxable_income(
     net_income: ArrayLike,
     oas_repayment: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Taxable income (line 23600, and line 26000 with it): net income less the OAS repayment.
+    """Taxable income (line 23600): net income less the OAS repayment.
 
     This is the one place the subtraction happens. This function applies no
     floor and enforces nothing about how its two arguments relate: the result
@@ -129,8 +133,13 @@ def taxable_income(
     received — hence strictly less than net income whenever it is non-zero,
     and the cap only lowers it further — so the subtraction here cannot go
     negative for that caller; :func:`net_income`'s own docstring already
-    states there is no second floor downstream. No Division C deduction is
-    modelled (L14), so line 26000 equals this figure.
+    states there is no second floor downstream. Line 26000 equals this figure
+    except in a person's year of death, when
+    :func:`death_year_capital_loss_deduction` (L17) reduces it further; that
+    reduction is a Division C deduction applied by
+    ``engine.tax.combined.person_assessment``, not here, since it must not
+    feed back into the OAS repayment or the age amount, both of which are
+    tested against this figure.
 
     Args:
         net_income: Line 23400, real dollars, ``(n_paths,)`` or scalar. Shadows
@@ -143,6 +152,44 @@ def taxable_income(
     """
     return np.asarray(
         np.asarray(net_income, dtype=np.float64) - np.asarray(oas_repayment, dtype=np.float64),
+        dtype=np.float64,
+    )
+
+
+def death_year_capital_loss_deduction(
+    ledger: IncomeLedger,
+    params: RealParamSet,
+    died_in_year: ArrayLike,
+) -> NDArray[np.float64]:
+    """ITA 111(2) deduction for a person's own year-of-death net capital loss.
+
+    In the year of death (and the preceding year, not modelled here — see
+    ``docs/limitations.md`` L17), a net capital loss for the year is
+    deductible from **taxable income** against any income
+    (https://laws-lois.justice.gc.ca/eng/acts/i-3.3/section-111.html). This is
+    a Division C deduction: it reduces line 26000 below line 23600 but never
+    changes net income (line 23400) or the OAS repayment, which are both
+    computed before it applies. The model carries no carried-forward losses
+    and no capital gains exemption, so the deduction is only the current
+    year's own net loss, at the same inclusion rate :func:`total_income`
+    applies to a gain.
+
+    Args:
+        ledger: This person's income components, accumulated over the year.
+            Only ``capital_gains`` is read; a positive value (a net gain)
+            gives a zero deduction.
+        params: The ``federal`` parameter set for the tax year.
+        died_in_year: Whether this is this person's year of death,
+            ``(n_paths,)`` or scalar.
+
+    Returns:
+        The deduction, real dollars, non-negative, zero where
+        ``died_in_year`` is false or ``ledger.capital_gains`` is non-negative.
+    """
+    inclusion_rate = params.number("investment_income.capital_gains_inclusion_rate")
+    loss = np.maximum(-ledger.capital_gains, 0.0)
+    return np.asarray(
+        np.where(np.asarray(died_in_year, dtype=bool), inclusion_rate * loss, 0.0),
         dtype=np.float64,
     )
 

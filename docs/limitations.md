@@ -198,25 +198,29 @@ capital gains or donations in one year.
 **L14. Net income and taxable income.** In reality several deductions separate
 total income from net income, and a further Division C computation separates
 net income from taxable income; we model only two deductions from total
-income — RRSP contributions and the enhanced CPP contribution — and no
-Division C computation. Line 23600 is line 23400 less line 23500, the social
-benefits repayment: the parts repaid of the OAS pension (line 11300), of EI
-and other benefits (line 11900), and of net federal supplements (line 14600).
-Of those three only the OAS repayment can be non-zero here — EI is carried as
-premiums paid and never as benefits received (L39),
-and net federal supplements are GIS and the Allowances, which are not
-modelled (L2) — so the two lines differ by the OAS repayment alone, and only
-for a person who owes one. Line 26000 equals line 23600 since no Division C
-deduction is modelled. The repayment is tested against line 23400; the tax
-brackets and the age amount are applied to line 23600, as is the RESP
-enhanced-grant rate through `PersonState.net_income_two_years_prior`, a line
-23600 figure like its sibling `PersonState.prior_year_net_income`. Gross OAS
-enters both lines as income, as the rules require; what separates them is the
-repayment deducted at line 23500, not a different treatment of the pension
-itself. Direction: conservative on tax — the omitted deductions and the
-missing Division C computation overstate taxable income, so the engine's tax
-comes out too high. Lives in `engine/tax/federal.py`, `engine/tax/combined.py`,
-`engine/benefits/employment.py`, `params/2026/cpp.yaml`.
+income — RRSP contributions and the enhanced CPP contribution — and the one
+Division C computation described in L17. Line 23600 is line 23400 less line
+23500, the social benefits repayment: the parts repaid of the OAS pension
+(line 11300), of EI and other benefits (line 11900), and of net federal
+supplements (line 14600). Of those three only the OAS repayment can be
+non-zero here — EI is carried as premiums paid and never as benefits
+received (L39), and net federal supplements are GIS and the Allowances,
+which are not modelled (L2) — so the two lines differ by the OAS repayment
+alone, and only for a person who owes one. Line 26000 equals line 23600
+except in a person's year of death, when the ITA 111(2) deduction (L17)
+reduces it further; that is the only Division C computation modelled. The
+repayment is tested against line 23400; the tax brackets are applied to line
+26000, and the age amount and the RESP enhanced-grant rate — the latter
+through `PersonState.net_income_two_years_prior`, a line 23600 figure like
+its sibling `PersonState.prior_year_net_income` — to line 23600. Gross OAS
+enters both 23400 and 23600 as income, as the rules require; what separates
+them is the repayment deducted at line 23500, not a different treatment of
+the pension itself. Direction: conservative on tax — the omitted deductions
+overstate taxable income, so the engine's tax comes out too high outside a
+death year; the one Division C deduction we do model (L17) only offsets this
+for a death year's own net capital loss. Lives in `engine/tax/federal.py`,
+`engine/tax/combined.py`, `engine/benefits/employment.py`,
+`params/2026/cpp.yaml`.
 
 **L15. Pension income splitting.** Modelled to the federal rule: DB pension
 income at any age, RRIF and LIF income from the year the transferor is 65 at
@@ -279,13 +283,23 @@ unchanged. Same family of error as L16. Lives in `engine/core/step.py`.
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
 credits. In reality a net capital loss for the year is carried back three
-years or forward indefinitely against capital gains, and in the year of death
-is understood to be deductible against other income as well (ITA 111(2); not
-yet checked against the source, see #36); we offset losses against gains of
-the same year only and drop a net loss, in the year of death too. Direction:
-conservative on tax and on the OAS repayment. Not modelled: non-eligible
-dividends, foreign withholding tax, return of capital, the superficial loss
-rule. Lives in `engine/tax/federal.py`.
+years or forward indefinitely against capital gains; we offset losses against
+gains of the same year only, and otherwise drop a net loss. In the year of
+death (and the preceding year), ITA 111(2) additionally allows that year's
+own net capital loss as a deduction from taxable income against any income —
+confirmed against the source
+(https://laws-lois.justice.gc.ca/eng/acts/i-3.3/section-111.html). We apply
+this to the year of death only, for that year's own net loss (there are no
+carried losses in this model), both on the terminal return
+(`engine/core/step.py::resolve_deaths`) and at the December close of a
+person's death year (`close_year`); it changes neither net income (line
+23400) nor the OAS repayment, both of which are computed before it applies.
+The preceding-year leg is not modelled. Direction: conservative on tax and on
+the OAS repayment in general; conservative specifically for the un-modelled
+preceding-year leg. Not modelled: non-eligible dividends, foreign withholding
+tax, return of capital, the superficial loss rule. Lives in
+`engine/tax/federal.py::death_year_capital_loss_deduction`,
+`engine/tax/combined.py::person_assessment`.
 
 ## Public pensions
 
@@ -453,7 +467,10 @@ household crosses a cut-off slightly early — and small: at most one rate step
 on the eligible window per beneficiary per year.
 
 **L34. RESP at death.** The plan is excluded from the estate calculation and is
-assumed to pass to the beneficiary intact.
+assumed to pass to the beneficiary intact. At the second death of the
+household the plan leaves the model with the beneficiary: its
+contributions, grants and income buckets are zeroed and the education cost
+is no longer paid. Lives in `engine/core/step.py::resolve_deaths`.
 
 ## Taxable account and returns
 
@@ -496,19 +513,53 @@ contributions are taken on it. Not modelled: self-employment and the employer
 share, bonuses, leave, unemployment.
 
 **L40. Spending.** A real step schedule for the household, reduced by a
-survivor share from the month after the first death, plus education cost per
-beneficiary. No other age-related change.
+survivor share from the month the first death takes effect (the first month
+the deceased is not alive), plus education cost per beneficiary. No other
+age-related change. Lives in `engine/core/step.py`.
 
-**L41. First death.** Every registered account rolls to the survivor's account
-of the same kind, a LIF staying locked in; the TFSA passes as successor
-holder; taxable holdings pass at cost; DB pensions pay the survivor share; CPP
-pays the survivor pension; OAS stops; pension splitting stops.
+**L41. First death.** Every registered account (RRSP, RRIF, LIRA, LIF) rolls
+to the survivor's account of the same kind, tax-deferred; a LIF stays locked
+in. The survivor's own RRIF/LIF **minimum** for the year of death is
+unchanged, already fixed in January from their own opening balance; the
+survivor's LIF **maximum** for the year, by contrast, carries the deceased's
+unused annual maximum forward on top of their own (decision Q8). The
+deceased's unmet RRIF/LIF minimum for the year of death is not forced out —
+in reality it is paid, or continues to a successor annuitant, direction
+optimistic and small. The TFSA passes to the survivor as successor holder;
+taxable holdings pass at cost (no deemed disposition on the rollover
+itself). DB pensions pay the survivor share excluding any bridge — L59
+covers a pension not yet in pay at the member's death. CPP pays the
+survivor pension per L19, recomputed each month against the survivor's own
+CPP. OAS stops; pension splitting stops. A contribution intended for a dead
+person is capped at zero rather than reaching their account. An RESP
+wind-up's accumulated income is credited to the living spouse when the
+subscriber has died, rather than to the subscriber. Lives in
+`engine/core/step.py::resolve_deaths`, `_phase8_transfers`, and the six
+rollover functions in `engine/accounts/{rrsp,rrif,lira,lif,tfsa,taxable}.py`.
 
 **L42. Second death.** The terminal return brings the full registered balance
-and the deemed capital gain on taxable holdings into income with that year's
-income, taxed as a single person. The estate is what remains after that tax
-and any balance owing. Not modelled: probate (a flat fee in Alberta),
-charitable bequests, graduated-rate estates.
+(RRSP, RRIF, LIRA, LIF) and the deemed capital gain on taxable holdings into
+income with that year's income, taxed as a single person — every person is
+assessed alone on the terminal return, never split, even in a household of
+two. The whole registered balance enters as RRIF/LIF income, RRSP included,
+so an RRSP balance counts toward the eligible pension income amount; the
+error from this is at most one pension credit. A death taking effect in
+January is taxed that year on an empty ledger, as if it had happened on 1
+January. The estate is what remains after that tax and any balance owing; it
+then leaves the household entirely — every balance is zeroed, and every
+later row reads zero. The terminal tax is not part of
+`engine.mc.simulate.SimulationResult.tax_assessed`, which holds December
+assessments only. The after-tax net worth reported for a living household
+(`YearRecord.after_tax_net_worth`) uses the same arithmetic, hypothetically,
+as if both persons died on 31 December with no rollover. Not modelled:
+probate (a flat fee in Alberta), charitable bequests, graduated-rate
+estates. Lives in `engine/core/step.py::resolve_deaths` and `close_year`.
+
+**L59. DB pension, death before it starts.** In reality a pre-retirement
+death usually pays the spouse a commuted-value lump sum; we pay the survivor
+share from the pension's start month as if the pension had been deferred.
+Direction: either way. Lives in
+`engine/benefits/pension.py::survivor_pension_monthly`.
 
 **L43. Depletion.** A path is depleted from the first month in which cash
 cannot be restored to zero. A locked-in balance capped by the LIF maximum may

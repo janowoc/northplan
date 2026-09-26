@@ -222,10 +222,73 @@ def test_receive_conversion_sets_opened_year_only_when_none() -> None:
     np.testing.assert_allclose(updated.balance, [1500.0])
 
 
-def test_spousal_rollover_is_still_a_stub() -> None:
-    with pytest.raises(NotImplementedError):
-        rrif.spousal_rollover(np.array([100.0]), np.array([200.0]))
-
-
 def test_there_is_no_erode_nominal() -> None:
     assert not hasattr(rrif, "erode_nominal")
+
+
+# =============================================================================
+# spousal_rollover (#36)
+# =============================================================================
+
+
+def _multi(balance, annual_minimum, withdrawn_ytd, opened_year) -> RrifState:
+    return RrifState(
+        balance=np.array(balance, dtype=np.float64),
+        annual_minimum=np.array(annual_minimum, dtype=np.float64),
+        withdrawn_ytd=np.array(withdrawn_ytd, dtype=np.float64),
+        opened_year=opened_year,
+    )
+
+
+def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi([10_000.0, 20_000.0], [500.0, 600.0], [100.0, 200.0], opened_year=2020)
+    survivor = _multi([5_000.0, 6_000.0], [50.0, 60.0], [10.0, 20.0], opened_year=2019)
+
+    new_deceased, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+
+
+def test_spousal_rollover_leaves_the_survivors_minimum_and_withdrawn_ytd_untouched() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], [500.0], [100.0], opened_year=2020)
+    survivor = _multi([5_000.0], [50.0], [10.0], opened_year=2019)
+
+    _, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_survivor.annual_minimum, [50.0])
+    np.testing.assert_allclose(new_survivor.withdrawn_ytd, [10.0])
+
+
+def test_spousal_rollover_opened_year_none_survivor_takes_the_deceaseds() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], [0.0], [0.0], opened_year=2015)
+    survivor = _multi([0.0], [0.0], [0.0], opened_year=None)
+
+    _, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.opened_year == 2015
+
+
+def test_spousal_rollover_opened_year_survivors_own_is_kept() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], [0.0], [0.0], opened_year=2015)
+    survivor = _multi([5_000.0], [0.0], [0.0], opened_year=2010)
+
+    _, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.opened_year == 2010
+
+
+def test_spousal_rollover_opened_year_unchanged_when_mask_is_all_false() -> None:
+    mask = np.array([False])
+    deceased = _multi([10_000.0], [0.0], [0.0], opened_year=2015)
+    survivor = _multi([0.0], [0.0], [0.0], opened_year=None)
+
+    new_deceased, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.opened_year is None
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [0.0])

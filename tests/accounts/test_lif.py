@@ -143,3 +143,120 @@ def test_there_is_no_lif_minimum_withdrawal() -> None:
 
 def test_there_is_no_erode_nominal() -> None:
     assert not hasattr(lif, "erode_nominal")
+
+
+# =============================================================================
+# spousal_rollover (#36)
+# =============================================================================
+
+
+def _multi(
+    balance, jurisdiction, annual_minimum, annual_maximum, withdrawn_ytd, opened_year
+) -> LifState:
+    return LifState(
+        balance=np.array(balance, dtype=np.float64),
+        jurisdiction=jurisdiction,
+        annual_minimum=np.array(annual_minimum, dtype=np.float64),
+        annual_maximum=np.array(annual_maximum, dtype=np.float64),
+        withdrawn_ytd=np.array(withdrawn_ytd, dtype=np.float64),
+        opened_year=opened_year,
+    )
+
+
+def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi(
+        [10_000.0, 20_000.0], "ab", [500.0, 600.0], [1000.0, 1200.0], [100.0, 200.0], 2020
+    )
+    survivor = _multi([5_000.0, 6_000.0], "ab", [50.0, 60.0], [400.0, 500.0], [10.0, 20.0], 2019)
+
+    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+
+
+def test_spousal_rollover_leaves_the_survivors_minimum_and_withdrawn_ytd_untouched() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [500.0], [1000.0], [100.0], 2020)
+    survivor = _multi([5_000.0], "ab", [50.0], [400.0], [10.0], 2019)
+
+    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_survivor.annual_minimum, [50.0])
+    np.testing.assert_allclose(new_survivor.withdrawn_ytd, [10.0])
+
+
+def test_spousal_rollover_opened_year_rule() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
+
+    none_survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
+    _, new_survivor = lif.spousal_rollover(deceased, none_survivor, mask)
+    assert new_survivor.opened_year == 2015
+
+    own_survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
+    _, new_survivor = lif.spousal_rollover(deceased, own_survivor, mask)
+    assert new_survivor.opened_year == 2010
+
+
+def test_spousal_rollover_jurisdiction_rule_and_guard() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
+
+    empty_survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
+    _, new_survivor = lif.spousal_rollover(deceased, empty_survivor, mask)
+    assert new_survivor.jurisdiction == "ab"
+
+    # SYNTHETIC second code ("zz"): unreachable in v1, built by hand, per the brief.
+    zz_survivor = _multi([5_000.0], "zz", [0.0], [400.0], [0.0], 2010)
+    with pytest.raises(ValueError, match=r"ab.*zz|zz.*ab"):
+        lif.spousal_rollover(deceased, zz_survivor, mask)
+
+
+def test_spousal_rollover_maximum_carry() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [300.0], 2015)
+    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
+
+    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    # Unused portion of the deceased's own maximum: 1000 - 300 = 700, added to the
+    # survivor's own 400.
+    np.testing.assert_allclose(new_survivor.annual_maximum, [1_100.0])
+    # The deceased's own maximum is unaffected by the rollover.
+    np.testing.assert_allclose(new_deceased.annual_maximum, [1000.0])
+
+
+def test_spousal_rollover_maximum_carry_infinite_stays_infinite() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [0.0], [np.inf], [0.0], 2015)
+    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
+
+    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    assert np.isinf(new_survivor.annual_maximum[0])
+
+
+def test_spousal_rollover_maximum_carry_zero_from_a_deceased_with_no_lif() -> None:
+    mask = np.array([True])
+    deceased = _multi([0.0], "", [0.0], [0.0], [0.0], None)
+    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
+
+    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_survivor.annual_maximum, [400.0])
+
+
+def test_spousal_rollover_untouched_outside_mask() -> None:
+    mask = np.array([False])
+    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
+    survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
+
+    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [0.0])
+    assert new_survivor.opened_year is None
+    assert new_survivor.jurisdiction == ""
+    np.testing.assert_allclose(new_survivor.annual_maximum, [0.0])

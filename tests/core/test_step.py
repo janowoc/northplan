@@ -12,6 +12,7 @@ synthetic in a comment.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import MappingProxyType
 
@@ -19,16 +20,32 @@ import numpy as np
 import pytest
 
 from engine.accounts import lif, resp, rrif, rrsp, taxable, tfsa
+from engine.benefits import cpp as cpp_mod
 from engine.core import timeline
 from engine.core.build import (
     build_deterministic_draws,
+    build_draws,
     build_initial_state,
     build_market_inputs,
     draw_deaths,
 )
-from engine.core.indexation import nominal_carry_factor, real_year
-from engine.core.state import DEATH_NOT_DRAWN, select_spending_level, updated
-from engine.core.step import advance_month, advance_month_traced, close_year, open_year
+from engine.core.indexation import nominal_carry_factor, real_year, unindexed_factor
+from engine.core.state import (
+    DEATH_NOT_DRAWN,
+    BeneficiaryState,
+    CashState,
+    IncomeLedger,
+    RespState,
+    select_spending_level,
+    updated,
+)
+from engine.core.step import (
+    advance_month,
+    advance_month_traced,
+    close_year,
+    open_year,
+    resolve_deaths,
+)
 from engine.mc.returns import RandomDraws
 from engine.mc.simulate import run
 from engine.params.loader import load_year
@@ -36,12 +53,13 @@ from engine.policy.base import Transfer
 from engine.scenario import LifAccount, load_scenario
 from engine.scenario.schema import Scenario
 from engine.tax import federal, withholding
-from engine.tax.combined import household_assessment
+from engine.tax.combined import household_assessment, person_assessment
 
 from .policies import DoNothingPolicy, RecordingPolicy, ScriptedPolicy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
+COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
 
 
 @pytest.fixture
@@ -80,6 +98,60 @@ def withdrawal_order(scenario):
     return scenario.policies[0].withdrawal.order
 
 
+@pytest.fixture
+def couple_scenario():
+    return load_scenario(COUPLE)
+
+
+@pytest.fixture
+def couple_mortality(couple_scenario):
+    return load_year(couple_scenario.start_year)["mortality"]
+
+
+@pytest.fixture
+def couple_market(couple_scenario):
+    return build_market_inputs(couple_scenario.assumptions)
+
+
+@pytest.fixture
+def couple_real_params(couple_scenario):
+    return real_year(load_year(couple_scenario.start_year), couple_scenario.assumptions.inflation)
+
+
+@pytest.fixture
+def couple_draws(couple_scenario, couple_market, couple_mortality):
+    return build_deterministic_draws(couple_scenario, couple_market, couple_mortality)
+
+
+@pytest.fixture
+def couple_opening_state(couple_scenario, couple_draws, couple_mortality):
+    state = build_initial_state(couple_scenario, n_paths=couple_draws.n_paths)
+    return draw_deaths(state, couple_draws, couple_mortality)
+
+
+@pytest.fixture
+def couple_withdrawal_order(couple_scenario):
+    return couple_scenario.policies[0].withdrawal.order
+
+
+def _force_death(state, index: int, month_index: int):
+    """``state`` with ``persons[index].death_month_index`` forced to ``month_index`` on every
+    path -- ``alive`` at the opening is untouched (stays ``True``, since every forced
+    ``month_index`` used below is strictly positive), per the brief's forcing recipe.
+    """
+    persons = list(state.persons)
+    person = persons[index]
+    persons[index] = updated(
+        person,
+        death_month_index=np.full(state.n_paths, month_index, dtype=np.int64),
+    )
+    return updated(state, persons=tuple(persons))
+
+
+def _account_amounts_tuple(amounts):
+    return (amounts.rrsp, amounts.rrif, amounts.lira, amounts.lif, amounts.tfsa, amounts.taxable)
+
+
 def _sum_by_kind(items):
     total = 0.0
     for item in items:
@@ -99,6 +171,7 @@ def _assert_identities_hold(record) -> None:
     lhs1 = ctx.cash_after_flows
     rhs1 = (
         ctx.cash_opening
+        - ctx.cash_to_estate
         + _sum_arrays(inflow.to_cash for inflow in ctx.inflows)
         + _sum_arrays(ctx.education_draws)
         - _sum_arrays(ctx.payroll_withholding)
@@ -1982,11 +2055,12 @@ class TestGisBandForACouple:
 
 
 class TestYearRecordFields:
-    """after_tax_net_worth mirrors net_worth, and the per-person tuples are
+    """after_tax_net_worth is strictly below net_worth (#36: the terminal-return
+    arithmetic, hypothetically, on a living household), and the per-person tuples are
     sized to the household.
     """
 
-    def test_after_tax_net_worth_equals_net_worth_and_tuples_match_persons(
+    def test_after_tax_net_worth_is_below_net_worth_and_tuples_match_persons(
         self, scenario, real_params
     ):
         state = build_initial_state(scenario, n_paths=2)
@@ -1994,7 +2068,1340 @@ class TestYearRecordFields:
         closed = close_year(opened, real_params)
 
         record = closed.history[-1]
-        np.testing.assert_allclose(record.after_tax_net_worth, record.net_worth)
+        assert np.all(record.after_tax_net_worth < record.net_worth)
         assert record.after_tax_net_worth is not record.net_worth
+
+        # Recompute #36 section 6's formula independently, via person_assessment
+        # directly, rather than trusting close_year's own private helper.
+        year = closed.year
+        january_month_index = closed.month_index - (closed.month - 1)
+
+        hyp_total = np.zeros(closed.n_paths, dtype=np.float64)
+        gross = closed.cash.balance.copy()
+        for person in closed.persons:
+            deemed = updated(
+                person.income,
+                rrif_lif_withdrawals=(
+                    person.income.rrif_lif_withdrawals
+                    + person.rrsp.balance
+                    + person.rrif.balance
+                    + person.lira.balance
+                    + person.lif.balance
+                ),
+                capital_gains=(
+                    person.income.capital_gains + taxable.deemed_disposition(person.taxable)
+                ),
+            )
+            age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+            assessment = person_assessment(
+                deemed,
+                age_end,
+                0,
+                0,
+                closed.province,
+                real_params,
+                january_month_index,
+                died_in_year=True,
+            )
+            hyp_total = hyp_total + (assessment.total - person.income.remitted)
+            gross = (
+                gross
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+                + person.tfsa.balance
+                + person.taxable.balance
+            )
+
+        expected = gross - hyp_total
+        np.testing.assert_allclose(record.after_tax_net_worth, expected)
         assert len(record.net_income) == len(closed.persons)
         assert len(record.gis_band) == len(closed.persons)
+
+
+# =============================================================================
+# #36: death, the terminal return, and the result object
+# =============================================================================
+
+
+def _recompute_terminal_total(persons, year, january_month_index, province, real_params):
+    """Independently recompute the terminal-return arithmetic of ``resolve_deaths`` step 3
+    (and ``close_year``'s ``after_tax_net_worth``), from ``person_assessment`` directly.
+
+    Returns ``(household_total, assessments)``.
+    """
+    n_paths = persons[0].alive.shape[0]
+    total = np.zeros(n_paths, dtype=np.float64)
+    assessments = []
+    for person in persons:
+        deemed = updated(
+            person.income,
+            rrif_lif_withdrawals=(
+                person.income.rrif_lif_withdrawals
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+            ),
+            capital_gains=(
+                person.income.capital_gains + taxable.deemed_disposition(person.taxable)
+            ),
+        )
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+        died_in_year = person.death_month_index >= january_month_index
+        assessment = person_assessment(
+            deemed,
+            age_end,
+            np.zeros(n_paths),
+            np.zeros(n_paths),
+            province,
+            real_params,
+            january_month_index,
+            died_in_year=died_in_year,
+        )
+        assessments.append(assessment)
+        total = total + assessment.total
+    return total, tuple(assessments)
+
+
+def _gross_wealth(state):
+    gross = state.cash.balance.copy()
+    for person in state.persons:
+        gross = (
+            gross
+            + person.rrsp.balance
+            + person.rrif.balance
+            + person.lira.balance
+            + person.lif.balance
+            + person.tfsa.balance
+            + person.taxable.balance
+        )
+    return gross
+
+
+class TestFirstDeathOnTheCouple:
+    """Requirement 2: the first death's month-k semantics, on the couple."""
+
+    #: April of the second year: (2027 - 2026) * 12 + (4 - 1) -- a full January has
+    #: already run by then.
+    DEATH_MONTH_INDEX = 15
+    MARCH_MONTH_INDEX = 14
+
+    def test_first_death(
+        self,
+        couple_scenario,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        state = _force_death(couple_opening_state, 0, self.DEATH_MONTH_INDEX)
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        for record in result.trace:
+            _assert_identities_hold(record)
+
+        march = result.trace[self.MARCH_MONTH_INDEX]
+        april = result.trace[self.DEATH_MONTH_INDEX]
+
+        # a's OAS: paid in March, stops from April.
+        assert march.context.inflows[0].oas[0] > 0.0
+        assert april.context.inflows[0].oas[0] == 0.0
+
+        # April's rolled_out[a] equals March's balances_close[a], for every kind.
+        march_a_balances = march.balances_close[0]
+        april_rolled_a = april.context.rolled_out[0]
+        for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+            np.testing.assert_allclose(
+                getattr(april_rolled_a, field), getattr(march_a_balances, field)
+            )
+
+        # rolled_acb[a]: independently recomputed from March's own taxable
+        # distributions, the only source of ACB change between March's close and
+        # April's open (no January erosion falls between them).
+        march_state_before_growth = recorder.calls[self.MARCH_MONTH_INDEX][0]
+        a_taxable_before_march_growth = march_state_before_growth.persons[0].taxable
+        weighted_yields = couple_market.weighted_yields("taxable")
+        interest, dividends, gains = taxable.distributions_monthly(
+            a_taxable_before_march_growth.balance, weighted_yields
+        )
+        expected_acb_then = a_taxable_before_march_growth.acb + interest + dividends + gains
+        np.testing.assert_allclose(april.context.rolled_acb[0], expected_acb_then)
+
+        # After April: a's balances are all zero; b holds a's pre-roll balance plus its
+        # own, each grown by April's own return for that kind.
+        april_a_close = april.balances_close[0]
+        for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+            np.testing.assert_allclose(getattr(april_a_close, field), 0.0)
+
+        march_b_balances = march.balances_close[1]
+        april_b_close = april.balances_close[1]
+        april_returns = couple_draws.real_returns[self.DEATH_MONTH_INDEX]
+        for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+            pre_growth = getattr(march_b_balances, field) + getattr(april_rolled_a, field)
+            r = couple_market.weights(field) @ april_returns
+            expected = pre_growth * (1 + r)
+            np.testing.assert_allclose(getattr(april_b_close, field), expected, rtol=1e-6)
+
+        # Spending: the full level in March, scaled by the survivor share from April.
+        np.testing.assert_allclose(march.context.spending, state.spending_monthly)
+        np.testing.assert_allclose(
+            april.context.spending, state.spending_monthly * state.spending_survivor_share
+        )
+
+        # b's DB pension survivor share: 0 in March, survivor_share * a's own from April.
+        a_pension = state.persons[0].pensions[0]
+        factor = (
+            1.0
+            if a_pension.indexed
+            else unindexed_factor(
+                couple_real_params.inflation_rate,
+                self.DEATH_MONTH_INDEX - max(a_pension.start_month_index, 0),
+            )
+        )
+        assert march.context.inflows[1].db_pension_survivor[0] == 0.0
+        np.testing.assert_allclose(
+            april.context.inflows[1].db_pension_survivor,
+            a_pension.survivor_share * a_pension.monthly_amount * factor,
+        )
+
+        # Requirement 12: the trace sums to the result, year by year, including the
+        # first-death year.
+        for year_index, year in enumerate(result.years):
+            year_start = (int(year) - couple_scenario.start_year) * 12
+            year_end = year_start + 12
+            monthly = [
+                r.context.spending - r.spending_cut
+                for r in result.trace
+                if year_start <= r.context.month_index < year_end
+            ]
+            np.testing.assert_allclose(
+                sum(monthly), result.spending_achieved[year_index], atol=0.005
+            )
+
+
+#: SYNTHETIC SCENARIO INPUT, not a tax parameter: a made-up DB pension amount, sized so
+#: that the survivor share of it clears both the basic personal amount and the age
+#: amount at real 2026 params, so payroll withholding on the inherited stream is
+#: genuinely non-zero. The couple's own, real pension amount does not do this --
+#: withholding.payroll_withholding_monthly on it comes back exactly 0.
+SYNTHETIC_PENSION_MONTHLY = 20_000.0
+
+
+class TestSurvivorStreamWithholding:
+    """R3 (round 3, T2): payroll withholding really does reach the inherited DB stream,
+    on a synthetic pension amount large enough that the withholding is non-zero.
+    """
+
+    #: April of the second year, as in TestFirstDeathOnTheCouple.
+    DEATH_MONTH_INDEX = 15
+    MARCH_MONTH_INDEX = 14
+
+    def test_withholding_on_the_inherited_stream(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        n_paths = couple_opening_state.n_paths
+        person_a = couple_opening_state.persons[0]
+        synthetic_pension = updated(
+            person_a.pensions[0], monthly_amount=np.full(n_paths, SYNTHETIC_PENSION_MONTHLY)
+        )
+        person_a = updated(person_a, pensions=(synthetic_pension,))
+        state = updated(couple_opening_state, persons=(person_a, couple_opening_state.persons[1]))
+        state = _force_death(state, 0, self.DEATH_MONTH_INDEX)
+
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        result = run(state, policy, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        march = result.trace[self.MARCH_MONTH_INDEX]
+        april = result.trace[self.DEATH_MONTH_INDEX]
+
+        # Guard: b has no employment or pension of their own, so March's withholding
+        # (before the first death) is 0.
+        assert march.context.payroll_withholding[1][0] == 0.0
+
+        stream = april.context.inflows[1].db_pension_survivor
+        age_end_b = timeline.age_at_end_of_year(
+            state.persons[1].birth_year, state.persons[1].birth_month, 2027
+        )
+        january_month_index = 12  # January 2027
+        expected = withholding.payroll_withholding_monthly(
+            stream, age_end_b, False, state.province, couple_real_params, january_month_index
+        )
+        assert np.all(expected > 0.0)  # guard: the synthetic amount really clears the credits
+
+        np.testing.assert_allclose(april.context.payroll_withholding[1], expected)
+
+
+class TestCppSurvivorBothDirections:
+    """Requirement 3: the CPP survivor increment's capped and uncapped branches."""
+
+    DEATH_MONTH_INDEX = 15
+
+    def _run_forced(
+        self,
+        deceased_index,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        state = _force_death(couple_opening_state, deceased_index, self.DEATH_MONTH_INDEX)
+        recorder = RecordingPolicy(DoNothingPolicy(state.elections, couple_withdrawal_order))
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+        return result, recorder
+
+    def test_a_dies_uncapped_branch(
+        self,
+        couple_scenario,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        share = couple_real_params.cpp.number("survivor.share_at_65_plus")
+        combined_max = couple_real_params.cpp.amount(
+            "survivor.combined_maximum_monthly", self.DEATH_MONTH_INDEX
+        )
+        base_a = float(couple_scenario.household.persons[0].cpp.in_pay_monthly)
+        own_b = float(couple_scenario.household.persons[1].cpp.in_pay_monthly)
+        assert share * base_a < combined_max - own_b  # guard: the uncapped branch
+
+        result, _recorder = self._run_forced(
+            0,
+            couple_opening_state,
+            couple_draws,
+            couple_market,
+            couple_real_params,
+            couple_withdrawal_order,
+        )
+        record = result.trace[self.DEATH_MONTH_INDEX]
+
+        np.testing.assert_allclose(record.context.inflows[1].cpp_survivor, share * base_a)
+        total = record.context.inflows[1].cpp + record.context.inflows[1].cpp_survivor
+        assert np.all(total <= combined_max + 1e-6)
+
+    def test_b_dies_capped_branch(
+        self,
+        couple_scenario,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        share = couple_real_params.cpp.number("survivor.share_at_65_plus")
+        combined_max = couple_real_params.cpp.amount(
+            "survivor.combined_maximum_monthly", self.DEATH_MONTH_INDEX
+        )
+        base_b = float(couple_scenario.household.persons[1].cpp.in_pay_monthly)
+        own_a = float(couple_scenario.household.persons[0].cpp.in_pay_monthly)
+        assert share * base_b > combined_max - own_a  # guard: the capped branch
+
+        result, recorder = self._run_forced(
+            1,
+            couple_opening_state,
+            couple_draws,
+            couple_market,
+            couple_real_params,
+            couple_withdrawal_order,
+        )
+        record = result.trace[self.DEATH_MONTH_INDEX]
+
+        total = record.context.inflows[0].cpp + record.context.inflows[0].cpp_survivor
+        np.testing.assert_allclose(total, combined_max)
+
+        # R4 (the b-to-a direction): a's balances hold b's pre-roll balances, kind by
+        # kind, and the ACB, mirroring TestFirstDeathOnTheCouple's a-to-b check.
+        march = result.trace[self.DEATH_MONTH_INDEX - 1]
+        march_b_balances = march.balances_close[1]
+        april_rolled_b = record.context.rolled_out[1]
+        for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+            np.testing.assert_allclose(
+                getattr(april_rolled_b, field), getattr(march_b_balances, field)
+            )
+
+        march_state_before_growth = recorder.calls[self.DEATH_MONTH_INDEX - 1][0]
+        b_taxable_before_march_growth = march_state_before_growth.persons[1].taxable
+        weighted_yields = couple_market.weighted_yields("taxable")
+        interest, dividends, gains = taxable.distributions_monthly(
+            b_taxable_before_march_growth.balance, weighted_yields
+        )
+        expected_acb_then = b_taxable_before_march_growth.acb + interest + dividends + gains
+        np.testing.assert_allclose(record.context.rolled_acb[1], expected_acb_then)
+
+        # T1 (round 3, R4 redone): the check above compares rolled_out against march's
+        # balances, but resolve_deaths computes rolled_out *before* the six rollover
+        # calls run, so a no-op'd rollover would still pass it. Check the move itself.
+        # (a) the deceased's balances stay exactly 0, in the death month and after.
+        for later_record in (record, *result.trace[self.DEATH_MONTH_INDEX + 1 :]):
+            for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+                np.testing.assert_allclose(getattr(later_record.balances_close[1], field), 0.0)
+
+        assert np.all(record.context.rolled_out[1].rrif > 0.0)  # guard
+
+        # (b) the survivor's balance really absorbed it: march's opening balance plus
+        # what rolled in, less this month's own flows, grown by this month's return --
+        # exactly _phase10_growth's rule, confirmed for taxable too (balance * (1 + r),
+        # #19 decision 5: distributions_monthly's yield component and price_growth's
+        # price-only component net out to the account's total return).
+        returns_k = couple_draws.real_returns[self.DEATH_MONTH_INDEX]
+        for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+            march_a_balance = getattr(march.balances_close[0], field)
+            rolled_in = getattr(record.context.rolled_out[1], field)
+            if field == "lira":
+                # ByKind has no lira field: LIRA takes no withdrawals and no
+                # contributions target it, so every flow term is 0.
+                zeros = np.zeros_like(march_a_balance)
+                forced = withdrawn = floor_swept = contributed = zeros
+            else:
+                forced = getattr(record.context.forced_withdrawals[0], field)
+                withdrawn = getattr(record.withdrawals[0], field)
+                floor_swept = getattr(record.floor_withdrawals[0], field)
+                contributed = getattr(record.contributions[0], field)
+            pre_growth = (
+                march_a_balance + rolled_in - forced - withdrawn - floor_swept + contributed
+            )
+            r = couple_market.weights(field) @ returns_k
+            expected = pre_growth * (1 + r)
+            np.testing.assert_allclose(
+                getattr(record.balances_close[0], field), expected, rtol=1e-6
+            )
+
+    def test_survivor_increment_uses_base_pension_monthly_without_an_in_pay_amount(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        """R4: the deceased's base can also come from ``contributory_history`` rather
+        than an ``in_pay_monthly`` amount already in pay.
+        """
+        contributory_history = 0.8
+        person_a = couple_opening_state.persons[0]
+        person_a = updated(
+            person_a,
+            cpp=updated(
+                person_a.cpp,
+                in_pay_monthly=None,
+                contributory_history=contributory_history,
+                start_age_months=780,
+            ),
+        )
+        state = updated(couple_opening_state, persons=(person_a, couple_opening_state.persons[1]))
+        state = _force_death(state, 0, self.DEATH_MONTH_INDEX)
+
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+        record = result.trace[self.DEATH_MONTH_INDEX]
+
+        share = couple_real_params.cpp.number("survivor.share_at_65_plus")
+        combined_max = couple_real_params.cpp.amount(
+            "survivor.combined_maximum_monthly", self.DEATH_MONTH_INDEX
+        )
+        own_b = couple_opening_state.persons[1].cpp.in_pay_monthly
+        base_a = cpp_mod.base_pension_monthly(
+            contributory_history, self.DEATH_MONTH_INDEX, couple_real_params.cpp
+        )
+        assert np.all(share * base_a < combined_max - own_b)  # guard: the uncapped branch
+
+        # T6 (round 3): the deceased's own monthly_amount, carried into the death
+        # month, differs from the unadjusted base -- her actual age at the run's
+        # opening already exceeds the CPP start window, so her own pension carries a
+        # late-start bonus the survivor formula (L19) does not apply. A mutant reading
+        # person_j.cpp.monthly_amount instead of calling base_pension_monthly here
+        # would therefore fail the assertion below.
+        carried_monthly_amount = (
+            recorder.calls[self.DEATH_MONTH_INDEX - 1][0].persons[0].cpp.monthly_amount
+        )
+        assert not np.allclose(carried_monthly_amount, base_a)
+
+        expected = np.minimum(share * base_a, combined_max - own_b)
+        assert np.all(expected > 0.0)  # guard: not vacuously 0
+        np.testing.assert_allclose(record.context.inflows[1].cpp_survivor, expected)
+
+
+class TestSecondDeathTerminalReturn:
+    """Requirements 4, 6, 7, 8: the terminal-return arithmetic at the second death,
+    exercised directly against ``resolve_deaths`` on hand-built states -- the six
+    rollover functions and ``TestFirstDeathOnTheCouple`` already cover the first
+    death's own rollover mechanics.
+    """
+
+    def test_couple_second_death_a_then_b(self, couple_scenario, couple_real_params):
+        n = 1
+        state = build_initial_state(couple_scenario, n_paths=n)
+        state = updated(state, month=7, month_index=6)
+        person_a, person_b = state.persons
+
+        # a died earlier (month 3) and has already rolled fully into b.
+        person_a = updated(
+            person_a,
+            alive=np.zeros(n, dtype=bool),
+            death_month_index=np.full(n, 3, dtype=np.int64),
+            rrif=updated(person_a.rrif, balance=np.zeros(n)),
+            tfsa=updated(person_a.tfsa, balance=np.zeros(n)),
+            taxable=updated(person_a.taxable, balance=np.zeros(n), acb=np.zeros(n)),
+            lif=updated(person_a.lif, balance=np.zeros(n)),
+        )
+        person_b = updated(
+            person_b,
+            alive=np.ones(n, dtype=bool),
+            death_month_index=np.full(n, 6, dtype=np.int64),
+            income=updated(
+                person_b.income,
+                rrif_lif_withdrawals=np.full(n, 5_000.0),
+                capital_gains=np.full(n, 2_000.0),
+                remitted=np.full(n, 1_000.0),
+            ),
+            balance_owing=np.full(n, 500.0),
+        )
+        state = updated(
+            state, persons=(person_a, person_b), cash=CashState(balance=np.full(n, 3_000.0))
+        )
+
+        new_state, _rolled_out, _rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
+            state, couple_real_params
+        )
+
+        assert np.all(np.isfinite(new_state.estate_after_tax))
+        gross = _gross_wealth(state)
+        assert np.all(new_state.estate_after_tax < gross)
+
+        expected_total, _ = _recompute_terminal_total(
+            (person_a, person_b), state.year, 0, state.province, couple_real_params
+        )
+        balance_owing_total = person_a.balance_owing + person_b.balance_owing
+        remitted_total = person_a.income.remitted + person_b.income.remitted
+        expected_estate = gross - expected_total - balance_owing_total + remitted_total
+
+        np.testing.assert_allclose(terminal_assessment, expected_total)
+        np.testing.assert_allclose(new_state.estate_after_tax, expected_estate)
+        np.testing.assert_allclose(cash_to_estate, state.cash.balance)
+        assert not np.any(new_state.depleted)
+
+        for person in new_state.persons:
+            for account in (person.rrsp, person.rrif, person.lira, person.lif, person.tfsa):
+                np.testing.assert_allclose(account.balance, 0.0)
+            np.testing.assert_allclose(person.taxable.balance, 0.0)
+            np.testing.assert_allclose(person.taxable.acb, 0.0)
+            np.testing.assert_allclose(person.balance_owing, 0.0)
+            for field in dataclasses.fields(person.income):
+                np.testing.assert_allclose(getattr(person.income, field.name), 0.0)
+        np.testing.assert_allclose(new_state.cash.balance, 0.0)
+
+    def test_example_only_death(self, scenario, real_params):
+        n = 1
+        state = build_initial_state(scenario, n_paths=n)
+        state = updated(state, month=7, month_index=6)
+        person = state.persons[0]
+        person = updated(
+            person,
+            alive=np.ones(n, dtype=bool),
+            death_month_index=np.full(n, 6, dtype=np.int64),
+            income=updated(
+                person.income,
+                rrif_lif_withdrawals=np.full(n, 8_000.0),
+                capital_gains=np.full(n, 1_500.0),
+                remitted=np.full(n, 500.0),
+            ),
+            balance_owing=np.full(n, 200.0),
+        )
+        state = updated(state, persons=(person,), cash=CashState(balance=np.full(n, 4_000.0)))
+
+        new_state, _rolled_out, _rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
+            state, real_params
+        )
+
+        assert np.all(np.isfinite(new_state.estate_after_tax))
+        gross = _gross_wealth(state)
+        assert np.all(new_state.estate_after_tax < gross)
+
+        expected_total, _ = _recompute_terminal_total(
+            (person,), state.year, 0, state.province, real_params
+        )
+        expected_estate = gross - expected_total - person.balance_owing + person.income.remitted
+        np.testing.assert_allclose(terminal_assessment, expected_total)
+        np.testing.assert_allclose(new_state.estate_after_tax, expected_estate)
+        np.testing.assert_allclose(cash_to_estate, state.cash.balance)
+        assert not np.any(new_state.depleted)
+
+    def test_simultaneous_death(self, couple_scenario, couple_real_params):
+        n = 1
+        state = build_initial_state(couple_scenario, n_paths=n)
+        state = updated(state, month=7, month_index=6)
+        person_a, person_b = state.persons
+        person_a = updated(
+            person_a, alive=np.ones(n, dtype=bool), death_month_index=np.full(n, 6, dtype=np.int64)
+        )
+        person_b = updated(
+            person_b, alive=np.ones(n, dtype=bool), death_month_index=np.full(n, 6, dtype=np.int64)
+        )
+        state = updated(state, persons=(person_a, person_b))
+
+        new_state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
+            state, couple_real_params
+        )
+
+        # No rollover: both masks are false when both die in the same month.
+        for i in range(2):
+            for field in _account_amounts_tuple(rolled_out[i]):
+                np.testing.assert_allclose(field, 0.0)
+            np.testing.assert_allclose(rolled_acb[i], 0.0)
+
+        # Both persons' own (unrolled) registered balances enter the terminal assessment.
+        expected_total, _ = _recompute_terminal_total(
+            (person_a, person_b), state.year, 0, state.province, couple_real_params
+        )
+        np.testing.assert_allclose(terminal_assessment, expected_total)
+
+        gross = _gross_wealth(state)
+        balance_owing_total = person_a.balance_owing + person_b.balance_owing
+        remitted_total = person_a.income.remitted + person_b.income.remitted
+        expected_estate = gross - expected_total - balance_owing_total + remitted_total
+        np.testing.assert_allclose(new_state.estate_after_tax, expected_estate)
+        np.testing.assert_allclose(cash_to_estate, state.cash.balance)
+
+    def test_same_year_first_death_includes_the_part_year_ledger(
+        self, couple_scenario, couple_real_params
+    ):
+        n = 1
+        state = build_initial_state(couple_scenario, n_paths=n)
+        state = updated(state, month=9, month_index=8)  # September 2026
+        person_a, person_b = state.persons
+        # a died in March (month 2) and has already rolled into b; a's own ledger,
+        # frozen at death, has not been reset by an intervening January -- both deaths
+        # fall in 2026.
+        person_a = updated(
+            person_a,
+            alive=np.zeros(n, dtype=bool),
+            death_month_index=np.full(n, 2, dtype=np.int64),
+            income=updated(person_a.income, rrif_lif_withdrawals=np.full(n, 50_000.0)),
+            rrif=updated(person_a.rrif, balance=np.zeros(n)),
+            tfsa=updated(person_a.tfsa, balance=np.zeros(n)),
+            taxable=updated(person_a.taxable, balance=np.zeros(n), acb=np.zeros(n)),
+            lif=updated(person_a.lif, balance=np.zeros(n)),
+        )
+        person_b = updated(
+            person_b, alive=np.ones(n, dtype=bool), death_month_index=np.full(n, 8, dtype=np.int64)
+        )
+        state = updated(state, persons=(person_a, person_b))
+
+        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
+            state, couple_real_params
+        )
+
+        expected_total, _ = _recompute_terminal_total(
+            (person_a, person_b), state.year, 0, state.province, couple_real_params
+        )
+        np.testing.assert_allclose(terminal_assessment, expected_total)
+
+        # Guard: a's part-year ledger really is included -- zeroing it changes the total.
+        zeroed_a = updated(
+            person_a, income=updated(person_a.income, rrif_lif_withdrawals=np.zeros(n))
+        )
+        zeroed_total, _ = _recompute_terminal_total(
+            (zeroed_a, person_b), state.year, 0, state.province, couple_real_params
+        )
+        assert not np.allclose(expected_total, zeroed_total)
+
+    def test_january_edge_uses_an_empty_ledger(self, scenario, real_params):
+        n = 1
+        state = build_initial_state(scenario, n_paths=n)
+        state = updated(state, month=1, month_index=12)  # January 2027
+        person = state.persons[0]
+        person = updated(
+            person, alive=np.ones(n, dtype=bool), death_month_index=np.full(n, 12, dtype=np.int64)
+        )
+        state = updated(state, persons=(person,))
+
+        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
+            state, real_params
+        )
+
+        deemed = updated(
+            person.income,
+            rrif_lif_withdrawals=(
+                person.rrsp.balance + person.rrif.balance + person.lira.balance + person.lif.balance
+            ),
+            capital_gains=taxable.deemed_disposition(person.taxable),
+        )
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, state.year)
+        expected = person_assessment(
+            deemed,
+            age_end,
+            np.zeros(n),
+            np.zeros(n),
+            state.province,
+            real_params,
+            12,
+            died_in_year=True,
+        )
+        np.testing.assert_allclose(terminal_assessment, expected.total)
+
+
+class TestTerminalReturnCapitalLoss:
+    """R2: ITA 111(2) at a terminal return and at ``after_tax_net_worth``, where the
+    taxable account's deemed gain is negative (``balance < acb``).
+    """
+
+    def test_resolve_deaths_applies_the_death_year_deduction(self, scenario, real_params):
+        n = 1
+        state = build_initial_state(scenario, n_paths=n)
+        state = updated(state, month=7, month_index=6)
+        person = state.persons[0]
+        person = updated(
+            person,
+            alive=np.ones(n, dtype=bool),
+            death_month_index=np.full(n, 6, dtype=np.int64),
+            income=updated(person.income, rrif_lif_withdrawals=np.full(n, 60_000.0)),
+            taxable=updated(person.taxable, balance=np.full(n, 50_000.0), acb=np.full(n, 90_000.0)),
+        )
+        state = updated(state, persons=(person,))
+
+        # Guard: the deemed gain really is negative.
+        assert np.all(taxable.deemed_disposition(person.taxable) < 0.0)
+
+        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
+            state, real_params
+        )
+
+        expected_true, _ = _recompute_terminal_total(
+            (person,), state.year, 0, state.province, real_params
+        )
+        np.testing.assert_allclose(terminal_assessment, expected_true)
+
+        # died_in_year=False (via the same recompute, forced) must give a different total
+        # -- the deduction is really reaching the terminal assessment.
+        deemed = updated(
+            person.income,
+            rrif_lif_withdrawals=(
+                person.income.rrif_lif_withdrawals
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+            ),
+            capital_gains=(
+                person.income.capital_gains + taxable.deemed_disposition(person.taxable)
+            ),
+        )
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, state.year)
+        expected_false = person_assessment(
+            deemed,
+            age_end,
+            np.zeros(n),
+            np.zeros(n),
+            state.province,
+            real_params,
+            0,
+            died_in_year=False,
+        )
+        assert not np.allclose(terminal_assessment, expected_false.total)
+
+    def test_after_tax_net_worth_applies_the_death_year_deduction(self, scenario, real_params):
+        n = 2
+        loss_accounts = scenario.household.persons[0].accounts.model_copy(
+            update={
+                "taxable": scenario.household.persons[0].accounts.taxable.model_copy(
+                    update={"balance": 50_000.0, "acb": 90_000.0}
+                )
+            }
+        )
+        loss_person = scenario.household.persons[0].model_copy(update={"accounts": loss_accounts})
+        household = scenario.household.model_copy(update={"persons": (loss_person,)})
+        loss_scenario = scenario.model_copy(update={"household": household})
+
+        state = build_initial_state(loss_scenario, n_paths=n)
+        opened = open_year(state, real_params)
+        closed = close_year(opened, real_params)
+        record = closed.history[-1]
+        person = closed.persons[0]
+
+        # Guard: the deemed gain really is negative.
+        assert np.all(taxable.deemed_disposition(person.taxable) < 0.0)
+
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, closed.year)
+        deemed = updated(
+            person.income,
+            rrif_lif_withdrawals=(
+                person.income.rrif_lif_withdrawals
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+            ),
+            capital_gains=(
+                person.income.capital_gains + taxable.deemed_disposition(person.taxable)
+            ),
+        )
+        assessment_true = person_assessment(
+            deemed, age_end, 0, 0, closed.province, real_params, 0, died_in_year=True
+        )
+        assessment_false = person_assessment(
+            deemed, age_end, 0, 0, closed.province, real_params, 0, died_in_year=False
+        )
+        assert not np.allclose(assessment_true.total, assessment_false.total)
+
+        gross = closed.cash.balance + (
+            person.rrsp.balance
+            + person.rrif.balance
+            + person.lira.balance
+            + person.lif.balance
+            + person.tfsa.balance
+            + person.taxable.balance
+        )
+        expected = gross - (assessment_true.total - person.income.remitted)
+        np.testing.assert_allclose(record.after_tax_net_worth, expected)
+
+
+class TestSecondDeathViaRun:
+    """Requirement 13 (second half): cash identities across a full forced two-death run,
+    and the run's own timing of ``estate_after_tax``.
+    """
+
+    A_DEATH_MONTH_INDEX = 15
+    B_DEATH_MONTH_INDEX = 40
+
+    def test_cash_identities_and_estate_timing(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        state = _force_death(couple_opening_state, 0, self.A_DEATH_MONTH_INDEX)
+        state = _force_death(state, 1, self.B_DEATH_MONTH_INDEX)
+        recorder = RecordingPolicy(DoNothingPolicy(state.elections, couple_withdrawal_order))
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        # D-A: the run stops at the first December on or after the final death, not at
+        # the death month itself.
+        december_index = (self.B_DEATH_MONTH_INDEX // 12) * 12 + 11
+        assert len(result.trace) == december_index + 1
+
+        for record in result.trace:
+            _assert_identities_hold(record)
+
+        for m in range(self.B_DEATH_MONTH_INDEX):
+            assert np.isnan(result.trace[m].estate_after_tax[0])
+
+        final_record = result.trace[self.B_DEATH_MONTH_INDEX]
+        assert np.isfinite(final_record.estate_after_tax[0])
+        assert not final_record.depleted[0]
+        np.testing.assert_allclose(
+            final_record.context.cash_to_estate, final_record.context.cash_opening
+        )
+        assert np.all(np.isfinite(result.estate_after_tax))
+
+
+class TestFinishedPathIsInert:
+    """Requirement 5: after the final death, everything downstream is exactly zero."""
+
+    #: Within the example beneficiary's education window (which opens well after this).
+    FORCED_DEATH_MONTH_INDEX = 100
+
+    def test_finished_path_is_inert(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        n_paths = 4
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+
+        person = state.persons[0]
+        new_death = np.full(n_paths, draws.n_months - 2, dtype=np.int64)
+        new_death[0] = self.FORCED_DEATH_MONTH_INDEX
+        person = updated(person, death_month_index=new_death)
+        state = updated(state, persons=(person,))
+
+        recorder = RecordingPolicy(DoNothingPolicy(state.elections, withdrawal_order))
+        result = run(state, recorder, draws, market, real_params, trace_path=0)
+
+        death_month = self.FORCED_DEATH_MONTH_INDEX
+        assert len(result.trace) > death_month + 12, (
+            "the run must continue well past the forced death for this test to mean anything"
+        )
+
+        for record in result.trace[death_month:]:
+            assert record.finished[0]
+            assert not record.alive[0][0]
+            assert np.all(record.context.spending == 0.0)
+            assert np.all(_sum_arrays(record.context.education_costs) == 0.0)
+            assert np.all(_sum_arrays(inflow.to_cash for inflow in record.context.inflows) == 0.0)
+            assert np.all(_sum_by_kind(record.withdrawals) == 0.0)
+            assert np.all(_sum_by_kind(record.contributions) == 0.0)
+            assert np.all(_sum_by_kind(record.floor_withdrawals) == 0.0)
+            assert np.all(record.depletion_deficit == 0.0)
+            assert not record.depleted[0]
+            # R8: every other flow the step can move is also 0 on a finished path.
+            assert np.all(_sum_by_kind(record.context.forced_withdrawals) == 0.0)
+            assert np.all(_sum_arrays(record.context.payroll_withholding) == 0.0)
+            assert np.all(_sum_arrays(record.context.tax_settlement) == 0.0)
+            assert np.all(_sum_arrays(record.context.education_draws) == 0.0)
+            assert np.all(_sum_arrays(record.resp_contributions) == 0.0)
+            assert np.all(_sum_arrays(record.wind_up_to_cash) == 0.0)
+
+        pre = result.trace[death_month]
+        for record in result.trace[death_month + 1 :]:
+            np.testing.assert_allclose(record.cash_close, pre.cash_close)
+            np.testing.assert_allclose(record.estate_after_tax, pre.estate_after_tax)
+            for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
+                np.testing.assert_allclose(getattr(record.balances_close[0], field), 0.0)
+
+        for resp_close in result.trace[death_month + 1].resp_close:
+            np.testing.assert_allclose(resp_close, 0.0)
+
+        death_year = scenario.start_year + death_month // 12
+        year_mask = result.years >= death_year
+        assert np.any(year_mask)
+        np.testing.assert_allclose(result.net_worth[year_mask, 0], 0.0)
+        np.testing.assert_allclose(result.tax_assessed[year_mask, 0], 0.0)
+        later_year_mask = result.years > death_year
+        if np.any(later_year_mask):
+            np.testing.assert_allclose(result.spending_achieved[later_year_mask, 0], 0.0)
+
+        # R8: after_tax_net_worth (and, again, net_worth and tax_assessed) is 0 on every
+        # YearRecord closed after the death year -- gathered incrementally from what
+        # RecordingPolicy saw, since a single final snapshot is missing only the very
+        # last year closed for the *other*, still-living paths, far beyond what is
+        # checked here.
+        history_seen = 0
+        checked_any = False
+        for state_seen, _context in recorder.calls:
+            if len(state_seen.history) > history_seen:
+                for year_record in state_seen.history[history_seen:]:
+                    if year_record.year > death_year:
+                        checked_any = True
+                        assert year_record.after_tax_net_worth[0] == pytest.approx(0.0)
+                        assert year_record.net_worth[0] == pytest.approx(0.0)
+                        assert year_record.tax_assessed[0] == pytest.approx(0.0)
+                history_seen = len(state_seen.history)
+        assert checked_any  # guard: at least one such year was actually checked
+
+    def test_a_scripted_transfer_on_the_finished_path_is_zero(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        n_paths = 4
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+
+        person = state.persons[0]
+        new_death = np.full(n_paths, draws.n_months - 2, dtype=np.int64)
+        new_death[0] = self.FORCED_DEATH_MONTH_INDEX
+        person = updated(person, death_month_index=new_death)
+        state = updated(state, persons=(person,))
+
+        attempt_month = self.FORCED_DEATH_MONTH_INDEX + 5
+        contribution_amount = np.full(n_paths, 1_000.0)
+        # Larger than the contribution: cash can otherwise be negative going into
+        # phase 8 (spending already drawn it down for the month), which would cap
+        # the contribution at 0 for a reason that has nothing to do with being dead.
+        withdrawal_amount = np.full(n_paths, 5_000.0)
+        script = {
+            attempt_month: (
+                Transfer(
+                    person_index=0, from_kind="cash", to_kind="tfsa", amount=contribution_amount
+                ),
+                Transfer(
+                    person_index=0, from_kind="rrif", to_kind="cash", amount=withdrawal_amount
+                ),
+            )
+        }
+        policy = ScriptedPolicy(state.elections, withdrawal_order, script)
+        result = run(state, policy, draws, market, real_params, trace_path=0)
+
+        record = result.trace[attempt_month]
+        assert record.finished[0]
+        np.testing.assert_allclose(record.contributions[0].tfsa, 0.0)
+        np.testing.assert_allclose(record.withdrawals[0].rrif, 0.0)
+
+        # T5 (round 3, R8 guard): the same script on a live path (path 1, forced to
+        # the same long, safe death as every other un-forced path here) really does
+        # move money, so the finished path's zeros above are not vacuous.
+        control_result = run(state, policy, draws, market, real_params, trace_path=1)
+        control_record = control_result.trace[attempt_month]
+        assert not control_record.finished[0]  # guard: this path is still alive
+        assert np.all(control_record.contributions[0].tfsa > 0.0)
+        assert np.all(control_record.withdrawals[0].rrif > 0.0)
+
+
+class TestAliveInvariantAndEstateNan:
+    """Requirements 9 and 10 (success criteria): ``alive`` tracks ``death_month_index``
+    exactly, and ``estate_after_tax`` is NaN until, and only until, the second death.
+    """
+
+    N_PATHS = 64
+
+    def _run(self, scenario, market, mortality, real_params, withdrawal_order, n_paths):
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+        recorder = RecordingPolicy(DoNothingPolicy(state.elections, withdrawal_order))
+        result = run(state, recorder, draws, market, real_params)
+        return result, recorder
+
+    def test_alive_invariant_on_the_example(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        _result, recorder = self._run(
+            scenario, market, mortality, real_params, withdrawal_order, n_paths=1
+        )
+        for state_seen, context in recorder.calls:
+            for person in state_seen.persons:
+                np.testing.assert_array_equal(
+                    person.alive, person.death_month_index > context.month_index
+                )
+
+    def test_alive_invariant_and_estate_nan_on_the_seeded_couple(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        result, recorder = self._run(
+            couple_scenario,
+            couple_market,
+            couple_mortality,
+            couple_real_params,
+            couple_withdrawal_order,
+            n_paths=self.N_PATHS,
+        )
+        opening_persons = recorder.calls[0][0].persons
+        # Guard: at least one path has a first death strictly before a second.
+        assert np.any(opening_persons[0].death_month_index != opening_persons[1].death_month_index)
+
+        for state_seen, context in recorder.calls:
+            for person in state_seen.persons:
+                np.testing.assert_array_equal(
+                    person.alive, person.death_month_index > context.month_index
+                )
+            expected_nan = context.month_index < np.maximum(
+                state_seen.persons[0].death_month_index, state_seen.persons[1].death_month_index
+            )
+            np.testing.assert_array_equal(np.isnan(state_seen.estate_after_tax), expected_nan)
+
+        assert np.all(np.isfinite(result.estate_after_tax))
+
+
+def _meet_rrif_lif_minimum(state):
+    """Withdraw exactly this year's RRIF/LIF minimum for every person, by hand.
+
+    Stands in for phase 6 of ``advance_month``, which this file's other #36 tests reach
+    through ``run`` rather than calling directly; here, ``open_year`` is followed straight
+    by ``close_year`` with no month in between, so ``close_year``'s own assertion that the
+    minimum has been met needs this first.
+    """
+    new_persons = []
+    cash = state.cash
+    for person in state.persons:
+        minimum_rrif = person.rrif.annual_minimum
+        minimum_lif = person.lif.annual_minimum
+        new_rrif = updated(
+            person.rrif,
+            balance=person.rrif.balance - minimum_rrif,
+            withdrawn_ytd=minimum_rrif,
+        )
+        new_lif = updated(
+            person.lif, balance=person.lif.balance - minimum_lif, withdrawn_ytd=minimum_lif
+        )
+        new_income = updated(
+            person.income,
+            rrif_lif_withdrawals=person.income.rrif_lif_withdrawals + minimum_rrif + minimum_lif,
+        )
+        cash = CashState(balance=cash.balance + minimum_rrif + minimum_lif)
+        new_persons.append(updated(person, rrif=new_rrif, lif=new_lif, income=new_income))
+    return updated(state, persons=tuple(new_persons), cash=cash)
+
+
+class TestAfterTaxNetWorthOnTheCouple:
+    """Requirement 15: the couple's first December close matches the #36 section 6 formula."""
+
+    def test_first_close_matches_the_formula(self, couple_scenario, couple_real_params):
+        state = build_initial_state(couple_scenario, n_paths=2)
+        opened = open_year(state, couple_real_params)
+        opened = _meet_rrif_lif_minimum(opened)
+        closed = close_year(opened, couple_real_params)
+
+        record = closed.history[-1]
+        assert np.all(record.after_tax_net_worth < record.net_worth)
+
+        year = closed.year
+        january_month_index = closed.month_index - (closed.month - 1)
+        hyp_total = np.zeros(closed.n_paths, dtype=np.float64)
+        gross = closed.cash.balance.copy()
+        for person in closed.persons:
+            deemed = updated(
+                person.income,
+                rrif_lif_withdrawals=(
+                    person.income.rrif_lif_withdrawals
+                    + person.rrsp.balance
+                    + person.rrif.balance
+                    + person.lira.balance
+                    + person.lif.balance
+                ),
+                capital_gains=(
+                    person.income.capital_gains + taxable.deemed_disposition(person.taxable)
+                ),
+            )
+            age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+            assessment = person_assessment(
+                deemed,
+                age_end,
+                0,
+                0,
+                closed.province,
+                couple_real_params,
+                january_month_index,
+                died_in_year=True,
+            )
+            hyp_total = hyp_total + (assessment.total - person.income.remitted)
+            gross = (
+                gross
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+                + person.tfsa.balance
+                + person.taxable.balance
+            )
+        expected = gross - hyp_total
+        np.testing.assert_allclose(record.after_tax_net_worth, expected)
+
+
+class TestDeadPersonStopsParticipating:
+    """D-B: a dead person's own account never receives a contribution, and an RESP
+    wind-up after the subscriber's death credits the living spouse instead.
+    """
+
+    DEATH_MONTH_INDEX = 15
+    CONTRIBUTION_MONTH_INDEX = 20
+
+    def test_contribution_to_the_dead_person_is_capped_at_zero(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        state = _force_death(couple_opening_state, 0, self.DEATH_MONTH_INDEX)
+        n_paths = state.n_paths
+        amount = np.full(n_paths, 500.0)
+        script = {
+            self.CONTRIBUTION_MONTH_INDEX: (
+                Transfer(person_index=0, from_kind="cash", to_kind="tfsa", amount=amount),
+                Transfer(person_index=1, from_kind="cash", to_kind="tfsa", amount=amount),
+            )
+        }
+        policy = ScriptedPolicy(state.elections, couple_withdrawal_order, script)
+        recorder = RecordingPolicy(policy)
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        record = result.trace[self.CONTRIBUTION_MONTH_INDEX]
+        np.testing.assert_allclose(record.contributions[0].tfsa, 0.0)
+        # Guard: the identical transfer to the living survivor really did move money.
+        assert np.all(record.contributions[1].tfsa > 0.0)
+
+    def test_wind_up_after_the_subscribers_death_credits_the_survivor(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        n_paths = couple_opening_state.n_paths
+        resp_state = RespState(
+            contributions=np.zeros(n_paths),
+            grants=np.zeros(n_paths),
+            income=np.full(n_paths, 5_000.0),
+            contributions_lifetime=np.zeros(n_paths),
+            grants_lifetime=np.zeros(n_paths),
+            grant_room=np.zeros(n_paths),
+            grant_received_ytd=np.zeros(n_paths),
+            contributed_ytd=np.zeros(n_paths),
+            subscriber_index=0,
+            education_start_month_index=4,
+            education_months=1,
+            education_monthly_cost=0.0,
+            wound_up=np.zeros(n_paths, dtype=bool),
+        )
+        beneficiary = BeneficiaryState(
+            beneficiary_id="child", birth_year=2015, birth_month=1, resp=resp_state
+        )
+        state = updated(couple_opening_state, beneficiaries=(beneficiary,))
+        state = _force_death(state, 0, 3)  # a dies well before the wind-up (threshold 5)
+
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        run(state, recorder, couple_draws, couple_market, couple_real_params)
+
+        # Month 6's phase-7 snapshot reflects month 5's wind-up (threshold = 4 + 1 = 5), by
+        # which point the plan's value has grown for months 0-4 (contributions and grants
+        # stay zero throughout, so growth compounds the income bucket alone -- the same
+        # arithmetic as engine.accounts.resp.grow).
+        r_resp = couple_market.weights("resp")
+        expected_value = 5_000.0
+        for m in range(5):
+            expected_value *= 1 + r_resp @ couple_draws.real_returns[m]
+
+        after_wind_up = recorder.calls[6][0]
+        np.testing.assert_allclose(
+            after_wind_up.persons[1].income.resp_accumulated_income, expected_value
+        )
+        np.testing.assert_allclose(after_wind_up.persons[0].income.resp_accumulated_income, 0.0)
+
+    def test_wind_up_credits_the_subscriber_or_the_spouse_per_path(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        """T3 (round 3, D-B(ii)): both branches of the wind-up credit rule, side by side
+        on two paths -- the subscriber's own death forced before the wind-up on path 0
+        only, so path 1 exercises the living-subscriber branch.
+        """
+        n_paths = 2
+        draws = build_draws(
+            couple_scenario, couple_market, n_paths=n_paths, mortality=couple_mortality
+        )
+        state = build_initial_state(couple_scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, couple_mortality)
+
+        resp_state = RespState(
+            contributions=np.zeros(n_paths),
+            grants=np.zeros(n_paths),
+            income=np.full(n_paths, 5_000.0),
+            contributions_lifetime=np.zeros(n_paths),
+            grants_lifetime=np.zeros(n_paths),
+            grant_room=np.zeros(n_paths),
+            grant_received_ytd=np.zeros(n_paths),
+            contributed_ytd=np.zeros(n_paths),
+            subscriber_index=0,
+            education_start_month_index=4,
+            education_months=1,
+            education_monthly_cost=0.0,
+            wound_up=np.zeros(n_paths, dtype=bool),
+        )
+        beneficiary = BeneficiaryState(
+            beneficiary_id="child", birth_year=2015, birth_month=1, resp=resp_state
+        )
+        state = updated(state, beneficiaries=(beneficiary,))
+
+        # a dies at month 3 (before the wind-up, threshold 5) on path 0 only; path 1
+        # keeps a alive, forced explicitly (rather than left to the natural draw) so
+        # the test cannot flake on an early natural death there.
+        person_a = state.persons[0]
+        forced_death = np.array([3, draws.n_months - 2], dtype=np.int64)
+        person_a = updated(person_a, death_month_index=forced_death)
+        state = updated(state, persons=(person_a, state.persons[1]))
+
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        run(state, recorder, draws, couple_market, couple_real_params)
+
+        r_resp = couple_market.weights("resp")
+        expected_value = np.full(n_paths, 5_000.0)
+        for m in range(5):
+            expected_value = expected_value * (1 + r_resp @ draws.real_returns[m])
+        assert np.all(expected_value > 0.0)  # guard
+
+        after_wind_up = recorder.calls[6][0]
+        a_income = after_wind_up.persons[0].income.resp_accumulated_income
+        b_income = after_wind_up.persons[1].income.resp_accumulated_income
+
+        # Path 0: a is dead -> credited to b, the spouse; a's own ledger gets 0.
+        np.testing.assert_allclose(b_income[0], expected_value[0])
+        np.testing.assert_allclose(a_income[0], 0.0)
+        # Path 1: a is alive -> credited to a, the subscriber; b's ledger gets 0.
+        np.testing.assert_allclose(a_income[1], expected_value[1])
+        np.testing.assert_allclose(b_income[1], 0.0)
+
+
+class TestJanuaryFinalDeathAtRunLevel:
+    """R11: a run-level January final death, at zero inflation so the taxable ACB does
+    not erode across the January it dies in. Catches a phase-1/phase-2 swap: if
+    ``open_year`` ran after ``resolve_deaths`` instead of before it, the terminal
+    return would read last year's ledger, not an empty one.
+    """
+
+    DEATH_MONTH_INDEX = 12  # January 2027
+
+    def test_terminal_assessment_matches_decembers_close(
+        self, scenario, market, mortality, withdrawal_order
+    ):
+        zero_inflation_real_params = real_year(load_year(scenario.start_year), 0.0)
+        draws = build_draws(scenario, market, n_paths=1, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=1)
+        state = draw_deaths(state, draws, mortality)
+        person = updated(
+            state.persons[0],
+            death_month_index=np.full(1, self.DEATH_MONTH_INDEX, dtype=np.int64),
+        )
+        state = updated(state, persons=(person,))
+
+        policy = DoNothingPolicy(state.elections, withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        result = run(state, recorder, draws, market, zero_inflation_real_params, trace_path=0)
+
+        record = result.trace[self.DEATH_MONTH_INDEX]
+        december_balances = result.trace[self.DEATH_MONTH_INDEX - 1].balances_close[0]
+
+        # December's taxable ACB, independently: one month of replayed distributions on
+        # top of what RecordingPolicy saw before that month's own growth (the one piece
+        # balances_close does not carry).
+        december_month_index = self.DEATH_MONTH_INDEX - 1
+        pre_growth_taxable = recorder.calls[december_month_index][0].persons[0].taxable
+        weighted_yields = market.weighted_yields("taxable")
+        interest, dividends, gains = taxable.distributions_monthly(
+            pre_growth_taxable.balance, weighted_yields
+        )
+        december_acb = pre_growth_taxable.acb + interest + dividends + gains
+
+        zero_ledger = IncomeLedger(
+            **{f.name: np.zeros(1) for f in dataclasses.fields(IncomeLedger)}
+        )
+        deemed = updated(
+            zero_ledger,
+            rrif_lif_withdrawals=(
+                december_balances.rrsp
+                + december_balances.rrif
+                + december_balances.lira
+                + december_balances.lif
+            ),
+            capital_gains=december_balances.taxable - december_acb,
+        )
+        age_end = timeline.age_at_end_of_year(
+            person.birth_year, person.birth_month, state.year + self.DEATH_MONTH_INDEX // 12
+        )
+        expected = person_assessment(
+            deemed,
+            age_end,
+            np.zeros(1),
+            np.zeros(1),
+            state.province,
+            zero_inflation_real_params,
+            self.DEATH_MONTH_INDEX,
+            died_in_year=True,
+        )
+        np.testing.assert_allclose(record.context.terminal_assessment, expected.total)

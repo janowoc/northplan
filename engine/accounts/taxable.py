@@ -193,6 +193,41 @@ def deemed_disposition(state: TaxableState) -> NDArray[np.float64]:
     return np.asarray(state.balance - state.acb, dtype=np.float64)
 
 
+def pass_to_survivor(
+    deceased: TaxableState, survivor: TaxableState, mask: ArrayLike
+) -> tuple[TaxableState, TaxableState]:
+    """Roll a deceased person's taxable holding to their surviving spouse's, at cost.
+
+    Both ``balance`` and ``acb`` move together, so no gain is realized by the
+    rollover itself — a spousal rollover of a taxable holding carries over the
+    adjusted cost base rather than triggering :func:`deemed_disposition`.
+    Paths outside ``mask`` are untouched on both sides
+    (``docs/limitations.md`` L41).
+
+    Args:
+        deceased: The deceased person's opening taxable state.
+        survivor: The surviving spouse's opening taxable state.
+        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+            is dying this month and the survivor is alive.
+
+    Returns:
+        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` and
+        ``new_deceased.acb`` are exactly zero where ``mask`` is true.
+    """
+    mask_arr = np.asarray(mask, dtype=bool)
+    moved_balance = np.where(mask_arr, deceased.balance, 0.0)
+    moved_acb = np.where(mask_arr, deceased.acb, 0.0)
+    new_deceased = updated(
+        deceased,
+        balance=np.where(mask_arr, 0.0, deceased.balance),
+        acb=np.where(mask_arr, 0.0, deceased.acb),
+    )
+    new_survivor = updated(
+        survivor, balance=survivor.balance + moved_balance, acb=survivor.acb + moved_acb
+    )
+    return new_deceased, new_survivor
+
+
 def erode_nominal(state: TaxableState, inflation_rate: float) -> TaxableState:
     """One January's decay of ``acb`` only — never ``balance``.
 

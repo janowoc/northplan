@@ -85,6 +85,54 @@ def convert_to_lif(lira: LiraState, lif: LifState, year: int) -> tuple[LiraState
     return new_lira, new_lif
 
 
+def spousal_rollover(
+    deceased: LiraState, survivor: LiraState, mask: np.ndarray
+) -> tuple[LiraState, LiraState]:
+    """Roll a deceased person's LIRA balance to their surviving spouse's, tax-deferred.
+
+    Balance only. The survivor's ``jurisdiction`` becomes the deceased's when
+    the survivor's is empty (``""``, no LIRA of their own yet) and something
+    actually moved on at least one path; otherwise it is left unchanged.
+    Paths outside ``mask`` are untouched on both sides
+    (``docs/limitations.md`` L41).
+
+    Args:
+        deceased: The deceased person's opening LIRA state.
+        survivor: The surviving spouse's opening LIRA state.
+        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+            is dying this month and the survivor is alive.
+
+    Returns:
+        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` is exactly
+        zero where ``mask`` is true.
+
+    Raises:
+        ValueError: If something moves on at least one path and both states
+            name a jurisdiction and they differ — two jurisdictions do not
+            merge (``docs/limitations.md`` L47).
+    """
+    mask_arr = np.asarray(mask, dtype=bool)
+    moved = np.where(mask_arr, deceased.balance, 0.0)
+    something_moved = bool(np.any(moved > 0))
+    if (
+        something_moved
+        and deceased.jurisdiction
+        and survivor.jurisdiction
+        and deceased.jurisdiction != survivor.jurisdiction
+    ):
+        raise ValueError(
+            f"deceased LIRA jurisdiction {deceased.jurisdiction!r} and survivor LIRA "
+            f"jurisdiction {survivor.jurisdiction!r} differ; two jurisdictions do not "
+            f"merge (docs/limitations.md L47)."
+        )
+    jurisdiction = survivor.jurisdiction
+    if jurisdiction == "" and something_moved:
+        jurisdiction = deceased.jurisdiction
+    new_deceased = updated(deceased, balance=np.where(mask_arr, 0.0, deceased.balance))
+    new_survivor = updated(survivor, balance=survivor.balance + moved, jurisdiction=jurisdiction)
+    return new_deceased, new_survivor
+
+
 def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
     """Whether a LIRA must be converted to a LIF by the end of this year.
 

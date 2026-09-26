@@ -42,7 +42,9 @@ class Assessment:
     this is not passed through ``engine.core.state.freeze`` and has no
     ``__post_init__``. ``net_income`` is the split-adjusted line 23400 the
     OAS repayment was tested against; ``net_income_after_repayment`` is line
-    23600, which the brackets and the age amount are both applied to instead.
+    23600, which the brackets and the age amount are both applied to instead;
+    ``taxable_income`` is line 26000, equal to ``net_income_after_repayment``
+    except in this person's year of death (``docs/limitations.md`` L17).
 
     Attributes:
         federal: Federal tax payable after credits, ``(n_paths,)``.
@@ -54,7 +56,10 @@ class Assessment:
         total: ``federal + provincial + oas_repayment + aip_penalty``.
         net_income: Net income at the elected split (line 23400), ``(n_paths,)``.
         net_income_after_repayment: ``net_income`` less ``oas_repayment`` (line
-            23600, and taxable income with it), ``(n_paths,)``.
+            23600), ``(n_paths,)``.
+        taxable_income: Line 26000: ``net_income_after_repayment`` less the
+            year-of-death capital loss deduction, ``(n_paths,)``. What the
+            brackets and the age amount are actually applied to.
     """
 
     federal: NDArray[np.float64]
@@ -64,6 +69,7 @@ class Assessment:
     total: NDArray[np.float64]
     net_income: NDArray[np.float64]
     net_income_after_repayment: NDArray[np.float64]
+    taxable_income: NDArray[np.float64]
 
 
 def oas_repayment(
@@ -105,18 +111,23 @@ def person_assessment(
     province: str,
     params: RealParamYear,
     january_month_index: int,
+    *,
+    died_in_year: ArrayLike = False,
 ) -> Assessment:
     """One person's federal and provincial assessment, including the OAS repayment and AIP tax.
 
-    Taxable income is net income less the OAS repayment (line 23600), so
-    ``gross_tax`` and the age amount are both evaluated on that figure, not on
-    net income directly (L14). ``oas_received`` is not an argument: it is always
-    ``ledger.oas``. The eligible pension income transferred carries its share
-    of the pension income credit eligibility with it, which is what
-    ``eligible_pension_income - transfer_out + transfer_in`` does below. The
-    AIP special tax (line 41800) is computed from
-    ``ledger.resp_accumulated_income`` and is additional tax only; the
-    payment itself is already in net income.
+    Three figures, three different bases. The OAS repayment is tested against net income
+    (line 23400). ``gross_tax`` -- federal and provincial brackets alike -- is applied to
+    line 26000: line 23600 (net income less the OAS repayment) less the ITA 111(2)
+    year-of-death capital loss deduction (``died_in_year``, L17). The non-refundable
+    credits, age amount included, are tested against line 23600 itself, matching the CRA
+    form's own basis for them. The deduction therefore changes neither line 23400 nor line
+    23600 -- only the brackets see it. ``oas_received`` is not an argument: it is always
+    ``ledger.oas``. The eligible pension income transferred carries its share of the
+    pension income credit eligibility with it, which is what ``eligible_pension_income -
+    transfer_out + transfer_in`` does below. The AIP special tax (line 41800) is computed
+    from ``ledger.resp_accumulated_income`` and is additional tax only; the payment itself
+    is already in net income.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -128,6 +139,9 @@ def person_assessment(
         province: Two-letter province code of residence.
         params: Every parameter file for the tax year, in real dollars.
         january_month_index: Month index of January of the tax year.
+        died_in_year: Whether this is this person's year of death,
+            ``(n_paths,)`` or scalar bool; default ``False`` reproduces
+            every call site that omits it.
 
     Returns:
         This person's :class:`Assessment` at the given transfer.
@@ -142,11 +156,13 @@ def person_assessment(
     )
     repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
     penalty = resp.aip_penalty(ledger.resp_accumulated_income, params.resp)
-    taxable = federal.taxable_income(net, repay)
+    line_23600 = federal.taxable_income(net, repay)
+    deduction = federal.death_year_capital_loss_deduction(ledger, fed, died_in_year)
+    line_26000 = np.maximum(line_23600 - deduction, 0.0)
     fed_tax = federal.net_tax(
-        federal.gross_tax(taxable, fed, january_month_index),
+        federal.gross_tax(line_26000, fed, january_month_index),
         federal.non_refundable_credits(
-            taxable,
+            line_23600,
             age_at_end_of_year,
             epi,
             ledger.cpp_base_contributions,
@@ -157,9 +173,9 @@ def person_assessment(
         ),
     )
     prov_tax = provincial.net_tax(
-        provincial.gross_tax(taxable, prov, january_month_index),
+        provincial.gross_tax(line_26000, prov, january_month_index),
         provincial.non_refundable_credits(
-            taxable,
+            line_23600,
             age_at_end_of_year,
             epi,
             ledger.cpp_base_contributions,
@@ -177,7 +193,8 @@ def person_assessment(
         aip_penalty=penalty,
         total=fed_tax + prov_tax + repay + penalty,
         net_income=net,
-        net_income_after_repayment=taxable,
+        net_income_after_repayment=line_23600,
+        taxable_income=line_26000,
     )
 
 
@@ -237,13 +254,27 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
         _age_at_end_of_year(person.birth_year, person.birth_month, state.year)
         for person in state.persons
     )
+    # "This is the death year" -- compared, never subtracted, so
+    # engine.core.state.DEATH_NOT_DRAWN's overflow never enters the arithmetic.
+    died_in_year = tuple(
+        (january_month_index <= person.death_month_index)
+        & (person.death_month_index <= state.month_index)
+        for person in state.persons
+    )
 
     if len(state.persons) == 1:
         person = state.persons[0]
         zero = np.zeros(state.n_paths, dtype=np.float64)
         return (
             person_assessment(
-                person.income, ages[0], zero, zero, state.province, params, january_month_index
+                person.income,
+                ages[0],
+                zero,
+                zero,
+                state.province,
+                params,
+                january_month_index,
+                died_in_year=died_in_year[0],
             ),
         )
 
@@ -285,12 +316,26 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
             t_in1, t_out1 = zeros, transfer
         assessments0.append(
             person_assessment(
-                person0.income, age0, t_in0, t_out0, state.province, params, january_month_index
+                person0.income,
+                age0,
+                t_in0,
+                t_out0,
+                state.province,
+                params,
+                january_month_index,
+                died_in_year=died_in_year[0],
             )
         )
         assessments1.append(
             person_assessment(
-                person1.income, age1, t_in1, t_out1, state.province, params, january_month_index
+                person1.income,
+                age1,
+                t_in1,
+                t_out1,
+                state.province,
+                params,
+                january_month_index,
+                died_in_year=died_in_year[1],
             )
         )
 

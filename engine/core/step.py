@@ -17,6 +17,8 @@ row.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -35,13 +37,20 @@ from engine.benefits import gis as gis_mod
 from engine.benefits import oas as oas_mod
 from engine.benefits import pension as pension_mod
 from engine.core import timeline
-from engine.core.context import ByKind, MonthContext, MonthRecord, PersonInflows
+from engine.core.context import (
+    AccountAmounts,
+    ByKind,
+    MonthContext,
+    MonthRecord,
+    PersonInflows,
+)
 from engine.core.indexation import RealParamYear
 from engine.core.state import (
     BeneficiaryState,
     CashState,
     Elections,
     HouseholdState,
+    IncomeLedger,
     PersonState,
     YearRecord,
     select_spending_level,
@@ -52,7 +61,12 @@ from engine.policy.base import Decision, Policy, Transfer
 from engine.scenario import CONTRIBUTION_KINDS, WITHDRAWAL_KINDS
 from engine.tax import federal as federal_mod
 from engine.tax import withholding as withholding_mod
-from engine.tax.combined import household_assessment
+from engine.tax.combined import Assessment, household_assessment, person_assessment
+
+#: Every field of ``IncomeLedger``, in declaration order. Read once at import time
+#: rather than hand-copied, so the second-death distribution (``resolve_deaths``) and
+#: ``close_year``'s assertions can never silently miss a field the dataclass grows.
+_INCOME_LEDGER_FIELDS: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(IncomeLedger))
 
 #: Contribution kinds a per-person ByKind ledger tracks -- CONTRIBUTION_KINDS less "resp",
 #: which is per-beneficiary and carried in its own tuple (MonthRecord.resp_contributions).
@@ -69,17 +83,24 @@ def advance_month(
     """Advance the household by one month, across every path. Order of operations:
 
     1. January: :func:`open_year`.
-    2. Deaths: :func:`resolve_deaths`, a no-op until #36.
-    3. Inflows to household cash: employment net of CPP and EI contributions, CPP, gross OAS, DB
-       pensions with any bridge, and the RESP education draw for each enrolled beneficiary. The
-       step applies no erosion factor: ``RealParamSet.amount`` and
-       ``engine.benefits.pension.db_pension_monthly`` have already applied theirs. GIS is never
-       paid (L2). Every amount is recorded into the ledger by kind, contributions and premiums
-       included.
-    4. Withholding: payroll withholding on employment and on each DB pension, remitted from cash
-       into ``IncomeLedger.remitted`` (L16).
-    5. Outflows from cash: spending at ``spending_monthly``, the education cost of each enrolled
-       beneficiary, and in the filing month :func:`settle_tax_balance`.
+    2. Deaths: :func:`resolve_deaths`. ``alive`` becomes ``death_month_index >
+       month_index`` for every person; the first death's spousal rollovers, or the
+       second death's terminal return, happen here, in the same month as the death
+       that causes them (L40, L41, L42).
+    3. Inflows to household cash: employment net of CPP and EI contributions, CPP
+       (own and survivor increment), gross OAS, DB pensions (own and survivor share)
+       with any bridge, and the RESP education draw for each enrolled beneficiary.
+       The step applies no erosion factor: ``RealParamSet.amount`` and
+       ``engine.benefits.pension.db_pension_monthly``/``survivor_pension_monthly``
+       have already applied theirs. GIS is never paid (L2). Every amount is recorded
+       into the ledger by kind, contributions and premiums included.
+    4. Withholding: payroll withholding on employment, on each DB pension, and on
+       each DB pension survivor share, remitted from cash into
+       ``IncomeLedger.remitted`` (L16).
+    5. Outflows from cash: spending at ``spending_monthly`` scaled by the survivor
+       share or to zero on a finished path, the education cost of each enrolled
+       beneficiary (zero on a finished path, L34), and in the filing month
+       :func:`settle_tax_balance`.
     6. Forced withdrawals to cash: each RRIF's and LIF's ``minimum_still_required``, and where
        ``Elections.fill_pension_credit`` holds, the pension-credit fill as a forced RRIF
        withdrawal spread over the months left in the year, net of what is left of the LIF
@@ -165,8 +186,25 @@ def advance_month_traced(
     if timeline.is_year_start(state.month):
         state = open_year(state, real_params)
 
-    # Phase 2: deaths (no-op until #36).
-    state = resolve_deaths(state, real_params)
+    # Phase 2: deaths.
+    state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
+        state, real_params
+    )
+
+    # "finished" (every person not alive) and each person's "alive" are fixed by phase 2 for
+    # the rest of the month -- no later phase touches PersonState.alive.
+    alive_after_phase2 = tuple(p.alive for p in state.persons)
+    finished = np.logical_and.reduce([~a for a in alive_after_phase2])
+
+    n_persons = len(state.persons)
+    if n_persons == 2:
+        exactly_one_alive = alive_after_phase2[0] ^ alive_after_phase2[1]
+        spending_mult = np.where(
+            finished, 0.0, np.where(exactly_one_alive, state.spending_survivor_share, 1.0)
+        )
+    else:
+        spending_mult = np.where(finished, 0.0, 1.0)
+    spending_paid = state.spending_monthly * spending_mult
 
     persons = list(state.persons)
     beneficiaries = list(state.beneficiaries)
@@ -193,10 +231,10 @@ def advance_month_traced(
     )
 
     # Phase 5: outflows from cash.
-    cash = cash_mod.pay(cash, np.full(n_paths, state.spending_monthly, dtype=np.float64))
-    spending_achieved_ytd = state.spending_achieved_ytd + state.spending_monthly
+    cash = cash_mod.pay(cash, spending_paid)
+    spending_achieved_ytd = state.spending_achieved_ytd + spending_paid
     beneficiaries, cash, education_costs = _phase5_education_costs(
-        beneficiaries, cash, state.month_index
+        beneficiaries, cash, state.month_index, finished
     )
     if timeline.is_filing_month(state.month, real_params.federal):
         tax_settlement = tuple(p.balance_owing.copy() for p in persons)
@@ -228,10 +266,14 @@ def advance_month_traced(
         year=state.year,
         month=state.month,
         cash_opening=cash_opening,
+        rolled_out=rolled_out,
+        rolled_acb=rolled_acb,
+        terminal_assessment=terminal_assessment,
+        cash_to_estate=cash_to_estate,
         inflows=tuple(inflows),
         education_draws=tuple(education_draws),
         payroll_withholding=tuple(payroll_withholding),
-        spending=np.full(n_paths, state.spending_monthly, dtype=np.float64),
+        spending=spending_paid,
         education_costs=tuple(education_costs),
         tax_settlement=tax_settlement,
         forced_withdrawals=tuple(forced_withdrawals),
@@ -274,23 +316,11 @@ def advance_month_traced(
     # leaves cash short, the shortfall beyond this month's spending is forgiven (L43).
     persons, cash, floor_withdrawals = _phase9_cash_floor(persons, cash, policy.withdrawal_order())
     depletion_deficit = np.clip(-cash.balance, 0, None)
-    spending_cut = np.minimum(depletion_deficit, state.spending_monthly)
+    spending_cut = np.minimum(depletion_deficit, spending_paid)
     spending_achieved_ytd = spending_achieved_ytd - spending_cut
     depleted = state.depleted | (depletion_deficit > 0)
     cash = CashState(balance=np.clip(cash.balance, 0, None))
-
-    record = MonthRecord(
-        context=context,
-        withdrawals=tuple(withdrawals),
-        withdrawal_withholding=tuple(withdrawal_withholding),
-        contributions=tuple(contributions),
-        resp_contributions=tuple(resp_contributions),
-        wind_up_to_cash=tuple(wind_up_to_cash),
-        floor_withdrawals=tuple(floor_withdrawals),
-        depletion_deficit=depletion_deficit,
-        spending_cut=spending_cut,
-        cash_close=cash.balance,
-    )
+    cash_close = cash.balance
 
     # Phase 10: growth.
     persons, beneficiaries = _phase10_growth(persons, beneficiaries, market, month_returns)
@@ -307,6 +337,41 @@ def advance_month_traced(
     # Phase 11: December.
     if timeline.is_year_end(state.month):
         new_state = close_year(new_state, real_params)
+
+    balances_close = tuple(
+        AccountAmounts(
+            rrsp=person.rrsp.balance,
+            rrif=person.rrif.balance,
+            lira=person.lira.balance,
+            lif=person.lif.balance,
+            tfsa=person.tfsa.balance,
+            taxable=person.taxable.balance,
+        )
+        for person in new_state.persons
+    )
+    resp_close = tuple(
+        beneficiary.resp.contributions + beneficiary.resp.grants + beneficiary.resp.income
+        for beneficiary in new_state.beneficiaries
+    )
+
+    record = MonthRecord(
+        context=context,
+        withdrawals=tuple(withdrawals),
+        withdrawal_withholding=tuple(withdrawal_withholding),
+        contributions=tuple(contributions),
+        resp_contributions=tuple(resp_contributions),
+        wind_up_to_cash=tuple(wind_up_to_cash),
+        floor_withdrawals=tuple(floor_withdrawals),
+        depletion_deficit=depletion_deficit,
+        spending_cut=spending_cut,
+        cash_close=cash_close,
+        balances_close=balances_close,
+        resp_close=resp_close,
+        alive=alive_after_phase2,
+        depleted=depleted,
+        finished=finished,
+        estate_after_tax=state.estate_after_tax,
+    )
 
     # Phase 12: advance the month.
     next_year, next_month = timeline.next_month(state.year, state.month)
@@ -335,15 +400,33 @@ def _phase3_inflows(
     january_month_index: int,
     real_params: RealParamYear,
 ) -> tuple[list[PersonState], CashState, list[PersonInflows], list[list[NDArray[np.float64]]]]:
-    """Employment (net of CPP/EI), CPP, gross OAS, and DB pensions, per person.
+    """Employment (net of CPP/EI), CPP, gross OAS, and DB pensions, own and survivor, per person.
 
-    The fourth return value is each person's pensions, in ``person.pensions`` order, at this
-    month's amount -- phase 4 withholds on these directly rather than calling
-    ``pension.db_pension_monthly`` a second time.
+    The fourth return value is each person's pensions, in ``person.pensions`` order followed by
+    any inherited survivor streams, at this month's amount -- phase 4 withholds on these
+    directly rather than calling ``db_pension_monthly``/``survivor_pension_monthly`` again.
+
+    CPP survivor (Q7, L19, L40) and the DB survivor share (Q6, L40, L59) are computed here,
+    stateless, from the other person's own amount this month: for a two-person household, for
+    each person ``i`` with the other person ``j``, ``receiving = persons[i].alive &
+    ~persons[j].alive``. The CPP survivor increment reads ``persons[j].cpp.in_pay_monthly`` when
+    set, else the age-65 base from ``persons[j]``'s contributory history, with no start
+    adjustment. ``person.cpp.monthly_amount`` stays the person's own amount; ``income.cpp`` and
+    ``income.db_pension`` accumulate own plus survivor. There is no withholding on the CPP
+    survivor increment.
     """
-    new_persons: list[PersonState] = []
-    inflows: list[PersonInflows] = []
+    n_persons = len(persons)
+
+    employments: list[NDArray[np.float64]] = []
+    cpp_contributions_totals: list[NDArray[np.float64]] = []
+    ei_premiums_list: list[NDArray[np.float64]] = []
+    cpp_amounts: list[NDArray[np.float64]] = []
+    oas_amounts: list[NDArray[np.float64]] = []
+    db_pension_totals: list[NDArray[np.float64]] = []
     pension_amounts: list[list[NDArray[np.float64]]] = []
+    cpp_base_contributions_list: list[NDArray[np.float64]] = []
+    cpp_enhanced_contributions_list: list[NDArray[np.float64]] = []
+
     for person in persons:
         alive = person.alive
         employment = employment_mod.employment_income_monthly(
@@ -373,19 +456,75 @@ def _phase3_inflows(
             )
             db_pension_total = db_pension_total + pension_amount
             this_person_pension_amounts.append(pension_amount)
+
+        employments.append(employment)
+        cpp_contributions_totals.append(cpp_contributions.base + cpp_contributions.enhanced)
+        cpp_base_contributions_list.append(cpp_contributions.base)
+        cpp_enhanced_contributions_list.append(cpp_contributions.enhanced)
+        ei_premiums_list.append(ei_premiums)
+        cpp_amounts.append(cpp_amount)
+        oas_amounts.append(oas_amount)
+        db_pension_totals.append(db_pension_total)
         pension_amounts.append(this_person_pension_amounts)
+
+    cpp_survivor_amounts = [np.zeros_like(arr) for arr in cpp_amounts]
+    db_pension_survivor_amounts = [np.zeros_like(arr) for arr in cpp_amounts]
+
+    if n_persons == 2:
+        for i, j in ((0, 1), (1, 0)):
+            person_i = persons[i]
+            person_j = persons[j]
+            receiving = person_i.alive & ~person_j.alive
+
+            if person_j.cpp.in_pay_monthly is not None:
+                base_j = np.asarray(person_j.cpp.in_pay_monthly, dtype=np.float64)
+            else:
+                base_j = cpp_mod.base_pension_monthly(
+                    person_j.cpp.contributory_history, month_index, real_params.cpp
+                )
+            base_j = np.broadcast_to(base_j, cpp_amounts[i].shape).astype(np.float64)
+            cpp_survivor_amounts[i] = np.where(
+                receiving,
+                cpp_mod.survivor_pension_monthly(
+                    base_j, cpp_amounts[i], month_index, real_params.cpp
+                ),
+                0.0,
+            )
+
+            db_survivor_total = np.zeros_like(cpp_amounts[i])
+            for pension in person_j.pensions:
+                stream = pension_mod.survivor_pension_monthly(
+                    pension, month_index, receiving, real_params.inflation_rate
+                )
+                db_survivor_total = db_survivor_total + stream
+                pension_amounts[i].append(stream)
+            db_pension_survivor_amounts[i] = db_survivor_total
+
+    new_persons: list[PersonState] = []
+    inflows: list[PersonInflows] = []
+    for index, person in enumerate(persons):
+        employment = employments[index]
+        cpp_contributions_total = cpp_contributions_totals[index]
+        ei_premiums = ei_premiums_list[index]
+        cpp_amount = cpp_amounts[index]
+        oas_amount = oas_amounts[index]
+        db_pension_total = db_pension_totals[index]
+        cpp_survivor = cpp_survivor_amounts[index]
+        db_pension_survivor = db_pension_survivor_amounts[index]
 
         new_income = updated(
             person.income,
             employment=person.income.employment + employment,
-            cpp_base_contributions=person.income.cpp_base_contributions + cpp_contributions.base,
+            cpp_base_contributions=(
+                person.income.cpp_base_contributions + cpp_base_contributions_list[index]
+            ),
             cpp_enhanced_contributions=(
-                person.income.cpp_enhanced_contributions + cpp_contributions.enhanced
+                person.income.cpp_enhanced_contributions + cpp_enhanced_contributions_list[index]
             ),
             ei_premiums=person.income.ei_premiums + ei_premiums,
-            cpp=person.income.cpp + cpp_amount,
+            cpp=person.income.cpp + cpp_amount + cpp_survivor,
             oas=person.income.oas + oas_amount,
-            db_pension=person.income.db_pension + db_pension_total,
+            db_pension=person.income.db_pension + db_pension_total + db_pension_survivor,
         )
         new_person = updated(
             person,
@@ -395,13 +534,14 @@ def _phase3_inflows(
         )
         new_persons.append(new_person)
 
-        cpp_contributions_total = cpp_contributions.base + cpp_contributions.enhanced
         cash = cash_mod.deposit(cash, employment)
         cash = cash_mod.pay(cash, cpp_contributions_total)
         cash = cash_mod.pay(cash, ei_premiums)
         cash = cash_mod.deposit(cash, cpp_amount)
         cash = cash_mod.deposit(cash, oas_amount)
         cash = cash_mod.deposit(cash, db_pension_total)
+        cash = cash_mod.deposit(cash, cpp_survivor)
+        cash = cash_mod.deposit(cash, db_pension_survivor)
 
         inflows.append(
             PersonInflows(
@@ -411,6 +551,8 @@ def _phase3_inflows(
                 cpp=cpp_amount,
                 oas=oas_amount,
                 db_pension=db_pension_total,
+                cpp_survivor=cpp_survivor,
+                db_pension_survivor=db_pension_survivor,
             )
         )
     return new_persons, cash, inflows, pension_amounts
@@ -484,13 +626,20 @@ def _phase5_education_costs(
     beneficiaries: list[BeneficiaryState],
     cash: CashState,
     month_index: int,
+    finished: NDArray[np.bool_],
 ) -> tuple[list[BeneficiaryState], CashState, list[NDArray[np.float64]]]:
-    """The education cost of each enrolled beneficiary, not counted toward spending achieved."""
+    """The education cost of each enrolled beneficiary, not counted toward spending achieved.
+
+    Zero on a ``finished`` path (L34): the plan has already left the household with the
+    beneficiary at the second death, so the household no longer pays the cost, even though a
+    balance-based gate would not otherwise stop it -- ``education_monthly_cost`` is fixed, not
+    drawn from the RESP's own (already zeroed) buckets.
+    """
     costs: list[NDArray[np.float64]] = []
     for beneficiary in beneficiaries:
         if _in_education_window(beneficiary, month_index):
-            cost = np.full(
-                cash.balance.shape, beneficiary.resp.education_monthly_cost, dtype=np.float64
+            cost = np.where(finished, 0.0, beneficiary.resp.education_monthly_cost).astype(
+                np.float64
             )
         else:
             cost = np.zeros(cash.balance.shape, dtype=np.float64)
@@ -730,6 +879,10 @@ def _phase8_transfers(
 ]:
     """Apply every withdrawal, in order, then every contribution, in order; then wind up any
     RESP whose education window has ended.
+
+    A contribution to a dead person's own account is capped at zero (L41); an RESP
+    wind-up's accumulated income is credited to the living spouse where the subscriber
+    has died (L41).
     """
     n_paths = cash.balance.shape[0]
     for transfer in decision.transfers:
@@ -776,9 +929,9 @@ def _phase8_transfers(
         if transfer.from_kind != "cash":
             continue
         available = np.clip(cash.balance, 0, None)
-        requested = np.minimum(transfer.amount, available)
 
         if transfer.to_kind == "resp":
+            requested = np.minimum(transfer.amount, available)
             b = transfer.person_index
             beneficiary = beneficiaries[b]
             resp_mod.governing_income_year_offset(real_params.resp)
@@ -799,6 +952,9 @@ def _phase8_transfers(
         else:
             i = transfer.person_index
             person = persons[i]
+            # D-B(i): a contribution intended for a dead person never reaches their
+            # account. Validation still accepts the transfer; the effective amount is 0.
+            requested = np.where(person.alive, np.minimum(transfer.amount, available), 0.0)
             if transfer.to_kind == "rrsp":
                 new_rrsp, contributed = rrsp_mod.contribute(person.rrsp, requested)
                 new_income = updated(
@@ -833,11 +989,41 @@ def _phase8_transfers(
             cash = cash_mod.deposit(cash, total_to_cash)
             subscriber_index = resp_state.subscriber_index
             subscriber = persons[subscriber_index]
-            new_income = updated(
-                subscriber.income,
-                resp_accumulated_income=subscriber.income.resp_accumulated_income + accumulated,
-            )
-            persons[subscriber_index] = updated(subscriber, income=new_income)
+            # D-B(ii): credited to the subscriber where alive, otherwise to the living
+            # spouse (successor subscriber). On a household of one, or where neither is
+            # alive, the path is already finished and the plan already zeroed, so
+            # ``accumulated`` is 0 either way.
+            if len(persons) == 2:
+                spouse_index = 1 - subscriber_index
+                spouse = persons[spouse_index]
+                credit_to_subscriber = np.where(subscriber.alive, accumulated, 0.0)
+                credit_to_spouse = np.where(subscriber.alive, 0.0, accumulated)
+                persons[subscriber_index] = updated(
+                    subscriber,
+                    income=updated(
+                        subscriber.income,
+                        resp_accumulated_income=(
+                            subscriber.income.resp_accumulated_income + credit_to_subscriber
+                        ),
+                    ),
+                )
+                persons[spouse_index] = updated(
+                    spouse,
+                    income=updated(
+                        spouse.income,
+                        resp_accumulated_income=(
+                            spouse.income.resp_accumulated_income + credit_to_spouse
+                        ),
+                    ),
+                )
+            else:
+                new_income = updated(
+                    subscriber.income,
+                    resp_accumulated_income=(
+                        subscriber.income.resp_accumulated_income + accumulated
+                    ),
+                )
+                persons[subscriber_index] = updated(subscriber, income=new_income)
             beneficiaries[b] = updated(beneficiary, resp=new_resp)
             wind_up_to_cash.append(total_to_cash)
         else:
@@ -1167,10 +1353,12 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
     7. Append the year to ``history``: a :class:`~engine.core.state.YearRecord` with this
        year's ``net_worth`` -- cash plus, summed over every person, the RRSP, RRIF, LIRA, LIF,
        TFSA and taxable balances, less item 4's ``balance_owing`` (the RESP is excluded, L34) --
-       ``after_tax_net_worth`` (a copy of ``net_worth`` until #36), this year's
-       ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over every person's assessment, of
-       ``total`` -- the AIP penalty and the OAS repayment included, everyone included), item 3's
-       ``net_income`` per person, item 6's ``gis_band`` per person, and ``depleted``.
+       ``after_tax_net_worth`` (the liquidation value as if every person died on 31 December
+       with no rollover, via :func:`_deemed_single_assessments` with ``died_in_year=True`` for
+       everyone, L42), this year's ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over
+       every person's assessment, of ``total`` -- the AIP penalty and the OAS repayment
+       included, everyone included), item 3's ``net_income`` per person, item 6's ``gis_band``
+       per person, and ``depleted``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
@@ -1301,10 +1489,23 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
     for assessment in assessments:
         tax_assessed = tax_assessed + assessment.total
 
+    hyp_assessments = _deemed_single_assessments(
+        tuple(final_persons),
+        year,
+        january_month_index,
+        state.province,
+        real_params,
+        tuple(True for _ in final_persons),
+    )
+    hyp_total = np.zeros(state.n_paths, dtype=np.float64)
+    for person, hyp in zip(final_persons, hyp_assessments, strict=True):
+        hyp_total = hyp_total + (hyp.total - person.income.remitted)
+    after_tax_net_worth = (net_worth + balance_owing_total) - hyp_total
+
     year_record = YearRecord(
         year=state.year,
         net_worth=net_worth,
-        after_tax_net_worth=net_worth.copy(),
+        after_tax_net_worth=after_tax_net_worth,
         spending=state.spending_achieved_ytd,
         tax_assessed=tax_assessed,
         net_income=tuple(assessment.net_income_after_repayment for assessment in assessments),
@@ -1354,30 +1555,268 @@ def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> Hou
     return updated(state, persons=tuple(new_persons), cash=cash)
 
 
+def _deemed_single_assessments(
+    persons: tuple[PersonState, ...],
+    year: int,
+    january_month_index: int,
+    province: str,
+    real_params: RealParamYear,
+    died_in_year: tuple[NDArray[np.bool_] | bool, ...],
+) -> tuple[Assessment, ...]:
+    """Assess every person alone, as if their registered balances and taxable holding
+    were fully realized this year -- the terminal-return arithmetic
+    :func:`resolve_deaths` uses for the second death (``docs/limitations.md`` L42) and
+    :func:`close_year` uses, hypothetically, for every living person every year
+    (``after_tax_net_worth``).
+
+    Builds a deemed ledger per person: this year's ledger, plus the whole RRSP, RRIF,
+    LIRA and LIF balance as RRIF/LIF income (RRSP included -- L42), plus the deemed
+    capital gain on the taxable holding
+    (``engine.accounts.taxable.deemed_disposition``). Assesses each alone, with no
+    pension split, via ``engine.tax.combined.person_assessment``.
+
+    Args:
+        persons: Every person to assess, in ``HouseholdState.persons`` order.
+        year: The calendar year being assessed.
+        january_month_index: Month index of January of that year.
+        province: Two-letter province code of residence.
+        real_params: Parameters for the tax year, in the scenario's real-dollar view.
+        died_in_year: Per person, whether this is their year of death
+            (``docs/limitations.md`` L17), same order as ``persons``.
+
+    Returns:
+        One :class:`~engine.tax.combined.Assessment` per person, in ``persons`` order.
+    """
+    zero = 0.0
+    assessments = []
+    for person, this_died_in_year in zip(persons, died_in_year, strict=True):
+        deemed = updated(
+            person.income,
+            rrif_lif_withdrawals=(
+                person.income.rrif_lif_withdrawals
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+            ),
+            capital_gains=(
+                person.income.capital_gains + taxable_mod.deemed_disposition(person.taxable)
+            ),
+        )
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+        assessments.append(
+            person_assessment(
+                deemed,
+                age_end,
+                zero,
+                zero,
+                province,
+                real_params,
+                january_month_index,
+                died_in_year=this_died_in_year,
+            )
+        )
+    return tuple(assessments)
+
+
 def resolve_deaths(
     state: HouseholdState,
     real_params: RealParamYear,
-) -> HouseholdState:
-    """Apply mortality for this month and its immediate consequences.
+) -> tuple[
+    HouseholdState,
+    tuple[AccountAmounts, ...],
+    tuple[NDArray[np.float64], ...],
+    NDArray[np.float64],
+    NDArray[np.float64],
+]:
+    """Apply mortality for this month: reads (never draws) ``death_month_index``, already
+    resolved once before the run by :func:`engine.core.build.draw_deaths`.
 
-    Monthly, not annual: a death in March stops three quarters of a year of OAS that an annual
-    step would pay in full, and the final return covers only the part-year to death.
+    ``death_month_index == k`` means the first month not alive: ``alive`` turns false for
+    month ``k`` itself, and every consequence of the death -- phase 3's survivor CPP and DB
+    increments, phase 5's spending scaling, and the rollover or terminal return below --
+    takes effect from month ``k`` too.
 
-    Consequences in the same month: OAS ceases for the deceased from the following month (GIS is
-    never paid, L2), a RRIF rolls to a surviving spouse tax-deferred, and with no survivor the
-    registered balance comes fully into income in the year of death.
+    With ``m = state.month_index`` and ``jan = m - (state.month - 1)``:
 
-    Every ``death_month_index`` is **pre-resolved** by :func:`engine.core.build.draw_deaths`
-    before the run starts, so this phase only ever *acts* on a month where
-    ``death_month_index == month_index`` for some person; it does not draw anything itself.
-    Returns ``state`` unchanged until #36.
+    1. ``alive_new = death_month_index > m``, written into the state.
+    2. **First death** (L41), for a household of two only: each dying person's six accounts
+       roll to the surviving spouse, via the account modules under ``engine.accounts``.
+       ``rolled_out``/``rolled_acb`` record the deceased's pre-roll amounts, zero wherever no
+       mask fires -- including a simultaneous death, where both masks are false.
+    3. **Final death** (L42), the first month every person's ``alive_new`` is false: every
+       person is assessed alone, via :func:`_deemed_single_assessments`, on this year's
+       ledger plus their registered balances and taxable deemed gain (``died_in_year =
+       death_month_index >= jan``). The household's terminal tax and its estate (gross
+       wealth, less that tax, less balance owing, plus remitted) are recorded into
+       ``estate_after_tax``/``terminal_assessment``/``cash_to_estate``; every balance, the
+       income ledger, and the beneficiaries' RESP buckets (L34) are then zeroed.
+       ``depleted`` is left untouched.
 
     Args:
         state: Opening state for the month.
-        real_params: Parameters for the current tax year, in the scenario's
-            real-dollar view.
+        real_params: Parameters for the current tax year, in the scenario's real-dollar
+            view.
 
     Returns:
-        State with ``alive`` and any rollover applied. Unchanged until #36.
+        ``(state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate)``.
     """
-    return state
+    m = state.month_index
+    jan = m - (state.month - 1)
+    n_paths = state.n_paths
+    persons = list(state.persons)
+    n_persons = len(persons)
+
+    alive_new = [p.death_month_index > m for p in persons]
+    dying = [p.death_month_index == m for p in persons]
+    persons = [updated(p, alive=alive_new[i]) for i, p in enumerate(persons)]
+
+    zero_amount = np.zeros(n_paths, dtype=np.float64)
+    rolled_out = [
+        AccountAmounts(
+            rrsp=zero_amount,
+            rrif=zero_amount,
+            lira=zero_amount,
+            lif=zero_amount,
+            tfsa=zero_amount,
+            taxable=zero_amount,
+        )
+        for _ in range(n_persons)
+    ]
+    rolled_acb = [zero_amount for _ in range(n_persons)]
+
+    if n_persons == 2:
+        for i, j in ((0, 1), (1, 0)):
+            mask = dying[i] & alive_new[j]
+            deceased = persons[i]
+            survivor = persons[j]
+
+            rolled_out[i] = AccountAmounts(
+                rrsp=np.where(mask, deceased.rrsp.balance, 0.0),
+                rrif=np.where(mask, deceased.rrif.balance, 0.0),
+                lira=np.where(mask, deceased.lira.balance, 0.0),
+                lif=np.where(mask, deceased.lif.balance, 0.0),
+                tfsa=np.where(mask, deceased.tfsa.balance, 0.0),
+                taxable=np.where(mask, deceased.taxable.balance, 0.0),
+            )
+            rolled_acb[i] = np.where(mask, deceased.taxable.acb, 0.0)
+
+            new_rrsp_d, new_rrsp_s = rrsp_mod.spousal_rollover(deceased.rrsp, survivor.rrsp, mask)
+            new_rrif_d, new_rrif_s = rrif_mod.spousal_rollover(deceased.rrif, survivor.rrif, mask)
+            new_lira_d, new_lira_s = lira_mod.spousal_rollover(deceased.lira, survivor.lira, mask)
+            new_lif_d, new_lif_s = lif_mod.spousal_rollover(deceased.lif, survivor.lif, mask)
+            new_tfsa_d, new_tfsa_s = tfsa_mod.successor_holder(deceased.tfsa, survivor.tfsa, mask)
+            new_taxable_d, new_taxable_s = taxable_mod.pass_to_survivor(
+                deceased.taxable, survivor.taxable, mask
+            )
+
+            persons[i] = updated(
+                deceased,
+                rrsp=new_rrsp_d,
+                rrif=new_rrif_d,
+                lira=new_lira_d,
+                lif=new_lif_d,
+                tfsa=new_tfsa_d,
+                taxable=new_taxable_d,
+            )
+            persons[j] = updated(
+                survivor,
+                rrsp=new_rrsp_s,
+                rrif=new_rrif_s,
+                lira=new_lira_s,
+                lif=new_lif_s,
+                tfsa=new_tfsa_s,
+                taxable=new_taxable_s,
+            )
+
+    finished_before = np.isfinite(state.estate_after_tax)
+    finished_now = np.logical_and.reduce([~a for a in alive_new]) & ~finished_before
+
+    cash = state.cash
+    beneficiaries = list(state.beneficiaries)
+    estate_after_tax = state.estate_after_tax
+    terminal_assessment = np.zeros(n_paths, dtype=np.float64)
+    cash_to_estate = np.zeros(n_paths, dtype=np.float64)
+
+    if np.any(finished_now):
+        died_in_year = tuple(p.death_month_index >= jan for p in persons)
+        assessments = _deemed_single_assessments(
+            tuple(persons), state.year, jan, state.province, real_params, died_in_year
+        )
+        terminal_total = sum((a.total for a in assessments), np.zeros(n_paths, dtype=np.float64))
+
+        gross = cash.balance.copy()
+        balance_owing_total = np.zeros(n_paths, dtype=np.float64)
+        remitted_total = np.zeros(n_paths, dtype=np.float64)
+        for p in persons:
+            gross = (
+                gross
+                + p.rrsp.balance
+                + p.rrif.balance
+                + p.lira.balance
+                + p.lif.balance
+                + p.tfsa.balance
+                + p.taxable.balance
+            )
+            balance_owing_total = balance_owing_total + p.balance_owing
+            remitted_total = remitted_total + p.income.remitted
+
+        estate = gross - terminal_total - balance_owing_total + remitted_total
+        estate_after_tax = np.where(finished_now, estate, state.estate_after_tax)
+        terminal_assessment = np.where(finished_now, terminal_total, 0.0)
+        cash_to_estate = np.where(finished_now, cash.balance, 0.0)
+
+        def _zeroed(arr: NDArray[np.float64]) -> NDArray[np.float64]:
+            return np.where(finished_now, 0.0, arr)
+
+        cash = CashState(balance=_zeroed(cash.balance))
+
+        distributed_persons = []
+        for p in persons:
+            new_rrsp = updated(p.rrsp, balance=_zeroed(p.rrsp.balance))
+            new_rrif = updated(p.rrif, balance=_zeroed(p.rrif.balance))
+            new_lira = updated(p.lira, balance=_zeroed(p.lira.balance))
+            new_lif = updated(p.lif, balance=_zeroed(p.lif.balance))
+            new_tfsa = updated(p.tfsa, balance=_zeroed(p.tfsa.balance))
+            new_taxable = updated(
+                p.taxable, balance=_zeroed(p.taxable.balance), acb=_zeroed(p.taxable.acb)
+            )
+            new_income = updated(
+                p.income,
+                **{field: _zeroed(getattr(p.income, field)) for field in _INCOME_LEDGER_FIELDS},
+            )
+            distributed_persons.append(
+                updated(
+                    p,
+                    rrsp=new_rrsp,
+                    rrif=new_rrif,
+                    lira=new_lira,
+                    lif=new_lif,
+                    tfsa=new_tfsa,
+                    taxable=new_taxable,
+                    income=new_income,
+                    balance_owing=_zeroed(p.balance_owing),
+                )
+            )
+        persons = distributed_persons
+
+        distributed_beneficiaries = []
+        for b in beneficiaries:
+            resp_state = b.resp
+            new_resp = updated(
+                resp_state,
+                contributions=_zeroed(resp_state.contributions),
+                grants=_zeroed(resp_state.grants),
+                income=_zeroed(resp_state.income),
+            )
+            distributed_beneficiaries.append(updated(b, resp=new_resp))
+        beneficiaries = distributed_beneficiaries
+
+    new_state = updated(
+        state,
+        persons=tuple(persons),
+        beneficiaries=tuple(beneficiaries),
+        cash=cash,
+        estate_after_tax=estate_after_tax,
+    )
+    return new_state, tuple(rolled_out), tuple(rolled_acb), terminal_assessment, cash_to_estate

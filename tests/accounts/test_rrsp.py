@@ -194,3 +194,41 @@ def test_erode_nominal_shrinks_room_and_nothing_else_at_positive_inflation() -> 
     assert new_state.room[0] < 500.0
     np.testing.assert_allclose(new_state.balance, [1000.0])
     np.testing.assert_allclose(new_state.contributed_ytd, [100.0])
+
+
+# --- spousal_rollover (#36) ---------------------------------------------------
+
+
+def _multi(balance, room, contributed_ytd) -> RrspState:
+    return RrspState(
+        balance=np.array(balance, dtype=np.float64),
+        room=np.array(room, dtype=np.float64),
+        contributed_ytd=np.array(contributed_ytd, dtype=np.float64),
+        converted_fraction_applied=False,
+    )
+
+
+def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi([10_000.0, 20_000.0], room=[1000.0, 2000.0], contributed_ytd=[0.0, 0.0])
+    survivor = _multi([5_000.0, 6_000.0], room=[500.0, 600.0], contributed_ytd=[0.0, 0.0])
+
+    new_deceased, new_survivor = rrsp.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+
+
+def test_spousal_rollover_leaves_room_and_contributed_ytd_untouched_on_both_sides() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], room=[1234.0], contributed_ytd=[111.0])
+    survivor = _multi([5_000.0], room=[4321.0], contributed_ytd=[222.0])
+
+    new_deceased, new_survivor = rrsp.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.room, [1234.0])
+    np.testing.assert_allclose(new_deceased.contributed_ytd, [111.0])
+    np.testing.assert_allclose(new_survivor.room, [4321.0])
+    np.testing.assert_allclose(new_survivor.contributed_ytd, [222.0])
+    assert new_deceased.converted_fraction_applied is False
+    assert new_survivor.converted_fraction_applied is False

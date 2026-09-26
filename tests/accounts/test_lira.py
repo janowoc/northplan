@@ -90,3 +90,77 @@ def test_convert_to_lif_raises_when_jurisdictions_differ() -> None:
     lif_state = _lif(balance=500.0, jurisdiction="on", opened_year=2020)
     with pytest.raises(ValueError, match=r"ab.*on|on.*ab"):
         lira.convert_to_lif(lira_state, lif_state, year=2030)
+
+
+# =============================================================================
+# spousal_rollover (#36)
+# =============================================================================
+
+
+def _multi_lira(balance, jurisdiction) -> LiraState:
+    return LiraState(balance=np.array(balance, dtype=np.float64), jurisdiction=jurisdiction)
+
+
+def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi_lira([10_000.0, 20_000.0], jurisdiction="ab")
+    survivor = _multi_lira([0.0, 0.0], jurisdiction="")
+
+    new_deceased, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [10_000.0, 0.0])
+
+
+def test_spousal_rollover_survivor_jurisdiction_becomes_the_deceaseds_when_empty() -> None:
+    mask = np.array([True])
+    deceased = _multi_lira([10_000.0], jurisdiction="ab")
+    survivor = _multi_lira([0.0], jurisdiction="")
+
+    _, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.jurisdiction == "ab"
+
+
+def test_spousal_rollover_survivor_jurisdiction_kept_when_already_set() -> None:
+    mask = np.array([True])
+    deceased = _multi_lira([10_000.0], jurisdiction="ab")
+    survivor = _multi_lira([5_000.0], jurisdiction="ab")
+
+    _, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.jurisdiction == "ab"
+
+
+def test_spousal_rollover_jurisdiction_unchanged_when_mask_is_all_false() -> None:
+    mask = np.array([False])
+    deceased = _multi_lira([10_000.0], jurisdiction="ab")
+    survivor = _multi_lira([0.0], jurisdiction="")
+
+    new_deceased, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
+
+    assert new_survivor.jurisdiction == ""
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [0.0])
+
+
+def test_spousal_rollover_raises_on_cross_jurisdiction() -> None:
+    # SYNTHETIC second code ("zz"): unreachable in v1 (only "ab" has a parameter file),
+    # built by hand on a synthetic pair of states, per the brief -- no params needed.
+    mask = np.array([True])
+    deceased = _multi_lira([10_000.0], jurisdiction="ab")
+    survivor = _multi_lira([5_000.0], jurisdiction="zz")
+
+    with pytest.raises(ValueError, match=r"ab.*zz|zz.*ab"):
+        lira.spousal_rollover(deceased, survivor, mask)
+
+
+def test_spousal_rollover_cross_jurisdiction_guard_is_silent_when_nothing_moves() -> None:
+    mask = np.array([False])
+    deceased = _multi_lira([10_000.0], jurisdiction="ab")
+    survivor = _multi_lira([5_000.0], jurisdiction="zz")
+
+    # Nothing moves on this path, so the cross-jurisdiction guard must not fire.
+    new_deceased, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [5_000.0])

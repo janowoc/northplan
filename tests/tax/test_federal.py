@@ -228,6 +228,46 @@ def test_the_capital_loss_floor_is_per_path(fed) -> None:
 
 
 # =============================================================================
+# death_year_capital_loss_deduction (#36, ITA 111(2))
+# =============================================================================
+
+
+def test_death_year_deduction_zero_where_not_died_in_year(fed) -> None:
+    ledger = _ledger(capital_gains=-10_000.0)
+    result = federal.death_year_capital_loss_deduction(ledger, fed, False)
+    assert result == pytest.approx(0.0)
+
+
+def test_death_year_deduction_zero_for_a_gain(fed) -> None:
+    ledger = _ledger(capital_gains=10_000.0)
+    result = federal.death_year_capital_loss_deduction(ledger, fed, True)
+    assert result == pytest.approx(0.0)
+
+
+def test_death_year_deduction_is_inclusion_rate_times_the_loss(fed) -> None:
+    inclusion_rate = fed.number("investment_income.capital_gains_inclusion_rate")
+    ledger = _ledger(capital_gains=-8_000.0)
+    result = federal.death_year_capital_loss_deduction(ledger, fed, True)
+    assert result == pytest.approx(inclusion_rate * 8_000.0)
+
+
+def test_death_year_deduction_is_per_path(fed) -> None:
+    inclusion_rate = fed.number("investment_income.capital_gains_inclusion_rate")
+    ledger = _ledger(n_paths=2, capital_gains=np.array([-8_000.0, 3_000.0]))
+    died_in_year = np.array([True, True])
+    result = federal.death_year_capital_loss_deduction(ledger, fed, died_in_year)
+    np.testing.assert_allclose(result, [inclusion_rate * 8_000.0, 0.0])
+
+
+def test_death_year_deduction_died_in_year_is_per_path(fed) -> None:
+    inclusion_rate = fed.number("investment_income.capital_gains_inclusion_rate")
+    ledger = _ledger(n_paths=2, capital_gains=np.array([-8_000.0, -8_000.0]))
+    died_in_year = np.array([True, False])
+    result = federal.death_year_capital_loss_deduction(ledger, fed, died_in_year)
+    np.testing.assert_allclose(result, [inclusion_rate * 8_000.0, 0.0])
+
+
+# =============================================================================
 # Non-zero inflation: an unindexed credit decays with the tax year; an
 # indexed one, and gross_tax, do not
 # =============================================================================

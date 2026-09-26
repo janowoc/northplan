@@ -217,25 +217,46 @@ def receive_conversion(state: RrifState, amount: ArrayLike, year: int) -> RrifSt
 
 
 def spousal_rollover(
-    balance: ArrayLike,
-    surviving_spouse_balance: ArrayLike,
-) -> tuple[NDArray[np.float64], ...]:
-    """Roll a deceased person's RRIF to their surviving spouse, tax-deferred.
+    deceased: RrifState, survivor: RrifState, mask: ArrayLike
+) -> tuple[RrifState, RrifState]:
+    """Roll a deceased person's RRIF balance to their surviving spouse, tax-deferred.
 
     Without a surviving spouse the balance is instead brought fully into income
     in the year of death; that case is handled by the step, not here. Death is
-    resolved monthly, so the rollover happens in the month of death and the
-    survivor's own minimum for the year is unaffected — theirs was fixed in
-    January from their own opening balance.
+    resolved monthly, so the rollover happens in the month of death.
+
+    The survivor's own ``annual_minimum`` and ``withdrawn_ytd`` are unaffected:
+    both were already fixed in January from the survivor's own opening
+    balance, and the rolled-in balance only starts counting toward the
+    survivor's minimum next January. The deceased's unmet minimum for the
+    year of death is not forced out here (``docs/limitations.md`` L41) — in
+    reality it would be paid, or continue to a successor annuitant.
+
+    ``opened_year`` takes the deceased's when the survivor never held a RRIF
+    of their own (``survivor.opened_year is None``) and something actually
+    moved on at least one path; otherwise it is left exactly as it was.
+    ``RrifState.opened_year`` is a single value for the whole state, not
+    per-path, matching every other consumer of the field.
 
     Args:
-        balance: The deceased person's RRIF balance, ``(n_paths,)``.
-        surviving_spouse_balance: The survivor's RRIF balance, ``(n_paths,)``.
+        deceased: The deceased person's opening RRIF state.
+        survivor: The surviving spouse's opening RRIF state.
+        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+            is dying this month and the survivor is alive.
 
     Returns:
-        ``(deceased_balance, survivor_balance)`` after the rollover.
+        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` is exactly
+        zero where ``mask`` is true; paths outside ``mask`` are untouched on
+        both sides.
     """
-    raise NotImplementedError
+    mask_arr = np.asarray(mask, dtype=bool)
+    moved = np.where(mask_arr, deceased.balance, 0.0)
+    new_deceased = updated(deceased, balance=np.where(mask_arr, 0.0, deceased.balance))
+    opened_year = survivor.opened_year
+    if opened_year is None and bool(np.any(moved > 0)):
+        opened_year = deceased.opened_year
+    new_survivor = updated(survivor, balance=survivor.balance + moved, opened_year=opened_year)
+    return new_deceased, new_survivor
 
 
 def _non_negative(amount: ArrayLike) -> np.ndarray:

@@ -154,6 +154,33 @@ def restore_room(state: TfsaState, params: RealParamSet) -> TfsaState:
     )
 
 
+def successor_holder(
+    deceased: TfsaState, survivor: TfsaState, mask: ArrayLike
+) -> tuple[TfsaState, TfsaState]:
+    """Roll a deceased person's TFSA balance to their surviving spouse's, as successor holder.
+
+    Balance only. ``room`` and ``withdrawn_this_year`` are unchanged on both
+    sides — the survivor's own room is unaffected by what they inherit.
+    Paths outside ``mask`` are untouched on both sides
+    (``docs/limitations.md`` L41).
+
+    Args:
+        deceased: The deceased person's opening TFSA state.
+        survivor: The surviving spouse's opening TFSA state.
+        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+            is dying this month and the survivor is alive.
+
+    Returns:
+        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` is exactly
+        zero where ``mask`` is true.
+    """
+    mask_arr = np.asarray(mask, dtype=bool)
+    moved = np.where(mask_arr, deceased.balance, 0.0)
+    new_deceased = updated(deceased, balance=np.where(mask_arr, 0.0, deceased.balance))
+    new_survivor = updated(survivor, balance=survivor.balance + moved)
+    return new_deceased, new_survivor
+
+
 def erode_nominal(state: TfsaState, inflation_rate: float) -> TfsaState:
     """One January's decay of ``room`` and ``withdrawn_this_year``.
 

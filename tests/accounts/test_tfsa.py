@@ -177,3 +177,51 @@ def test_erode_nominal_shrinks_room_and_withdrawn_and_nothing_else() -> None:
     assert new_state.room[0] < 500.0
     assert new_state.withdrawn_this_year[0] < 200.0
     np.testing.assert_allclose(new_state.balance, [1000.0])
+
+
+# =============================================================================
+# successor_holder (#36)
+# =============================================================================
+
+
+def _multi(balance, room, withdrawn_this_year) -> TfsaState:
+    return TfsaState(
+        balance=np.array(balance, dtype=np.float64),
+        room=np.array(room, dtype=np.float64),
+        withdrawn_this_year=np.array(withdrawn_this_year, dtype=np.float64),
+    )
+
+
+def test_successor_holder_moves_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi([10_000.0, 20_000.0], room=[1000.0, 2000.0], withdrawn_this_year=[0.0, 0.0])
+    survivor = _multi([5_000.0, 6_000.0], room=[500.0, 600.0], withdrawn_this_year=[0.0, 0.0])
+
+    new_deceased, new_survivor = tfsa.successor_holder(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+
+
+def test_successor_holder_leaves_room_and_withdrawn_this_year_untouched_on_both_sides() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], room=[1234.0], withdrawn_this_year=[111.0])
+    survivor = _multi([5_000.0], room=[4321.0], withdrawn_this_year=[222.0])
+
+    new_deceased, new_survivor = tfsa.successor_holder(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.room, [1234.0])
+    np.testing.assert_allclose(new_deceased.withdrawn_this_year, [111.0])
+    np.testing.assert_allclose(new_survivor.room, [4321.0])
+    np.testing.assert_allclose(new_survivor.withdrawn_this_year, [222.0])
+
+
+def test_successor_holder_untouched_outside_mask() -> None:
+    mask = np.array([False])
+    deceased = _multi([10_000.0], room=[0.0], withdrawn_this_year=[0.0])
+    survivor = _multi([5_000.0], room=[0.0], withdrawn_this_year=[0.0])
+
+    new_deceased, new_survivor = tfsa.successor_holder(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [5_000.0])

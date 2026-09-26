@@ -290,6 +290,80 @@ def test_person_assessment_with_a_net_capital_loss_equals_the_zero_gain_assessme
 
 
 # =============================================================================
+# died_in_year: ITA 111(2), the year-of-death capital loss deduction (#36)
+# =============================================================================
+
+
+def test_person_assessment_death_year_deduction_lowers_tax_but_not_net_income(params) -> None:
+    threshold = params.oas.annual_amount("recovery_tax.threshold_annual", JANUARY)
+    inclusion_rate = params.federal.number("investment_income.capital_gains_inclusion_rate")
+    n = 1
+    loss = 8_000.0
+    # Comfortably above the OAS threshold, so the "unchanged" claim below is not 0 == 0.
+    income = _ledger(n, rrif_lif_withdrawals=threshold + 50_000.0, oas=8_000.0, capital_gains=-loss)
+
+    died = person_assessment(
+        income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY, died_in_year=True
+    )
+    not_died = person_assessment(
+        income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY, died_in_year=False
+    )
+
+    assert (not_died.oas_repayment > 0).all()
+
+    np.testing.assert_allclose(
+        died.taxable_income,
+        np.maximum(died.net_income_after_repayment - inclusion_rate * loss, 0.0),
+    )
+    assert np.all(died.total < not_died.total)
+    np.testing.assert_array_equal(died.net_income, not_died.net_income)
+    np.testing.assert_array_equal(
+        died.net_income_after_repayment, not_died.net_income_after_repayment
+    )
+    np.testing.assert_array_equal(died.oas_repayment, not_died.oas_repayment)
+
+
+def test_person_assessment_default_died_in_year_matches_omitting_it(params) -> None:
+    n = 1
+    income = _ledger(n, rrif_lif_withdrawals=60_000.0, capital_gains=-5_000.0)
+    with_default = person_assessment(income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY)
+    explicit_false = person_assessment(
+        income, 70, np.zeros(n), np.zeros(n), "ab", params, JANUARY, died_in_year=False
+    )
+    for field in dataclasses.fields(Assessment):
+        np.testing.assert_array_equal(
+            getattr(with_default, field.name), getattr(explicit_false, field.name)
+        )
+
+
+def test_household_assessment_passes_died_in_year_only_for_the_dying_person(params) -> None:
+    n = 1
+    income_a = _ledger(n, rrif_lif_withdrawals=60_000.0, capital_gains=-6_000.0)
+    income_b = _ledger(n, rrif_lif_withdrawals=60_000.0, capital_gains=-6_000.0)
+    # person_a not alive: household_assessment's own split search then forces every
+    # transfer to zero (both_alive is False), so this exercises died_in_year routing
+    # with no split confound.
+    person_a = _person("a", n, income=income_a, alive=_bools(False, n))
+    person_b = _person("b", n, income=income_b)
+    household = _household((person_a, person_b), year=2026, n=n)
+
+    assessments = household_assessment(household, params)
+
+    age = age_at_end_of_year(person_a.birth_year, person_a.birth_month, 2026)
+    zero = np.zeros(n)
+    expected_a = person_assessment(
+        income_a, age, zero, zero, "ab", params, JANUARY, died_in_year=True
+    )
+    expected_b = person_assessment(
+        income_b, age, zero, zero, "ab", params, JANUARY, died_in_year=False
+    )
+    np.testing.assert_allclose(assessments[0].total, expected_a.total)
+    np.testing.assert_allclose(assessments[1].total, expected_b.total)
+    # Guard: died_in_year actually changed something between the two persons.
+    assert assessments[0].total[0] != pytest.approx(assessments[1].total[0])
+
+
+# =============================================================================
 # Assessment.aip_penalty: the RESP accumulated-income special tax
 # =============================================================================
 

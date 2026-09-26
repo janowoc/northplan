@@ -121,3 +121,40 @@ def test_erode_nominal_shrinks_acb_only() -> None:
     new_state = taxable.erode_nominal(state, 0.10)
     assert new_state.acb[0] < 600.0
     np.testing.assert_allclose(new_state.balance, [1000.0])
+
+
+# =============================================================================
+# pass_to_survivor (#36)
+# =============================================================================
+
+
+def _multi(balance, acb) -> TaxableState:
+    return TaxableState(
+        balance=np.array(balance, dtype=np.float64), acb=np.array(acb, dtype=np.float64)
+    )
+
+
+def test_pass_to_survivor_moves_balance_and_acb_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi([10_000.0, 20_000.0], acb=[7_000.0, 15_000.0])
+    survivor = _multi([5_000.0, 6_000.0], acb=[4_000.0, 4_500.0])
+
+    new_deceased, new_survivor = taxable.pass_to_survivor(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_allclose(new_deceased.acb, [0.0, 15_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+    np.testing.assert_allclose(new_survivor.acb, [11_000.0, 4_500.0])
+
+
+def test_pass_to_survivor_untouched_outside_mask() -> None:
+    mask = np.array([False])
+    deceased = _multi([10_000.0], acb=[7_000.0])
+    survivor = _multi([5_000.0], acb=[4_000.0])
+
+    new_deceased, new_survivor = taxable.pass_to_survivor(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
+    np.testing.assert_allclose(new_deceased.acb, [7_000.0])
+    np.testing.assert_allclose(new_survivor.balance, [5_000.0])
+    np.testing.assert_allclose(new_survivor.acb, [4_000.0])

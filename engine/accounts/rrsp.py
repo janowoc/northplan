@@ -173,6 +173,33 @@ def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
     return bool(age_at_end_of_year >= conversion_age)
 
 
+def spousal_rollover(
+    deceased: RrspState, survivor: RrspState, mask: NDArray[np.bool_]
+) -> tuple[RrspState, RrspState]:
+    """Roll a deceased person's RRSP balance to their surviving spouse's, tax-deferred.
+
+    Balance only. ``room`` dies with the deceased and stays on the deceased's
+    own state — the survivor's contribution room is unaffected by what they
+    inherit. ``contributed_ytd`` and ``converted_fraction_applied`` are
+    likewise unchanged on both sides. Paths outside ``mask`` are untouched on
+    both sides (``docs/limitations.md`` L41).
+
+    Args:
+        deceased: The deceased person's opening RRSP state.
+        survivor: The surviving spouse's opening RRSP state.
+        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+            is dying this month and the survivor is alive.
+
+    Returns:
+        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` is exactly
+        zero where ``mask`` is true.
+    """
+    moved = np.where(mask, deceased.balance, 0.0)
+    new_deceased = updated(deceased, balance=np.where(mask, 0.0, deceased.balance))
+    new_survivor = updated(survivor, balance=survivor.balance + moved)
+    return new_deceased, new_survivor
+
+
 def erode_nominal(state: RrspState, inflation_rate: float) -> RrspState:
     """One January's decay of ``state.room``, fixed in nominal terms.
 

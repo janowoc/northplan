@@ -29,9 +29,10 @@ class SimulationResult:
 
     A row exists **if and only if** ``close_year`` ran for that year: ``n_years`` is
     the count of December closes the run reached, not a count derived from the
-    calendar. The trailing months after the last December a run stops in are still
-    simulated — ``run`` steps every one of ``draws.n_months`` — but produce no row,
-    since the year they belong to never closes.
+    calendar. ``run`` stops at the first December close reached at or after every
+    path's second death, or when ``draws.n_months`` is exhausted, whichever comes
+    first (see :func:`run`); a finished path whose death year's December the draws
+    never reach gets no row for it at all.
 
     All dollar amounts are real; conversion to nominal happens at display, in
     ``api/`` or ``cli/``, never here.
@@ -44,10 +45,29 @@ class SimulationResult:
             from the twelve months, ``(n_years, n_paths)``.
         tax_assessed: Real household tax *assessed* on each year's income,
             ``(n_years, n_paths)`` -- not paid; the cash leaves in the
-            following year's filing month, reflected in ``net_worth``.
+            following year's filing month, reflected in ``net_worth``. December
+            assessments only: the terminal return's tax at the second death is not
+            included here, only in the trace
+            (``engine.core.context.MonthContext.terminal_assessment``).
         depleted: Whether the household ran out of money by each year end,
             ``(n_years, n_paths)``. Monotone in year once true; detected in
             the month it happens, reported at the year that contains it.
+        estate_after_tax: Real estate value after the terminal return, from the final
+            simulated state -- finite on every path, since ``run`` never returns
+            before every path's second death (see ``draws.n_months`` in :func:`run`),
+            ``(n_paths,)``.
+        death_year: Calendar year of each person's death, in
+            ``initial_state.persons`` order, ``(n_persons, n_paths)`` int64 --
+            ``initial_state.year + death_month_index // 12``, from the opening
+            state's already-drawn ``death_month_index`` (#22 does any further
+            division by person).
+        gis_band_person_years: Sum, over every recorded year and every person, of
+            ``YearRecord.gis_band``, ``(n_paths,)`` int64 -- a count of person-years
+            in the GIS band, for #22 to turn into a rate.
+        living_person_years: Sum, over every recorded year ``y`` and every person,
+            of whether that person was alive at ``y``'s December close (
+            ``death_month_index > (y - start_year) * 12 + 11``, compared only, never
+            subtracted from), ``(n_paths,)`` int64.
         seed: The seed of the draws used, for reproducibility.
         trace: The full monthly record for a single traced path — one
             :class:`~engine.core.context.MonthRecord` per month simulated, every
@@ -60,6 +80,10 @@ class SimulationResult:
     spending_achieved: NDArray[np.float64]
     tax_assessed: NDArray[np.float64]
     depleted: NDArray[np.bool_]
+    estate_after_tax: NDArray[np.float64]
+    death_year: NDArray[np.int64]
+    gis_band_person_years: NDArray[np.int64]
+    living_person_years: NDArray[np.int64]
     seed: int
     trace: tuple[MonthRecord, ...] = ()
 
@@ -88,6 +112,13 @@ def run(
     reaches are still stepped but produce no row. ``run`` contains no financial
     logic of its own.
 
+    The loop breaks at the end of the first month, at or after every path's second death, in
+    which ``close_year`` ran (``state.history`` grew) -- including a final death that itself
+    falls in December, whose own close runs within the same step -- or when ``draws.n_months``
+    is exhausted, whichever comes first. The trace, when asked for, ends at that month too. A
+    finished path whose death year's December the draws never reach gets no row for that year
+    at all (the pre-#19 rule, unchanged).
+
     Args:
         initial_state: Opening state for the first simulated month.
         policy: The policy being evaluated.
@@ -102,8 +133,7 @@ def run(
             ``SimulationResult.trace`` — one
             :class:`~engine.core.context.MonthRecord` per month simulated, every
             array sliced to that path. ``None`` (the default) traces nothing,
-            and ``trace`` comes back empty. #36 extends what the record holds;
-            this issue only wires the trace through.
+            and ``trace`` comes back empty.
 
     Returns:
         A :class:`SimulationResult`, recorded per year.
@@ -169,8 +199,10 @@ def run(
     spending_achieved: list[NDArray[np.float64]] = []
     tax_assessed: list[NDArray[np.float64]] = []
     depleted: list[NDArray[np.bool_]] = []
+    gis_band: list[tuple[NDArray[np.bool_], ...]] = []
     trace: list[MonthRecord] = []
 
+    finished_all = False
     for m in range(draws.n_months):
         years_closed_before = len(state.history)
         state, record = advance_month_traced(
@@ -178,13 +210,19 @@ def run(
         )
         if trace_path is not None:
             trace.append(record.at_path(trace_path))
-        if len(state.history) > years_closed_before:
+        history_grew = len(state.history) > years_closed_before
+        if history_grew:
             year_record = state.history[-1]
             years.append(year_record.year)
             net_worth.append(year_record.net_worth)
             spending_achieved.append(year_record.spending)
             tax_assessed.append(year_record.tax_assessed)
             depleted.append(year_record.depleted)
+            gis_band.append(year_record.gis_band)
+        if not finished_all and np.all(np.isfinite(state.estate_after_tax)):
+            finished_all = True
+        if finished_all and history_grew:
+            break
 
     n_paths = initial_state.n_paths
     if years:
@@ -200,12 +238,36 @@ def run(
         tax_assessed_arr = np.zeros((0, n_paths), dtype=np.float64)
         depleted_arr = np.zeros((0, n_paths), dtype=np.bool_)
 
+    start_year = initial_state.year
+    death_year = np.stack(
+        [
+            np.full(n_paths, start_year, dtype=np.int64) + (person.death_month_index // 12)
+            for person in initial_state.persons
+        ],
+        axis=0,
+    ).astype(np.int64)
+
+    gis_band_person_years = np.zeros(n_paths, dtype=np.int64)
+    for year_bands in gis_band:
+        for band in year_bands:
+            gis_band_person_years = gis_band_person_years + band.astype(np.int64)
+
+    december_indices = (years_arr - start_year) * 12 + 11
+    living_person_years = np.zeros(n_paths, dtype=np.int64)
+    for person in initial_state.persons:
+        alive_at_close = person.death_month_index[None, :] > december_indices[:, None]
+        living_person_years = living_person_years + alive_at_close.sum(axis=0).astype(np.int64)
+
     return SimulationResult(
         years=years_arr,
         net_worth=net_worth_arr,
         spending_achieved=spending_achieved_arr,
         tax_assessed=tax_assessed_arr,
         depleted=depleted_arr,
+        estate_after_tax=state.estate_after_tax,
+        death_year=death_year,
+        gis_band_person_years=gis_band_person_years,
+        living_person_years=living_person_years,
         seed=draws.seed,
         trace=tuple(trace),
     )
