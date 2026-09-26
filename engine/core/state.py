@@ -127,7 +127,8 @@ class RrspState:
         balance: Real dollars, ``(n_paths,)``.
         room: Unused contribution room.
         contributed_ytd: Contributions made so far this year; reset in January.
-        converted_fraction_applied: Whether the RRIF conversion has already fired, on this path.
+        converted_fraction_applied: Whether an RRSP-to-RRIF conversion, elected or statutory,
+            has fired for this person.
     """
 
     balance: NDArray[np.float64]
@@ -610,19 +611,35 @@ class YearRecord:
     Attributes:
         year, net_worth, spending: Calendar year, net worth at 31 December, and
             spending over it.
+        after_tax_net_worth: Equal to ``net_worth`` (a copy, not the same array) until #36
+            replaces it with the liquidation value from the terminal-return arithmetic.
         tax_assessed: Tax assessed *for* this year at the December close, not paid
             in cash during it.
+        net_income: Line 23600 (``engine.tax.combined.Assessment.net_income_after_repayment``)
+            per person, in ``HouseholdState.persons`` order. Among pension splits that give
+            equal household tax, the division between persons is arbitrary — the argmin in
+            ``engine.tax.combined.household_assessment`` picks on rounding noise (#50) — so
+            only the household sum of this tuple is meaningful, never one person's share read
+            alone.
+        gis_band: ``engine.core.step.close_year`` item 6's living-pensioner-in-band indicator,
+            per person, in the same order.
         depleted: Whether the household ran out of money during the year.
     """
 
     year: int
     net_worth: NDArray[np.float64]
+    after_tax_net_worth: NDArray[np.float64]
     spending: NDArray[np.float64]
     tax_assessed: NDArray[np.float64]
+    net_income: tuple[NDArray[np.float64], ...]
+    gis_band: tuple[NDArray[np.bool_], ...]
     depleted: NDArray[np.bool_]
 
     def __post_init__(self) -> None:
-        _freeze_fields(self, "net_worth", "spending", "tax_assessed", "depleted")
+        _freeze_fields(self, "net_worth", "after_tax_net_worth", "spending", "tax_assessed")
+        _freeze_fields(self, "depleted")
+        object.__setattr__(self, "net_income", tuple(freeze(arr) for arr in self.net_income))
+        object.__setattr__(self, "gis_band", tuple(freeze(arr) for arr in self.gis_band))
 
 
 @dataclass(frozen=True, slots=True)

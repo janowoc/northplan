@@ -12,14 +12,13 @@ synthetic in a comment.
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pytest
 
 from engine.accounts import lif, resp, rrif, rrsp, taxable, tfsa
-from engine.core import step as step_module
 from engine.core import timeline
 from engine.core.build import (
     build_deterministic_draws,
@@ -28,14 +27,16 @@ from engine.core.build import (
     draw_deaths,
 )
 from engine.core.indexation import nominal_carry_factor, real_year
-from engine.core.state import updated
+from engine.core.state import DEATH_NOT_DRAWN, select_spending_level, updated
 from engine.core.step import advance_month, advance_month_traced, close_year, open_year
 from engine.mc.returns import RandomDraws
 from engine.mc.simulate import run
 from engine.params.loader import load_year
 from engine.policy.base import Transfer
 from engine.scenario import LifAccount, load_scenario
+from engine.scenario.schema import Scenario
 from engine.tax import federal, withholding
+from engine.tax.combined import household_assessment
 
 from .policies import DoNothingPolicy, RecordingPolicy, ScriptedPolicy
 
@@ -515,32 +516,23 @@ class TestLif:
 class TestPensionCreditFill:
     """Requirement 6, and decision B: the fill nets out what is left of the LIF minimum.
 
-    Three persons: ``young`` (below the eligibility age, never filled), ``old`` (at/above it,
-    RRIF only), ``old_lif`` (at/above it, a RRIF *and* an AB LIF whose own minimum is below
-    the target -- B's case).
+    Split into two households, each a size ``household_assessment`` (and therefore
+    ``close_year``, which every ``run()`` below now reaches every December) actually accepts:
+    ``young`` alone (below the eligibility age, never filled), and a couple of ``old`` (at/above
+    it, RRIF only) and ``old_lif`` (at/above it, a RRIF *and* an AB LIF whose own minimum is
+    below the target -- B's case). The three original claims, and every expected expression,
+    are unchanged; only which run and which person index each one reads has moved.
     """
 
-    def _build(self, scenario):
+    def _build_couple(self, scenario):
         person_a = scenario.household.persons[0]
         # SYNTHETIC balances: small enough that the ordinary annual minimum stays well below
         # the pension credit target, so the fill logic -- not the mandatory minimum -- is
         # what reaches the target; the LIF balance is small enough its own minimum is below
         # the target too, per decision B.
-        young_rrif_balance = 50_000.0
         old_rrif_balance = 10_000.0
         old_lif_lif_balance = 5_000.0
 
-        young = person_a.model_copy(
-            update={
-                "accounts": person_a.accounts.model_copy(
-                    update={
-                        "rrif": person_a.accounts.rrif.model_copy(
-                            update={"balance": young_rrif_balance}
-                        )
-                    }
-                )
-            }
-        )
         # SYNTHETIC birth date: old enough to be at/above the eligibility age at year end.
         # db_pensions=() keeps eligible pension income exactly zero before any RRIF/LIF
         # withdrawal, so the "spreading" arithmetic below has no other term to account for.
@@ -575,69 +567,96 @@ class TestPensionCreditFill:
                 ),
             }
         )
-        new_household = scenario.household.model_copy(update={"persons": (young, old, old_lif)})
+        # No beneficiary: the example's one beneficiary subscribes to "a", a person neither
+        # of this couple is, and engine.core.build._build_beneficiary raises ValueError for a
+        # beneficiary naming no person in the household.
+        new_household = scenario.household.model_copy(
+            update={"persons": (old, old_lif), "beneficiaries": ()}
+        )
 
         policy_spec = scenario.policies[0]
         elections = policy_spec.elections
         new_elections = elections.model_copy(
             update={
-                "cpp_start_age_years": {
-                    **elections.cpp_start_age_years,
-                    "old": 65,
-                    "old_lif": 65,
-                },
-                "oas_start_age_years": {
-                    **elections.oas_start_age_years,
-                    "old": 65,
-                    "old_lif": 65,
-                },
+                "cpp_start_age_years": {"old": 65, "old_lif": 65},
+                "oas_start_age_years": {"old": 65, "old_lif": 65},
             }
         )
         new_policy = policy_spec.model_copy(update={"elections": new_elections})
+        # No grid: the example's grid key "elections.cpp_start_age_years.a" names a person
+        # this couple does not have, and run() never expands the grid.
         new_scenario = scenario.model_copy(
-            update={"household": new_household, "policies": (new_policy,)}
+            update={
+                "household": new_household,
+                "policies": (new_policy,),
+                "grid": MappingProxyType({}),
+            }
         )
         assert new_policy.withdrawal.fill_pension_credit is True
-        return new_scenario, young, old, old_lif
+        # model_copy skips validation; the round trip makes the schema accept the household.
+        Scenario.model_validate(new_scenario.model_dump(warnings=False))
+        return new_scenario, old, old_lif
+
+    def _build_young(self, scenario):
+        person_a = scenario.household.persons[0]
+        # SYNTHETIC balance: small enough that the ordinary annual minimum stays well below the
+        # pension credit target -- irrelevant here since young is below the eligibility age, but
+        # kept identical to the original fixture's value.
+        young_rrif_balance = 50_000.0
+
+        # id unchanged ("a"): the example's one beneficiary subscribes to "a", and this keeps
+        # that subscription valid without touching beneficiaries at all.
+        young = person_a.model_copy(
+            update={
+                "accounts": person_a.accounts.model_copy(
+                    update={
+                        "rrif": person_a.accounts.rrif.model_copy(
+                            update={"balance": young_rrif_balance}
+                        )
+                    }
+                )
+            }
+        )
+        new_household = scenario.household.model_copy(update={"persons": (young,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+        assert scenario.policies[0].withdrawal.fill_pension_credit is True
+        # model_copy skips validation; the round trip makes the schema accept the household.
+        Scenario.model_validate(new_scenario.model_dump(warnings=False))
+        return new_scenario, young
 
     def test_below_age_at_age_and_the_lif_aware_spreading_and_year_end_target(
         self, scenario, market, mortality, withdrawal_order, real_params
     ):
-        new_scenario, young, old, old_lif = self._build(scenario)
         fill_age = real_params.federal.number("eligible_pension_income.rrif_minimum_age_years")
 
-        draws = build_deterministic_draws(new_scenario, market, mortality)
-        state = build_initial_state(new_scenario, n_paths=1)
-        state = draw_deaths(state, draws, mortality)
-        new_real_params = real_year(load_year(new_scenario.start_year), new_scenario.assumptions.inflation)
+        # --- The couple: old and old_lif, at/above the eligibility age. ---
+        couple_scenario, old, old_lif = self._build_couple(scenario)
+        couple_draws = build_deterministic_draws(couple_scenario, market, mortality)
+        couple_state = build_initial_state(couple_scenario, n_paths=1)
+        couple_state = draw_deaths(couple_state, couple_draws, mortality)
+        couple_real_params = real_year(
+            load_year(couple_scenario.start_year), couple_scenario.assumptions.inflation
+        )
 
-        age_end_young = timeline.age_at_end_of_year(young.birth_year, young.birth_month, 2026)
         age_end_old = timeline.age_at_end_of_year(old.birth_year, old.birth_month, 2026)
         age_end_old_lif = timeline.age_at_end_of_year(old_lif.birth_year, old_lif.birth_month, 2026)
-        assert age_end_young < fill_age
         assert age_end_old >= fill_age
         assert age_end_old_lif >= fill_age
 
-        policy = DoNothingPolicy(state.elections, withdrawal_order)
-        recorder = RecordingPolicy(policy)
-        run(state, recorder, draws, market, new_real_params)
-
-        # Claim 1: below the age, no fill -- zero forced RRIF withdrawals through month 10
-        # (December, month 11, forces the ordinary minimum regardless of age; that is not
-        # tested here).
-        for m in range(11):
-            assert recorder.calls[m][0].persons[0].rrif.withdrawn_ytd[0] == pytest.approx(0.0)
+        old_index, old_lif_index = 0, 1
+        couple_policy = DoNothingPolicy(couple_state.elections, withdrawal_order)
+        couple_recorder = RecordingPolicy(couple_policy)
+        run(couple_state, couple_recorder, couple_draws, market, couple_real_params)
 
         # Claim 2 (spreading): the month-0 forced RRIF withdrawal for old_lif equals
         # max(minimum_still_required, (target - eligible_before_fill - lif_min_remaining) / 12).
         target = max(
-            new_real_params.federal.annual_amount("credits.pension_income_amount_annual", 0),
-            new_real_params.province(new_scenario.household.province).annual_amount(
+            couple_real_params.federal.annual_amount("credits.pension_income_amount_annual", 0),
+            couple_real_params.province(couple_scenario.household.province).annual_amount(
                 "credits.pension_income_amount_annual", 0
             ),
         )
-        state0, context0 = recorder.calls[0]
-        old_lif_index = 2
+        state0, context0 = couple_recorder.calls[0]
         # eligible_before_fill is exactly this month's DB pension (there is none, and
         # nothing had been withdrawn yet this year), confirmed directly rather than assumed.
         assert context0.inflows[old_lif_index].db_pension[0] == pytest.approx(0.0)
@@ -658,22 +677,45 @@ class TestPensionCreditFill:
         # Claim 3 (B's case, year end): eligible pension income reaches the target within
         # 0.005, and not target + the LIF's own minimum, which is what it would be without
         # netting the LIF minimum out of the fill.
-        state11 = recorder.calls[11][0]
+        state11 = couple_recorder.calls[11][0]
         lif_annual_minimum = state11.persons[old_lif_index].lif.annual_minimum[0]
         eligible_old_lif = federal.eligible_pension_income(
-            state11.persons[old_lif_index].income, age_end_old_lif, new_real_params.federal
+            state11.persons[old_lif_index].income, age_end_old_lif, couple_real_params.federal
         )
         assert eligible_old_lif[0] == pytest.approx(target, abs=0.005)
         assert eligible_old_lif[0] != pytest.approx(target + lif_annual_minimum, abs=0.005)
 
         # "old" (RRIF only, no LIF) still reaches the target exactly as before.
         eligible_old = federal.eligible_pension_income(
-            state11.persons[1].income, age_end_old, new_real_params.federal
+            state11.persons[old_index].income, age_end_old, couple_real_params.federal
         )
         assert eligible_old[0] == pytest.approx(target, abs=0.005)
 
+        # --- young, alone, below the eligibility age. ---
+        young_scenario, young = self._build_young(scenario)
+        young_draws = build_deterministic_draws(young_scenario, market, mortality)
+        young_state = build_initial_state(young_scenario, n_paths=1)
+        young_state = draw_deaths(young_state, young_draws, mortality)
+        young_real_params = real_year(
+            load_year(young_scenario.start_year), young_scenario.assumptions.inflation
+        )
+
+        age_end_young = timeline.age_at_end_of_year(young.birth_year, young.birth_month, 2026)
+        assert age_end_young < fill_age
+
+        young_policy = DoNothingPolicy(young_state.elections, withdrawal_order)
+        young_recorder = RecordingPolicy(young_policy)
+        run(young_state, young_recorder, young_draws, market, young_real_params)
+
+        # Claim 1: below the age, no fill -- zero forced RRIF withdrawals through month 10
+        # (December, month 11, forces the ordinary minimum regardless of age; that is not
+        # tested here).
+        for m in range(11):
+            assert young_recorder.calls[m][0].persons[0].rrif.withdrawn_ytd[0] == pytest.approx(0.0)
+
+        state11_young = young_recorder.calls[11][0]
         eligible_young = federal.eligible_pension_income(
-            state11.persons[0].income, age_end_young, new_real_params.federal
+            state11_young.persons[0].income, age_end_young, young_real_params.federal
         )
         assert eligible_young[0] == pytest.approx(0.0)
 
@@ -1138,38 +1180,6 @@ class TestConservation:
         assert forced_fired, "phase 6 never forced a withdrawal; the test would be vacuous"
 
 
-class TestSettlementFailsLoudly:
-    """Decision D: phase 5 discards ``settle_tax_balance``'s result, so if #35 ever makes
-    it return something other than its argument unchanged, that must fail loudly rather
-    than silently disappear.
-    """
-
-    def test_a_changed_result_in_the_filing_month_raises(
-        self, opening_state, draws, market, real_params, withdrawal_order, monkeypatch
-    ):
-        filing_month = int(real_params.federal.number("filing_month"))
-        filing_state = updated(
-            opening_state, month=filing_month, month_index=filing_month - 1
-        )
-        monkeypatch.setattr(
-            step_module, "settle_tax_balance", lambda s, _rp: dataclasses.replace(s)
-        )
-        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
-        with pytest.raises(AssertionError, match="discards its result"):
-            advance_month(filing_state, draws.real_returns[0], policy, market, real_params)
-
-    def test_a_changed_result_in_a_non_filing_month_does_not_raise(
-        self, opening_state, draws, market, real_params, withdrawal_order, monkeypatch
-    ):
-        filing_month = int(real_params.federal.number("filing_month"))
-        assert opening_state.month != filing_month
-        monkeypatch.setattr(
-            step_module, "settle_tax_balance", lambda s, _rp: dataclasses.replace(s)
-        )
-        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
-        advance_month(opening_state, draws.real_returns[0], policy, market, real_params)
-
-
 class TestPerPensionPayrollWithholding:
     """Round 3 finding 4: phase 4 withholds on employment and on each pension's own
     monthly amount separately, matching ``withholding.payroll_withholding_monthly``
@@ -1235,3 +1245,756 @@ class TestCloseYearAssertion:
 
         with pytest.raises(AssertionError):
             close_year(opened_state, real_params)
+
+
+class TestTaxAssessedEqualsSettlementPlusWithholding:
+    """The tax identity, end to end -- close_year's tax_assessed for a year equals everything
+    withheld during that year plus the following year's filing-month settlement. Mutation checked:
+    reverting item 4 of close_year from ``balance_owing = total - remitted`` to ``balance_owing =
+    total`` (dropping ``remitted``) breaks this identity, since the settlement would then
+    double-count what was already withheld.
+    """
+
+    def test_the_identity_holds_for_the_first_year(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        result = run(opening_state, policy, draws, market, real_params, trace_path=0)
+
+        year = opening_state.year
+        filing_month = int(real_params.federal.number("filing_month"))
+        assert list(result.years).count(year) == 1
+        y_index = list(result.years).index(year)
+        tax_assessed_y = float(result.tax_assessed[y_index, 0])
+        # Not vacuous: the example has employment income in the start year.
+        assert tax_assessed_y > 0.0
+
+        withheld_total = 0.0
+        settlement_total = 0.0
+        for record in result.trace:
+            ctx = record.context
+            if ctx.year == year:
+                withheld_total += float(sum(w[0] for w in ctx.payroll_withholding))
+                withheld_total += float(sum(w[0] for w in ctx.forced_withholding))
+                withheld_total += float(sum(w[0] for w in record.withdrawal_withholding))
+            if ctx.year == year + 1 and ctx.month == filing_month:
+                settlement_total += float(sum(s[0] for s in ctx.tax_settlement))
+
+        assert tax_assessed_y == pytest.approx(withheld_total + settlement_total, abs=0.01)
+
+
+class TestRefundSettlement:
+    """A remittance surplus settles as a refund, a deposit rather than a debit.
+    Mutation checked: swapping ``settle_tax_balance``'s ``pay``/``deposit`` calls (paying
+    ``max(-owing, 0)`` and depositing ``max(owing, 0)``) makes cash fall by the refund instead
+    of rising, which the identity check below catches.
+    """
+
+    def test_a_negative_balance_owing_settles_as_a_refund(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        filing_month = int(real_params.federal.number("filing_month"))
+        refund = 500.0  # SYNTHETIC: an arbitrary remittance surplus.
+        persons = tuple(
+            updated(p, balance_owing=np.full(p.balance_owing.shape, -refund))
+            for p in opening_state.persons
+        )
+        filing_state = updated(
+            opening_state, persons=persons, month=filing_month, month_index=filing_month - 1
+        )
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        new_state, record = advance_month_traced(
+            filing_state, draws.real_returns[filing_month - 1], policy, market, real_params
+        )
+
+        for settlement in record.context.tax_settlement:
+            np.testing.assert_allclose(settlement, -refund)
+
+        _assert_identities_hold(record)
+
+        for person in new_state.persons:
+            np.testing.assert_allclose(person.balance_owing, 0.0)
+
+
+class TestSettlementTimingWindow:
+    """The settlement fires only in the filing month, and balance_owing bridges the gap between the
+    December close and it. Mutation checked: dropping the ``timeline.is_filing_month`` guard in
+    phase 5 (settling every month) makes ``tax_settlement`` nonzero outside the filing month, which
+    the first loop below catches.
+    """
+
+    def test_tax_settlement_only_fires_in_the_filing_month_and_balance_owing_bridges_the_gap(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        result = run(opening_state, recorder, draws, market, real_params, trace_path=0)
+
+        filing_month = int(real_params.federal.number("filing_month"))
+        december_close_index = 11
+        filing_index = 12 + (filing_month - 1)
+
+        # Not vacuous: the first year assesses real tax, so the settlement is nonzero.
+        assert result.tax_assessed[0, 0] > 0.0
+
+        # Restricted to the first year's own cycle: tax is owed again in later years too, so
+        # a later filing month is expected to settle something nonzero of its own -- checking
+        # the whole multi-decade run here would not be "only in the filing month" any more.
+        for m, record in enumerate(result.trace[: filing_index + 1]):
+            total_settlement = float(sum(s[0] for s in record.context.tax_settlement))
+            if m == filing_index:
+                assert total_settlement != 0.0
+            else:
+                assert total_settlement == 0.0
+
+        for m in range(december_close_index + 1, filing_index):
+            state_m = recorder.calls[m][0]
+            assert np.all(state_m.persons[0].balance_owing != 0.0)
+
+        state_at_filing = recorder.calls[filing_index][0]
+        assert np.all(state_at_filing.persons[0].balance_owing == 0.0)
+
+
+class TestNoIncomeAssessesZero:
+    """A person with an empty ledger assesses to zero tax and zero balance owing."""
+
+    def test_empty_ledger_assesses_zero(self, scenario, real_params):
+        state = build_initial_state(scenario, n_paths=2)
+        opened = open_year(state, real_params)
+        closed = close_year(opened, real_params)
+
+        for person in closed.persons:
+            np.testing.assert_allclose(person.balance_owing, 0.0)
+        np.testing.assert_allclose(closed.history[-1].tax_assessed, 0.0)
+
+
+class TestRrspAndLiraConversion:
+    """The RRSP-to-RRIF and LIRA-to-LIF conversion triggers.
+
+    The example's first person reaches the RRSP-to-RRIF conversion age and their LIRA's
+    jurisdiction's LIF conversion deadline in the same year -- a precondition
+    :meth:`_statutory` asserts, read from parameters rather than typed by hand. The example's
+    own elected conversion age falls in an earlier year, so the two clauses below are
+    naturally disjoint without touching the scenario.
+    """
+
+    def _lif_age(self, scenario, real_params):
+        """The example's LIRA jurisdiction's LIF conversion deadline age, from parameters."""
+        person = scenario.household.persons[0]
+        return int(
+            real_params.jurisdiction(person.accounts.lira.jurisdiction).number(
+                "lif.conversion_deadline_age_years"
+            )
+        )
+
+    def _statutory(self, scenario, real_params):
+        """Statutory conversion inputs for the example's first person, from parameters.
+
+        Returns:
+            ``(birth_year, statutory_age, statutory_year)``: their birth year, the
+            RRSP-to-RRIF conversion age -- asserted equal to their LIRA jurisdiction's LIF
+            conversion deadline age -- and the year both fall due.
+        """
+        person = scenario.household.persons[0]
+        birth_year = person.birth_year
+        rrif_age = int(real_params.rrif.number("conversion_age_years"))
+        lif_age = self._lif_age(scenario, real_params)
+        # The statutory test relies on both conversions falling in the same year.
+        assert rrif_age == lif_age
+        statutory_year = birth_year + rrif_age
+        return birth_year, rrif_age, statutory_year
+
+    def _state_at_year(self, scenario, n_paths, year):
+        state = build_initial_state(scenario, n_paths=n_paths)
+        month_index = 12 * (year - scenario.start_year)
+        spending_monthly = select_spending_level(state.spending_schedule, year)
+        return updated(
+            state, year=year, month=1, month_index=month_index, spending_monthly=spending_monthly
+        )
+
+    def test_statutory_conversion_fully_converts_both_accounts(self, scenario, real_params):
+        _, _, statutory_year = self._statutory(scenario, real_params)
+        state = self._state_at_year(scenario, n_paths=2, year=statutory_year)
+        opened = open_year(state, real_params)
+        # Neither account has ever been opened before, so the conversion year's own minimum
+        # is zero -- the control this test needs before checking it turns nonzero.
+        np.testing.assert_allclose(opened.persons[0].rrif.annual_minimum, 0.0)
+        np.testing.assert_allclose(opened.persons[0].lif.annual_minimum, 0.0)
+
+        closed = close_year(opened, real_params)
+        person = closed.persons[0]
+        np.testing.assert_allclose(person.rrsp.balance, 0.0)
+        np.testing.assert_allclose(person.lira.balance, 0.0)
+        assert np.all(person.rrif.balance > 0.0)
+        assert np.all(person.lif.balance > 0.0)
+        assert person.rrif.opened_year == statutory_year
+        assert person.lif.opened_year == statutory_year
+
+        next_year = statutory_year + 1
+        rolled = updated(
+            closed, year=next_year, month=1, month_index=12 * (next_year - scenario.start_year)
+        )
+        opened_next = open_year(rolled, real_params)
+        assert np.all(opened_next.persons[0].rrif.annual_minimum > 0.0)
+        assert np.all(opened_next.persons[0].lif.annual_minimum > 0.0)
+
+    def test_elected_conversion_moves_only_the_elected_fraction(self, scenario, real_params):
+        birth_year, _, statutory_year = self._statutory(scenario, real_params)
+        elected_age = scenario.policies[0].elections.rrif_conversion.age_years
+        elected_fraction = scenario.policies[0].elections.rrif_conversion.fraction
+        year = birth_year + elected_age
+        assert year < statutory_year
+
+        lif_age = self._lif_age(scenario, real_params)
+        # The elected age falls below the jurisdiction's LIF conversion deadline age.
+        assert elected_age < lif_age
+
+        state = self._state_at_year(scenario, n_paths=2, year=year)
+        opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        opening_lira = opened.persons[0].lira.balance.copy()
+
+        closed = close_year(opened, real_params)
+        person = closed.persons[0]
+        np.testing.assert_allclose(person.rrsp.balance, opening_rrsp * (1 - elected_fraction))
+        np.testing.assert_allclose(person.rrif.balance, opening_rrsp * elected_fraction)
+        np.testing.assert_allclose(person.lira.balance, opening_lira)
+        np.testing.assert_allclose(person.lif.balance, 0.0)
+        assert person.rrif.opened_year == year
+
+    @pytest.mark.parametrize("offset", [-1, 1])
+    def test_the_elected_conversion_fires_in_no_other_year(self, scenario, real_params, offset):
+        birth_year, _, statutory_year = self._statutory(scenario, real_params)
+        elected_age = scenario.policies[0].elections.rrif_conversion.age_years
+        year = birth_year + elected_age + offset
+        assert year < statutory_year
+
+        state = self._state_at_year(scenario, n_paths=2, year=year)
+        opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+
+        closed = close_year(opened, real_params)
+        person = closed.persons[0]
+        np.testing.assert_allclose(person.rrsp.balance, opening_rrsp)
+        assert person.rrif.opened_year is None
+
+    def test_when_both_would_fire_in_the_same_year_only_the_statutory_conversion_applies(
+        self, scenario, real_params
+    ):
+        _, statutory_age, statutory_year = self._statutory(scenario, real_params)
+        elections = scenario.policies[0].elections
+        conflicting_elections = elections.model_copy(
+            update={
+                "rrif_conversion": elections.rrif_conversion.model_copy(
+                    update={"age_years": statutory_age}
+                )
+            }
+        )
+        conflicting_policy = scenario.policies[0].model_copy(
+            update={"elections": conflicting_elections}
+        )
+        conflicting_scenario = scenario.model_copy(update={"policies": (conflicting_policy,)})
+        # Elected and statutory now fall on the same age; the elected fraction differs from
+        # the statutory one, so which one fired is unambiguous from the balance.
+        assert conflicting_elections.rrif_conversion.fraction != 1.0
+
+        state = self._state_at_year(conflicting_scenario, n_paths=2, year=statutory_year)
+        opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+
+        closed = close_year(opened, real_params)
+        person = closed.persons[0]
+        np.testing.assert_allclose(person.rrsp.balance, 0.0)
+        np.testing.assert_allclose(person.rrif.balance, opening_rrsp)
+
+
+class TestNetIncomePairShift:
+    """The pair shifts at each close from that year's assessed net income."""
+
+    def test_the_pair_shifts_from_the_years_net_income_at_each_close(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        run(opening_state, recorder, draws, market, real_params)
+
+        state_jan_year0 = recorder.calls[0][0]
+        state_jan_year1 = recorder.calls[12][0]
+
+        year0_record = state_jan_year1.history[-1]
+        assert year0_record.year == opening_state.year
+
+        person_before = state_jan_year0.persons[0]
+        person_after = state_jan_year1.persons[0]
+
+        np.testing.assert_allclose(person_after.prior_year_net_income, year0_record.net_income[0])
+        np.testing.assert_allclose(
+            person_after.net_income_two_years_prior, person_before.prior_year_net_income
+        )
+
+    def test_the_pair_and_the_record_take_net_income_after_the_oas_repayment(
+        self, scenario, real_params
+    ):
+        state = build_initial_state(scenario, n_paths=1)
+        person = state.persons[0]
+        threshold = real_params.oas.annual_amount("recovery_tax.threshold_annual", 0)
+        ledger = updated(
+            person.income,
+            employment=np.full(1, 2.0 * threshold),
+            oas=np.full(1, 5_000.0),  # SYNTHETIC: an arbitrary OAS amount.
+        )
+        person = updated(person, income=ledger)
+        state = updated(state, persons=(person,))
+
+        assessment = household_assessment(state, real_params)[0]
+        assert np.all(assessment.oas_repayment > 0)
+        assert not np.allclose(assessment.net_income_after_repayment, assessment.net_income)
+
+        closed = close_year(state, real_params)
+
+        np.testing.assert_allclose(
+            closed.persons[0].prior_year_net_income, assessment.net_income_after_repayment
+        )
+        np.testing.assert_allclose(
+            closed.history[-1].net_income[0], assessment.net_income_after_repayment
+        )
+
+
+class TestNetIncomePairFreeze:
+    """The pair shifts at the close of the last calendar year a person was alive in, and freezes at
+    every close after. Three deaths cover the January boundary (a death drawn for January of year Y
+    must not shift the pair at Y's close), the ordinary mid-year case, and a December death.
+
+    Mutations checked, each caught by at least one of the three tests: changing the mask's
+    ``>`` to ``>=`` makes the close of the death year itself shift the pair for the January
+    death, which that test's second assertion catches; comparing against December of the
+    closing year (``state.month_index``) instead of January (``january_month_index``) gives
+    the same answer as the correct mask for the January death but a different one for
+    the mid-year and December deaths, which those two tests' first assertions catch.
+    """
+
+    OLD_PRIOR = 1_000.0  # SYNTHETIC: distinguishes "shifted" (line 23600 of an empty ledger,
+    OLD_TWO_YEARS = 500.0  # zero) from "frozen" (these two figures, unchanged).
+
+    def _closed_at(self, scenario, real_params, year, death_month_index):
+        state = build_initial_state(scenario, n_paths=1)
+        month_index = 12 * (year - scenario.start_year) + 11  # December of `year`.
+        person = updated(
+            state.persons[0],
+            death_month_index=np.full(1, death_month_index, dtype=np.int64),
+            prior_year_net_income=np.full(1, self.OLD_PRIOR),
+            net_income_two_years_prior=np.full(1, self.OLD_TWO_YEARS),
+        )
+        state = updated(state, persons=(person,), year=year, month=12, month_index=month_index)
+        return close_year(state, real_params)
+
+    def test_shifts_in_the_last_year_alive_and_freezes_at_every_close_after(
+        self, scenario, real_params
+    ):
+        # A death drawn for January of 2028: alive throughout 2026-2027, not alive at all in
+        # 2028 or after (engine.core.mortality.death_month_index is the first month the
+        # person is not alive).
+        death_month_index = 12 * (2028 - scenario.start_year)
+
+        closed_2027 = self._closed_at(scenario, real_params, 2027, death_month_index)
+        person_2027 = closed_2027.persons[0]
+        np.testing.assert_allclose(person_2027.prior_year_net_income, 0.0)
+        np.testing.assert_allclose(person_2027.net_income_two_years_prior, self.OLD_PRIOR)
+
+        closed_2028 = self._closed_at(scenario, real_params, 2028, death_month_index)
+        person_2028 = closed_2028.persons[0]
+        np.testing.assert_allclose(person_2028.prior_year_net_income, self.OLD_PRIOR)
+        np.testing.assert_allclose(person_2028.net_income_two_years_prior, self.OLD_TWO_YEARS)
+
+        closed_2029 = self._closed_at(scenario, real_params, 2029, death_month_index)
+        person_2029 = closed_2029.persons[0]
+        np.testing.assert_allclose(person_2029.prior_year_net_income, self.OLD_PRIOR)
+        np.testing.assert_allclose(person_2029.net_income_two_years_prior, self.OLD_TWO_YEARS)
+
+    def test_a_mid_year_death_shifts_at_that_years_close_and_freezes_the_year_after(
+        self, scenario, real_params
+    ):
+        # Alive January through May 2028; June is the first month not alive.
+        death_month_index = 12 * (2028 - scenario.start_year) + 5
+
+        closed_2028 = self._closed_at(scenario, real_params, 2028, death_month_index)
+        person_2028 = closed_2028.persons[0]
+        np.testing.assert_allclose(person_2028.prior_year_net_income, 0.0)
+        np.testing.assert_allclose(person_2028.net_income_two_years_prior, self.OLD_PRIOR)
+
+        closed_2029 = self._closed_at(scenario, real_params, 2029, death_month_index)
+        person_2029 = closed_2029.persons[0]
+        np.testing.assert_allclose(person_2029.prior_year_net_income, self.OLD_PRIOR)
+        np.testing.assert_allclose(person_2029.net_income_two_years_prior, self.OLD_TWO_YEARS)
+
+    def test_a_december_death_shifts_at_that_years_close_and_freezes_the_year_after(
+        self, scenario, real_params
+    ):
+        # Alive January through November 2028; December is the first month not alive.
+        death_month_index = 12 * (2028 - scenario.start_year) + 11
+
+        closed_2028 = self._closed_at(scenario, real_params, 2028, death_month_index)
+        person_2028 = closed_2028.persons[0]
+        np.testing.assert_allclose(person_2028.prior_year_net_income, 0.0)
+        np.testing.assert_allclose(person_2028.net_income_two_years_prior, self.OLD_PRIOR)
+
+        closed_2029 = self._closed_at(scenario, real_params, 2029, death_month_index)
+        person_2029 = closed_2029.persons[0]
+        np.testing.assert_allclose(person_2029.prior_year_net_income, self.OLD_PRIOR)
+        np.testing.assert_allclose(person_2029.net_income_two_years_prior, self.OLD_TWO_YEARS)
+
+
+class TestGisBandIndicator:
+    """The GIS-band indicator, item 6 of close_year."""
+
+    def test_example_household_never_in_band(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        recorder = RecordingPolicy(policy)
+        run(opening_state, recorder, draws, market, real_params)
+
+        final_state = recorder.calls[-1][0]
+        assert len(final_state.history) > 0
+        for record in final_state.history:
+            for band in record.gis_band:
+                assert not np.any(band)
+
+    def _closed_with_income(self, scenario, real_params, *, cpp=0.0, oas=0.0):
+        state = build_initial_state(scenario, n_paths=1)
+        person = state.persons[0]
+        ledger = updated(person.income, cpp=np.full(1, cpp), oas=np.full(1, oas))
+        person = updated(person, income=ledger)
+        state = updated(state, persons=(person,))
+        return close_year(state, real_params)
+
+    def test_a_synthetic_low_income_household_is_in_band_with_an_above_threshold_control(
+        self, scenario, real_params
+    ):
+        threshold = real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        below = self._closed_with_income(scenario, real_params, cpp=threshold * 0.5, oas=1.0)
+        assert below.history[-1].gis_band[0][0]
+
+        above = self._closed_with_income(scenario, real_params, cpp=threshold * 2.0, oas=1.0)
+        assert not above.history[-1].gis_band[0][0]
+
+    def test_a_living_person_with_zero_oas_is_false_even_when_the_household_is_in_band(
+        self, scenario, real_params
+    ):
+        threshold = real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        closed = self._closed_with_income(scenario, real_params, cpp=threshold * 0.5, oas=0.0)
+        assert not closed.history[-1].gis_band[0][0]
+
+    def test_has_spouse_is_false_for_a_household_of_one(self, scenario, real_params):
+        # The midpoint sits above the single threshold and below the couple one, so only
+        # which threshold applies decides the result.
+        single = real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        couple = real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        assert single < couple  # precondition
+
+        closed = self._closed_with_income(scenario, real_params, cpp=(single + couple) / 2, oas=1.0)
+        assert not closed.history[-1].gis_band[0][0]
+
+
+class TestGisBandForACouple:
+    """The couple threshold applies while both are alive; once one has died,
+    the survivor is tested on the single threshold, hand-set via ``alive``.
+    """
+
+    @pytest.fixture
+    def couple_scenario(self):
+        return load_scenario(REPO_ROOT / "scenarios" / "late_life_couple.yaml")
+
+    @pytest.fixture
+    def couple_real_params(self, couple_scenario):
+        return real_year(
+            load_year(couple_scenario.start_year), couple_scenario.assumptions.inflation
+        )
+
+    def _closed(self, couple_scenario, couple_real_params, *, both_alive):
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        couple = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        assert single < couple  # precondition
+        gap = couple - single
+        # SYNTHETIC incomes, built from the thresholds themselves rather than hard-coded:
+        # person a alone sits above the single threshold, but the couple's combined testable
+        # income sits below the couple threshold, so the couple/single distinction is the
+        # only thing that changes whether the household is in band.
+        person_a = updated(
+            person_a,
+            income=updated(
+                person_a.income, cpp=np.full(1, single + gap / 3), oas=np.full(1, 1_000.0)
+            ),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, gap / 3), oas=np.full(1, 800.0)),
+            alive=np.full(1, both_alive),
+            # alive=False requires a real death_month_index (never DEATH_NOT_DRAWN); the exact
+            # month does not matter here, only that person_b is not alive at this close.
+            death_month_index=np.full(1, 0 if not both_alive else DEATH_NOT_DRAWN, dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        return close_year(state, couple_real_params)
+
+    def test_the_couple_threshold_applies_while_both_are_alive(
+        self, couple_scenario, couple_real_params
+    ):
+        closed = self._closed(couple_scenario, couple_real_params, both_alive=True)
+        assert closed.history[-1].gis_band[0][0]
+        assert closed.history[-1].gis_band[1][0]
+
+    def test_the_single_threshold_applies_once_the_spouse_has_died(
+        self, couple_scenario, couple_real_params
+    ):
+        closed = self._closed(couple_scenario, couple_real_params, both_alive=False)
+        assert not closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_a_dead_person_receiving_oas_is_false_even_when_the_survivor_is_in_band(
+        self, couple_scenario, couple_real_params
+    ):
+        """The alive gate, isolated: unlike the case above, the survivor alone is low enough
+        income to be in band here, so a mask that dropped the ``alive`` gate would wrongly
+        mark the dead spouse (who still has ``oas > 0`` on record) true as well.
+        """
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        threshold = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        person_a = updated(
+            person_a,
+            income=updated(
+                person_a.income, cpp=np.full(1, threshold * 0.5), oas=np.full(1, 1_000.0)
+            ),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, threshold * 0.1), oas=np.full(1, 800.0)),
+            alive=np.full(1, False),
+            death_month_index=np.full(1, 0, dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_the_dead_spouse_drops_out_of_the_income_sum(self, couple_scenario, couple_real_params):
+        """Removing the ``np.where(alive, …, 0.0)`` filter from the income sum would pull
+        the dead spouse's income back into the household total, pushing the
+        survivor-alone testable income -- below the single threshold on its own -- above it.
+        """
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        person_a = updated(
+            person_a,
+            income=updated(person_a.income, cpp=np.full(1, 0.9 * single), oas=np.full(1, 1_000.0)),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, 0.2 * single), oas=np.full(1, 800.0)),
+            alive=np.full(1, False),
+            death_month_index=np.full(1, 0, dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_the_dead_spouse_drops_out_of_the_oas_sum(self, couple_scenario, couple_real_params):
+        """Removing the ``np.where(alive, …, 0.0)`` filter from the OAS sum would pull the dead
+        spouse's OAS back into the household total, subtracting it from the household's
+        combined income and pulling the survivor's testable income from above the single
+        threshold to below it.
+        """
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        person_a = updated(
+            person_a,
+            income=updated(person_a.income, cpp=np.full(1, 1.1 * single), oas=np.full(1, 1_000.0)),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, 0.0), oas=np.full(1, 0.2 * single)),
+            alive=np.full(1, False),
+            death_month_index=np.full(1, 0, dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert not closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_a_spouse_who_died_during_the_year_is_out_of_the_household_at_the_close(
+        self, couple_scenario, couple_real_params
+    ):
+        """Pins the human's decision that the GIS band uses ``alive`` at the close, not
+        "alive at any point in the year" as the net-income pair does.
+        """
+        state = build_initial_state(couple_scenario, n_paths=1)
+        state = updated(state, month=12, month_index=11)
+        person_a, person_b = state.persons
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        couple = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        assert 1.4 * single > couple  # precondition: the sum including b clears the threshold
+        person_a = updated(
+            person_a,
+            income=updated(person_a.income, cpp=np.full(1, 0.9 * single), oas=np.full(1, 1_000.0)),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, 0.5 * single), oas=np.full(1, 800.0)),
+            alive=np.full(1, False),
+            # Died in June of the start year (alive January to May); death_month_index is the
+            # first month the person is not alive.
+            death_month_index=np.full(1, 5, dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_the_single_threshold_applies_when_the_first_person_has_died(
+        self, couple_scenario, couple_real_params
+    ):
+        """Mirrors ``test_the_single_threshold_applies_once_the_spouse_has_died`` with the
+        roles swapped: person a, not person b, is the one who has died.
+        """
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        couple = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        assert single < couple  # precondition
+        gap = couple - single
+        person_a = updated(
+            person_a,
+            income=updated(person_a.income, cpp=np.full(1, gap / 3), oas=np.full(1, 800.0)),
+            alive=np.full(1, False),
+            death_month_index=np.full(1, 0, dtype=np.int64),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(
+                person_b.income, cpp=np.full(1, single + gap / 3), oas=np.full(1, 1_000.0)
+            ),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert not closed.history[-1].gis_band[0][0]
+        assert not closed.history[-1].gis_band[1][0]
+
+    def test_a_living_spouse_with_zero_oas_is_false_while_the_other_is_in_band(
+        self, couple_scenario, couple_real_params
+    ):
+        """Isolates the per-person OAS gate: being alive in a household that is in band is
+        not enough on its own -- the person must also draw OAS.
+        """
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        single = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.single_testable_income_annual", 0
+        )
+        couple = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        assert single < couple  # precondition
+        gap = couple - single
+        person_a = updated(
+            person_a,
+            income=updated(person_a.income, cpp=np.full(1, single + gap / 3), oas=np.full(1, 0.0)),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(person_b.income, cpp=np.full(1, gap / 3), oas=np.full(1, 800.0)),
+        )
+        state = updated(state, persons=(person_a, person_b))
+        closed = close_year(state, couple_real_params)
+
+        assert not closed.history[-1].gis_band[0][0]
+        assert closed.history[-1].gis_band[1][0]
+
+    def test_both_spouses_oas_is_subtracted_from_the_combined_income(
+        self, couple_scenario, couple_real_params
+    ):
+        """Which OAS amounts are subtracted decides the result: keeping only one of the two
+        would push the combined testable income above the couple threshold.
+        """
+        state = build_initial_state(couple_scenario, n_paths=1)
+        person_a, person_b = state.persons
+        couple = couple_real_params.oas.annual_amount(
+            "gis.band_thresholds.couple_combined_testable_income_annual", 0
+        )
+        person_a = updated(
+            person_a,
+            income=updated(
+                person_a.income, cpp=np.full(1, 0.45 * couple), oas=np.full(1, 0.15 * couple)
+            ),
+        )
+        person_b = updated(
+            person_b,
+            income=updated(
+                person_b.income, cpp=np.full(1, 0.45 * couple), oas=np.full(1, 0.15 * couple)
+            ),
+        )
+        state = updated(state, persons=(person_a, person_b))
+
+        assessments = household_assessment(state, couple_real_params)
+        for assessment in assessments:
+            np.testing.assert_allclose(assessment.oas_repayment, 0.0)
+
+        closed = close_year(state, couple_real_params)
+
+        assert closed.history[-1].gis_band[0][0]
+        assert closed.history[-1].gis_band[1][0]
+
+
+class TestYearRecordFields:
+    """after_tax_net_worth mirrors net_worth, and the per-person tuples are
+    sized to the household.
+    """
+
+    def test_after_tax_net_worth_equals_net_worth_and_tuples_match_persons(
+        self, scenario, real_params
+    ):
+        state = build_initial_state(scenario, n_paths=2)
+        opened = open_year(state, real_params)
+        closed = close_year(opened, real_params)
+
+        record = closed.history[-1]
+        np.testing.assert_allclose(record.after_tax_net_worth, record.net_worth)
+        assert record.after_tax_net_worth is not record.net_worth
+        assert len(record.net_income) == len(closed.persons)
+        assert len(record.gis_band) == len(closed.persons)

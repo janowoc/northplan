@@ -76,6 +76,12 @@ tax year is partly complete. We start every simulation on 1 January of the
 scenario's start year with balances as at that date, and model no income
 earned earlier in that year. Lives in `engine/scenario/`.
 
+Nor do we model the return for the year before the start year: in reality
+its balance owing or refund settles in the start year's filing month; we
+take it as already reflected in the opening cash, so that filing month
+settles nothing. Direction: optimistic where a balance was owing,
+conservative where a refund was due.
+
 **L5. Real dollars are January dollars of the start year.** All amounts in a
 scenario are stated in the purchasing power of January of the start year. A
 person's two years of prior net income are the one exception to that statement,

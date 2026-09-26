@@ -23,6 +23,7 @@ from numpy.typing import NDArray
 from engine.accounts import base as accounts_base
 from engine.accounts import cash as cash_mod
 from engine.accounts import lif as lif_mod
+from engine.accounts import lira as lira_mod
 from engine.accounts import resp as resp_mod
 from engine.accounts import rrif as rrif_mod
 from engine.accounts import rrsp as rrsp_mod
@@ -30,6 +31,7 @@ from engine.accounts import taxable as taxable_mod
 from engine.accounts import tfsa as tfsa_mod
 from engine.benefits import cpp as cpp_mod
 from engine.benefits import employment as employment_mod
+from engine.benefits import gis as gis_mod
 from engine.benefits import oas as oas_mod
 from engine.benefits import pension as pension_mod
 from engine.core import timeline
@@ -50,6 +52,7 @@ from engine.policy.base import Decision, Policy, Transfer
 from engine.scenario import CONTRIBUTION_KINDS, WITHDRAWAL_KINDS
 from engine.tax import federal as federal_mod
 from engine.tax import withholding as withholding_mod
+from engine.tax.combined import household_assessment
 
 #: Contribution kinds a per-person ByKind ledger tracks -- CONTRIBUTION_KINDS less "resp",
 #: which is per-beneficiary and carried in its own tuple (MonthRecord.resp_contributions).
@@ -76,7 +79,7 @@ def advance_month(
     4. Withholding: payroll withholding on employment and on each DB pension, remitted from cash
        into ``IncomeLedger.remitted`` (L16).
     5. Outflows from cash: spending at ``spending_monthly``, the education cost of each enrolled
-       beneficiary, and in the filing month :func:`settle_tax_balance`, a no-op until #35.
+       beneficiary, and in the filing month :func:`settle_tax_balance`.
     6. Forced withdrawals to cash: each RRIF's and LIF's ``minimum_still_required``, and where
        ``Elections.fill_pension_credit`` holds, the pension-credit fill as a forced RRIF
        withdrawal spread over the months left in the year, net of what is left of the LIF
@@ -86,8 +89,9 @@ def advance_month(
        phase 6.
     8. Transfers: withdrawals to cash first, in the order given, each with its registered
        withholding; then contributions from cash, in the order given, capped at room and at the
-       cash available. The RESP wind-up in the first month after the education window.
-       Conversions are #35's. Recorded into the ledger.
+       cash available. The RESP wind-up in the first month after the education window. The
+       RRSP-to-RRIF and LIRA-to-LIF conversions are :func:`close_year` item 2's, not this phase's.
+       Recorded into the ledger.
     9. Cash floor: where cash is negative, force-withdraw in ``policy.withdrawal_order()``, kind
        by kind and person by person, from non-RESP accounts, respecting LIF maxima, with no
        withholding (L58). Where still negative, reduce ``spending_achieved_ytd`` by the deficit,
@@ -194,19 +198,16 @@ def advance_month_traced(
     beneficiaries, cash, education_costs = _phase5_education_costs(
         beneficiaries, cash, state.month_index
     )
-    tax_settlement = tuple(np.zeros(n_paths, dtype=np.float64) for _ in persons)
-    # settle_tax_balance is a no-op until #35, and this phase discards its result
-    # (tax_settlement above is unconditionally zero) -- so if #35 ever makes it return
-    # something other than its argument unchanged, that change is silently lost unless
-    # this phase is updated to wire it in. Fail loudly instead of failing to notice.
-    if (
-        timeline.is_filing_month(state.month, real_params.federal)
-        and settle_tax_balance(state, real_params) is not state
-    ):
-        raise AssertionError(
-            "settle_tax_balance changed the state, but phase 5 discards its result; "
-            "#35 must wire the settlement into phase 5 and tax_settlement"
+    if timeline.is_filing_month(state.month, real_params.federal):
+        tax_settlement = tuple(p.balance_owing.copy() for p in persons)
+        interim_state = updated(
+            state, persons=tuple(persons), beneficiaries=tuple(beneficiaries), cash=cash
         )
+        settled_state = settle_tax_balance(interim_state, real_params)
+        persons = list(settled_state.persons)
+        cash = settled_state.cash
+    else:
+        tax_settlement = tuple(np.zeros(n_paths, dtype=np.float64) for _ in persons)
 
     # Phase 6: forced RRIF/LIF withdrawals.
     persons, cash, forced_withdrawals, forced_withholding = _phase6_forced_withdrawals(
@@ -1117,32 +1118,59 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
 
 
 def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
-    """December phase: assess the year, record it, carry the balance forward.
+    """December phase: convert, assess the year, record it, carry the balance forward.
 
     Called by :func:`advance_month`, never directly.
 
-    1. Assert every RRIF's and LIF's minimum has been met: on every path, ``withdrawn_ytd >=
-       annual_minimum`` (allowing float slack) or the account's balance is zero. Phase 6 of
-       :func:`advance_month` already forces the shortfall out once the year is down to its last
-       month, so by the time this runs the assertion should already hold; it exists to catch a
-       violation of that ordering rather than to force anything itself.
-    2. Convert to a RRIF an RRSP whose owner reaches conversion age this year.
-    3. Assess the year in one joint step, on this year's brackets.
-    4. Assessment less ``remitted`` becomes ``balance_owing`` (or a refund), settled in next
-       year's filing month.
-    5. Shift the pair of net-income fields: ``net_income_two_years_prior`` takes the value
-       ``prior_year_net_income`` held all year, and ``prior_year_net_income`` takes this year's
-       net income after the social benefits repayment (line 23600,
-       ``Assessment.net_income_after_repayment``) — written for every person, including one who
-       has died (#35).
-
-    Items 2-5 are #35's and do nothing until it lands, so ``tax_assessed`` is zero.
-
-    6. Append the year to ``history``: a :class:`~engine.core.state.YearRecord` with this
-       year's ``net_worth`` — cash plus, summed over every person, the RRSP, RRIF, LIRA, LIF,
-       TFSA and taxable balances, less ``balance_owing`` (the RESP is excluded, L34) — this
-       year's ``spending_achieved_ytd``, ``tax_assessed`` (zero, per items 2-5 above), and
-       ``depleted``.
+    1. Assertions. On every path: every RRIF's and LIF's minimum has been met --
+       ``withdrawn_ytd >= annual_minimum`` (allowing float slack) or the account's balance is
+       zero -- and every person's ``balance_owing`` is exactly zero, because the filing month
+       has already settled it. Phase 6 of :func:`advance_month` already forces the RRIF/LIF
+       shortfall out once the year is down to its last month, so by the time this runs both
+       assertions should already hold; they exist to catch a violation of ordering rather than
+       to force anything themselves.
+    2. Conversions, per person, with ``age_end = timeline.age_at_end_of_year(birth_year,
+       birth_month, state.year)``: ``statutory = rrsp_mod.must_convert(age_end,
+       real_params.rrif)``; ``elected = age_end == state.elections.rrif_conversion_age_years``.
+       If ``statutory``, convert fraction ``1.0``; otherwise, if ``elected``, convert
+       ``state.elections.rrif_conversion_fraction``; otherwise no RRSP conversion. Likewise a
+       LIRA whose ``jurisdiction`` is set converts to the LIF once ``lira_mod.must_convert``
+       fires for that jurisdiction. **The conversion trigger does not vary by path**: age and
+       the household-wide election are the only inputs, so after #36 a dead holder's balance is
+       zero and converts to zero, needing no per-path mask here. A RRIF or LIF opened this year
+       carries no minimum until next January (L26, ``receive_conversion``), so no December
+       sweep of the newly converted balance is needed.
+    3. Assess the year in one joint step, on this year's brackets
+       (``engine.tax.combined.household_assessment``). This is one assessment per person, the
+       dead included: that function already gates only the pension split on ``alive``, so
+       nothing here filters persons out of the assessment.
+    4. Assessment less ``remitted`` is **assigned** to ``balance_owing`` (not added to it,
+       which is already zero per item 1): negative is a refund, settled in next year's filing
+       month.
+    5. The pair of net-income fields shifts, computed from the *old* values: for every person
+       alive at any point in the calendar year (``person.death_month_index >
+       january_month_index``, strictly greater -- never subtracted from, since the
+       :data:`~engine.core.state.DEATH_NOT_DRAWN` sentinel overflows),
+       ``net_income_two_years_prior`` takes the value ``prior_year_net_income`` held all year,
+       and ``prior_year_net_income`` takes this year's net income after the social benefits
+       repayment (line 23600,
+       ``Assessment.net_income_after_repayment``). A person not alive at any point in the year
+       keeps both figures exactly as they were: the pair freezes at the close of the last
+       calendar year they were alive in.
+    6. The GIS band indicator (L2's "living pensioner"), per person: a household-combined check
+       (``engine.benefits.gis.in_band``) on ``combined_income`` and ``combined_oas`` -- each
+       person's contribution zeroed for a path where they are not alive, so a spouse who died
+       during the year drops out of both sums and the survivor is tested on the single
+       threshold, as ``band_threshold_annual``'s docstring describes -- and ``has_spouse``
+       (both persons alive, all-False for a household of one). The per-person indicator is
+       true only where that person is alive, receives OAS, and the household is in the band.
+    7. Append the year to ``history``: a :class:`~engine.core.state.YearRecord` with this
+       year's ``net_worth`` -- cash plus, summed over every person, the RRSP, RRIF, LIRA, LIF,
+       TFSA and taxable balances, less item 4's ``balance_owing`` (the RESP is excluded, L34) --
+       ``after_tax_net_worth`` (a copy of ``net_worth`` until #36), this year's
+       ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over every person's assessment, of
+       ``total`` -- the AIP penalty and the OAS repayment included, everyone included), item 3's
+       ``net_income`` per person, item 6's ``gis_band`` per person, and ``depleted``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
@@ -1150,11 +1178,12 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
             scenario's real-dollar view.
 
     Returns:
-        State with the year assessed and recorded.
+        State with the year converted, assessed, and recorded.
 
     Raises:
         AssertionError: If, on any path, a person's RRIF or LIF has ``withdrawn_ytd`` short of
-            ``annual_minimum`` and a non-zero balance.
+            ``annual_minimum`` and a non-zero balance, or a person's ``balance_owing`` is not
+            exactly zero on entry.
     """
     for person in state.persons:
         for name, account in (("rrif", person.rrif), ("lif", person.lif)):
@@ -1169,10 +1198,93 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
                     f"{account.annual_minimum!r} with balance {account.balance!r} "
                     "still non-zero on at least one path."
                 )
+        if not np.all(person.balance_owing == 0.0):
+            raise AssertionError(
+                f"person {person.person_id!r}: balance_owing {person.balance_owing!r} is not "
+                "exactly zero on entry to close_year; the filing month must already have "
+                "settled the prior year's balance before this close runs."
+            )
+
+    year = state.year
+    january_month_index = state.month_index - (state.month - 1)
+
+    converted_persons: list[PersonState] = []
+    for person in state.persons:
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+
+        rrsp_state = person.rrsp
+        rrif_state = person.rrif
+        statutory = rrsp_mod.must_convert(age_end, real_params.rrif)
+        elected = age_end == state.elections.rrif_conversion_age_years
+        if statutory:
+            rrsp_state, moved = rrsp_mod.convert(rrsp_state, 1.0)
+            rrif_state = rrif_mod.receive_conversion(rrif_state, moved, year)
+        elif elected:
+            rrsp_state, moved = rrsp_mod.convert(
+                rrsp_state, state.elections.rrif_conversion_fraction
+            )
+            rrif_state = rrif_mod.receive_conversion(rrif_state, moved, year)
+
+        lira_state = person.lira
+        lif_state = person.lif
+        if lira_state.jurisdiction != "" and lira_mod.must_convert(
+            age_end, real_params.jurisdiction(lira_state.jurisdiction)
+        ):
+            lira_state, lif_state = lira_mod.convert_to_lif(lira_state, lif_state, year)
+
+        converted_persons.append(
+            updated(person, rrsp=rrsp_state, rrif=rrif_state, lira=lira_state, lif=lif_state)
+        )
+
+    state_after_conversions = updated(state, persons=tuple(converted_persons))
+    assessments = household_assessment(state_after_conversions, real_params)
+
+    final_persons: list[PersonState] = []
+    for person, assessment in zip(converted_persons, assessments, strict=True):
+        balance_owing = assessment.total - person.income.remitted
+
+        mask = person.death_month_index > january_month_index
+        new_two_years_prior = np.where(
+            mask, person.prior_year_net_income, person.net_income_two_years_prior
+        )
+        new_prior_year = np.where(
+            mask, assessment.net_income_after_repayment, person.prior_year_net_income
+        )
+
+        final_persons.append(
+            updated(
+                person,
+                balance_owing=balance_owing,
+                prior_year_net_income=new_prior_year,
+                net_income_two_years_prior=new_two_years_prior,
+            )
+        )
+
+    alive_flags = tuple(person.alive for person in final_persons)
+    if len(final_persons) == 2:
+        has_spouse = alive_flags[0] & alive_flags[1]
+    else:
+        has_spouse = np.zeros(state.n_paths, dtype=np.bool_)
+
+    combined_income = np.zeros(state.n_paths, dtype=np.float64)
+    combined_oas = np.zeros(state.n_paths, dtype=np.float64)
+    for person, assessment, alive in zip(final_persons, assessments, alive_flags, strict=True):
+        combined_income = combined_income + np.where(
+            alive, assessment.net_income_after_repayment, 0.0
+        )
+        combined_oas = combined_oas + np.where(alive, person.income.oas, 0.0)
+
+    household_in_band = gis_mod.in_band(
+        combined_income, combined_oas, has_spouse, january_month_index, real_params.oas
+    )
+    gis_band = tuple(
+        alive & (person.income.oas > 0) & household_in_band
+        for person, alive in zip(final_persons, alive_flags, strict=True)
+    )
 
     net_worth = state.cash.balance.copy()
     balance_owing_total = np.zeros(state.n_paths, dtype=np.float64)
-    for person in state.persons:
+    for person in final_persons:
         net_worth = (
             net_worth
             + person.rrsp.balance
@@ -1185,14 +1297,25 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
         balance_owing_total = balance_owing_total + person.balance_owing
     net_worth = net_worth - balance_owing_total
 
+    tax_assessed = np.zeros(state.n_paths, dtype=np.float64)
+    for assessment in assessments:
+        tax_assessed = tax_assessed + assessment.total
+
     year_record = YearRecord(
         year=state.year,
         net_worth=net_worth,
+        after_tax_net_worth=net_worth.copy(),
         spending=state.spending_achieved_ytd,
-        tax_assessed=np.zeros(state.n_paths, dtype=np.float64),
+        tax_assessed=tax_assessed,
+        net_income=tuple(assessment.net_income_after_repayment for assessment in assessments),
+        gis_band=gis_band,
         depleted=state.depleted,
     )
-    return updated(state, history=(*state.history, year_record))
+    return updated(
+        state_after_conversions,
+        persons=tuple(final_persons),
+        history=(*state.history, year_record),
+    )
 
 
 def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
@@ -1206,17 +1329,29 @@ def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> Hou
     shortfall in the policy's withdrawal order, and it is that forced withdrawal — not this
     phase — that can realize a capital gain.
 
-    Returns ``state`` unchanged until #35; ``MonthContext.tax_settlement`` is zero until then.
+    Per person: ``cash_mod.pay`` the amount ``max(balance_owing, 0)`` and ``cash_mod.deposit``
+    the amount ``max(-balance_owing, 0)``. Both of those account functions refuse a negative
+    argument, which is exactly why the amount owed is split into the two non-negative pieces
+    rather than paid or deposited as one signed amount. ``balance_owing`` is then zeroed for
+    every person, on every path, regardless of sign.
 
     Args:
-        state: State in the filing month, carrying a non-zero balance owing.
+        state: State in the filing month; ``balance_owing`` may be positive, negative, or
+            zero on any path.
         real_params: Parameters for the current tax year, in the scenario's
             real-dollar view, supplying the filing month.
 
     Returns:
-        ``state``, unchanged.
+        State with every person's balance owing paid or refunded, and ``balance_owing`` zeroed.
     """
-    return state
+    cash = state.cash
+    new_persons = []
+    for person in state.persons:
+        owing = person.balance_owing
+        cash = cash_mod.pay(cash, np.clip(owing, 0, None))
+        cash = cash_mod.deposit(cash, np.clip(-owing, 0, None))
+        new_persons.append(updated(person, balance_owing=np.zeros_like(owing)))
+    return updated(state, persons=tuple(new_persons), cash=cash)
 
 
 def resolve_deaths(

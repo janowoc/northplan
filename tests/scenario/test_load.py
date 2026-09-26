@@ -382,9 +382,7 @@ def test_the_couple_reaches_the_two_person_branch_of_household_assessment(
 
     A one-person household returns one ``Assessment``; the couple returning
     two is what proves its two-person branch — pension income splitting —
-    ran at all. Until #35 fills in ``close_year``'s assessment (its items
-    2-5), nothing in a run calls ``household_assessment``, so this is what
-    makes that success criterion checkable.
+    ran at all.
     """
     scenario = load_scenario(COUPLE)
     state = build_initial_state(scenario, N_PATHS)

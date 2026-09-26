@@ -157,8 +157,9 @@ class MonthContext:
         spending: ``spending_monthly`` paid this month (phase 5), broadcast to
             ``(n_paths,)``.
         education_costs: Phase 5 education cost paid, per beneficiary.
-        tax_settlement: Phase 5 filing-month settlement, per person; a debit, zero
-            until #35.
+        tax_settlement: Phase 5 filing-month settlement, per person: the prior year's balance
+            owing paid from cash; negative is a refund deposited. Zero outside the filing
+            month.
         forced_withdrawals: Phase 6 forced RRIF/LIF withdrawals, gross, per person;
             only ``rrif`` and ``lif`` are ever non-zero.
         forced_withholding: Phase 6 registered withholding on the excess above the

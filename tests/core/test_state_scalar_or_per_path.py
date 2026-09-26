@@ -23,7 +23,11 @@ hand — and, within each, every field whose resolved annotation (after strippin
   origin is ``NDArray`` itself, not ``np.ndarray``);
 - a dataclass defined in :mod:`engine.core.state` (nested structure, collected in its own right);
 - a ``tuple[...]`` whose element type is a dataclass defined in :mod:`engine.core.state` (same
-  reason).
+  reason);
+- a ``tuple[...]`` whose element type is itself an ndarray, detected the same way the bare-array
+  check above is (``typing.get_origin(element) is NDArray``) — ``YearRecord.net_income`` and
+  ``YearRecord.gis_band`` are this shape: per-path arrays, one per person, and ``walk`` already
+  covers them the way it covers a bare array.
 
 This deliberately **includes** ``Elections.cpp_start_age_months`` and
 ``Elections.oas_start_age_months`` — ``tuple[int | None, ...]``, a tuple of scalars, one per
@@ -64,6 +68,7 @@ from collections.abc import Iterable, Mapping
 from enum import Enum
 from typing import Final
 
+import numpy as np
 from numpy.typing import NDArray
 
 from engine.core import state
@@ -283,6 +288,20 @@ def _is_tuple_of_own_dataclass(annotation: object) -> bool:
     return bool(args) and _is_own_dataclass(args[0])
 
 
+def _is_tuple_of_ndarray(annotation: object) -> bool:
+    """Whether ``annotation`` is ``tuple[X, ...]`` for some ndarray element type ``X``.
+
+    Mirrors :func:`_is_tuple_of_own_dataclass`, but for a tuple of per-path arrays rather than a
+    tuple of nested state -- ``YearRecord.net_income`` and ``YearRecord.gis_band``, one array per
+    person. ``walk`` already descends into a tuple field and checks each array it finds there, so
+    this field is no more in scope for *this* guard than a bare ``NDArray`` field is.
+    """
+    if typing.get_origin(annotation) is not tuple:
+        return False
+    args = typing.get_args(annotation)
+    return bool(args) and typing.get_origin(args[0]) is NDArray
+
+
 def in_scope_fields(classes: Iterable[type]) -> dict[tuple[str, str], object]:
     """Every ``(class name, field name)`` among ``classes`` that is not an array or nested state.
 
@@ -302,6 +321,8 @@ def in_scope_fields(classes: Iterable[type]) -> dict[tuple[str, str], object]:
             if typing.get_origin(annotation) is NDArray:
                 continue
             if _is_own_dataclass(annotation) or _is_tuple_of_own_dataclass(annotation):
+                continue
+            if _is_tuple_of_ndarray(annotation):
                 continue
             found[(cls.__name__, f.name)] = annotation
     return found
@@ -364,3 +385,29 @@ class TestTheGuardBites:
 
         missing = unclassified([NotYetClassified], TABLE)
         assert missing == {("NotYetClassified", "new_label")}
+
+    def test_a_tuple_of_ndarray_field_is_excluded(self) -> None:
+        """The new exclusion, isolated: a tuple of per-path arrays, one per person, needs no
+        entry -- the shape ``YearRecord.net_income`` and ``YearRecord.gis_band`` carry.
+        """
+
+        @dataclasses.dataclass(frozen=True, slots=True)
+        class HasArrayTuple:
+            values: tuple[NDArray[np.float64], ...]
+
+        missing = unclassified([HasArrayTuple], TABLE)
+        assert missing == set()
+
+    def test_a_tuple_of_a_non_array_scalar_stays_in_scope(self) -> None:
+        """The control on the other side of the boundary: ``Elections.cpp_start_age_months``'s
+        own shape, ``tuple[int, ...]``, must still require classification. Passing this
+        alongside the control above is what proves the new exclusion is not simply "every
+        tuple" -- an exclusion that wide would let this one slip through unclassified too.
+        """
+
+        @dataclasses.dataclass(frozen=True, slots=True)
+        class HasIntTuple:
+            values: tuple[int, ...]
+
+        missing = unclassified([HasIntTuple], TABLE)
+        assert missing == {("HasIntTuple", "values")}

@@ -235,8 +235,11 @@ def _year_record() -> YearRecord:
     return YearRecord(
         year=2026,
         net_worth=_zeros(),
+        after_tax_net_worth=_zeros(),
         spending=_zeros(),
         tax_assessed=_zeros(),
+        net_income=(_zeros(),),
+        gis_band=(_bools(False),),
         depleted=_bools(False),
     )
 
@@ -259,7 +262,9 @@ class TestWalker:
         household = build_household(history=(_year_record(),))
         without_history = walk(build_household(), N_PATHS)
         with_history = walk(household, N_PATHS)
-        assert with_history == without_history + 4  # net_worth, spending, tax_assessed, depleted
+        # net_worth, after_tax_net_worth, spending, tax_assessed, depleted (5 bare arrays) plus
+        # one array each in net_income and gis_band, since build_household() carries one person.
+        assert with_history == without_history + 7
 
     def test_walk_descends_into_beneficiaries(self) -> None:
         """A delta proves descent; a floor only proves the tree is not empty."""

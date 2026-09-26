@@ -11,17 +11,18 @@ Scope of the table
 -------------------
 
 Every dataclass defined in :mod:`engine.core.state` — discovered from the module, not listed by
-hand — and, within each, every field whose resolved annotation is ``NDArray[np.float64]`` or
-``NDArray[np.float64] | None``. That is every dollar amount the module carries today, and nothing
-else: the integer and boolean arrays (``alive``, ``death_month_index``, ``wound_up``,
-``depleted``) are out of scope, and so are the plain ``float`` fields (``survivor_share``,
+hand — and, within each, every field whose resolved annotation is ``NDArray[np.float64]``,
+``NDArray[np.float64] | None``, or ``tuple[NDArray[np.float64], ...]``. That is every dollar
+amount the module carries today, and nothing else: the integer and boolean arrays (``alive``,
+``death_month_index``, ``wound_up``, ``depleted``), and ``YearRecord.gis_band`` (a tuple of
+boolean arrays), are out of scope, and so are the plain ``float`` fields (``survivor_share``,
 ``contributory_history``, ``rrif_conversion_fraction``, ``education_monthly_cost``,
 ``spending_monthly``, ``spending_survivor_share``, ``monthly_level``) — fractions in some cases,
 scenario inputs rather than carried balances in the rest. The match is exact equality against the
-two spellings above, so a per-path dollar field typed any other way — the longhand
+three spellings above, so a per-path dollar field typed any other way — the longhand
 ``np.ndarray[tuple[int, ...], np.dtype[np.float64]]``, a ``type`` alias, a three-way union, or
-anything else that is not one of those two exact objects — would slip past this rule; nothing here
-can catch that.
+anything else that is not one of those three exact objects — would slip past this rule; nothing
+here can catch that.
 
 The two classifications
 ------------------------
@@ -53,10 +54,11 @@ from numpy.typing import NDArray
 
 from engine.core import state
 
-#: The two per-path dollar array shapes this rule recognizes.
+#: The three per-path dollar array shapes this rule recognizes.
 _DOLLAR_ARRAY_TYPES: Final[tuple[object, ...]] = (
     NDArray[np.float64],
     NDArray[np.float64] | None,
+    tuple[NDArray[np.float64], ...],
 )
 
 
@@ -257,6 +259,11 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         "A within-year accumulator, zeroed each January.",
     ),
     ("YearRecord", "net_worth"): (Basis.REAL, "An output snapshot of real balances."),
+    ("YearRecord", "after_tax_net_worth"): (
+        Basis.REAL,
+        "An output snapshot, a copy of net_worth until #36 replaces it with the liquidation "
+        "value from the terminal-return arithmetic.",
+    ),
     ("YearRecord", "spending"): (
         Basis.REAL,
         "An output snapshot; spending is a real schedule.",
@@ -264,6 +271,11 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
     ("YearRecord", "tax_assessed"): (
         Basis.REAL,
         "An output snapshot, assessed on real-dollar income.",
+    ),
+    ("YearRecord", "net_income"): (
+        Basis.REAL,
+        "Assessed from the year's real-dollar ledger (L5) and recorded once; nothing decays a "
+        "history record.",
     ),
     ("HouseholdState", "spending_achieved_ytd"): (
         Basis.REAL,
@@ -276,7 +288,7 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
 }
 
 #: A generous floor, not an exact count: high enough that a collector run over every state
-#: dataclass and silently returning too little could not pass. It classifies 52 fields today.
+#: dataclass and silently returning too little could not pass. It classifies 55 fields today.
 MINIMUM_CLASSIFIED = 45
 
 
@@ -298,8 +310,8 @@ def in_scope_fields(classes: Iterable[type]) -> dict[tuple[str, str], object]:
 
     Returns:
         Resolved annotation keyed by ``(class.__name__, field.name)``, for every field whose
-        annotation, resolved via :func:`typing.get_type_hints`, is ``NDArray[np.float64]`` or
-        ``NDArray[np.float64] | None``.
+        annotation, resolved via :func:`typing.get_type_hints`, is ``NDArray[np.float64]``,
+        ``NDArray[np.float64] | None``, or ``tuple[NDArray[np.float64], ...]``.
     """
     found: dict[tuple[str, str], object] = {}
     for cls in classes:
@@ -322,7 +334,7 @@ class TestEveryInScopeFieldIsClassified:
     def test_no_field_is_missing_from_the_table(self) -> None:
         missing = unclassified(_state_dataclasses(), TABLE)
         assert not missing, (
-            f"the following fields of engine.core.state are NDArray[np.float64] but not "
+            f"the following fields of engine.core.state are dollar-typed but not "
             f"classified in TABLE: {sorted(missing)}. For each: decide whether the quantity "
             f"is fixed in nominal terms, add it to TABLE with a one-line reason, and if it is "
             f"NOMINAL, note that a nominal_carry_factor call is owed somewhere."
@@ -333,7 +345,7 @@ class TestEveryInScopeFieldIsClassified:
         stale = set(TABLE) - present
         assert not stale, (
             f"TABLE classifies the following fields, but they are no longer in scope in "
-            f"engine.core.state (renamed, removed, or no longer NDArray[np.float64]): "
+            f"engine.core.state (renamed, removed, or no longer dollar-typed): "
             f"{sorted(stale)}. Update TABLE to match."
         )
 
@@ -367,3 +379,15 @@ class TestTheGuardBites:
 
         missing = unclassified([NotYetClassified], TABLE)
         assert missing == {("NotYetClassified", "new_balance")}
+
+    def test_an_unclassified_tuple_field_on_a_new_class_is_reported(self) -> None:
+        """Same control, for the ``tuple[NDArray[np.float64], ...]`` spelling: a per-person
+        tuple of dollar arrays is caught too.
+        """
+
+        @dataclasses.dataclass(frozen=True, slots=True)
+        class NotYetClassifiedTuple:
+            new_balances: tuple[NDArray[np.float64], ...]
+
+        missing = unclassified([NotYetClassifiedTuple], TABLE)
+        assert missing == {("NotYetClassifiedTuple", "new_balances")}

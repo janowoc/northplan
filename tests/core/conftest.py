@@ -33,6 +33,7 @@ _EXPECTED_DTYPE: Final[dict[str, DTypeLike]] = {
     "alive": np.bool_,
     "wound_up": np.bool_,
     "depleted": np.bool_,
+    "gis_band": np.bool_,
 }
 
 
