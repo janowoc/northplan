@@ -439,10 +439,24 @@ income are exhausted. Not modelled: the cap on assistance payments in the
 first thirteen weeks of study, which the scheduled monthly draw stays under.
 
 **L32. Wind-up.** At the end of the education window any unused grant is
-repaid and vanishes, any accumulated income goes to cash as the subscriber's
-taxable income plus the penalty tax, and any contributions go to cash
-tax-free. Not modelled: rolling accumulated income into an RRSP with room, the
-ten-year and age-21 conditions on the wind-up, plan lifetime limits.
+repaid and vanishes; any accumulated income is taxable income of the
+subscriber, or of the living spouse where the subscriber has died (L41),
+assessed with the special tax, and goes to cash net of that tax withheld at
+source (L60); and any contributions go to cash tax-free. Not modelled: rolling
+accumulated income into an RRSP with room, the ten-year and age-21 conditions
+on the wind-up, plan lifetime limits.
+
+**L60. Withholding on an accumulated income payment.** In reality the RESP
+provider withholds tax when it pays an accumulated income payment (Form T1171,
+*Tax Withholding Waiver on Accumulated Income Payments From RESPs*, exists to
+waive it), but we do not know the formula it withholds by. We assume it
+withholds exactly the special tax the return assesses on the payment (T1172):
+`aip.penalty_rate` in `params/2026/resp.yaml`, 20%, of the accumulated income.
+It is remitted in the wind-up month for the person the income is credited to
+(L41). Direction: unknown, because the real withholding may be higher or lower
+than the special tax. Cash timing only: the December assessment and lifetime
+tax are unchanged. Same family of error as L16, but unlike L16 its sign cannot
+be stated. Lives in `engine/core/step.py::_phase8_transfers`.
 
 **L33. Grants.** The basic grant with carry-forward room, the annual and
 lifetime caps, the enhanced tier on household net income from two years

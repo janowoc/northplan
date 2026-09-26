@@ -32,7 +32,7 @@ Two identities every :class:`MonthRecord` satisfies, to the cent, on every path
   - sum(tax_settlement) + sum(forced_withdrawals) - sum(forced_withholding)``
 - ``cash_close == cash_after_flows + sum(withdrawals) - sum(withdrawal_withholding)
   - sum(contributions) - sum(resp_contributions) + sum(wind_up_to_cash)
-  + sum(floor_withdrawals) + depletion_deficit``
+  - sum(wind_up_withholding) + sum(floor_withdrawals) + depletion_deficit``
 
 where ``sum(...)`` over a tuple of :class:`ByKind` means the total of all five kinds,
 summed again over every person or beneficiary, and ``inflows.to_cash`` includes the CPP and
@@ -294,9 +294,11 @@ class MonthRecord:
         contributions: Phase 8 transfers from cash, effective, per person; only
             ``rrsp``, ``tfsa``, and ``taxable`` are ever non-zero.
         resp_contributions: Phase 8 RESP contributions, effective, per beneficiary.
-        wind_up_to_cash: Phase 8 RESP wind-up proceeds to cash, per beneficiary:
-            ``to_cash_tax_free + accumulated`` (excludes ``grants_repaid``, which
-            leaves the household).
+        wind_up_to_cash: Phase 8 RESP wind-up proceeds, gross, before the AIP
+            withholding, per beneficiary: ``to_cash_tax_free + accumulated``
+            (excludes ``grants_repaid``, which leaves the household).
+        wind_up_withholding: The special tax withheld from the AIP at the wind-up,
+            per beneficiary (L60).
         floor_withdrawals: Phase 9 cash-floor withdrawals, gross, no withholding, per
             person.
         depletion_deficit: What remained negative after the phase 9 floor, forgiven,
@@ -327,6 +329,7 @@ class MonthRecord:
     contributions: tuple[ByKind, ...]
     resp_contributions: tuple[NDArray[np.float64], ...]
     wind_up_to_cash: tuple[NDArray[np.float64], ...]
+    wind_up_withholding: tuple[NDArray[np.float64], ...]
     floor_withdrawals: tuple[ByKind, ...]
     depletion_deficit: NDArray[np.float64]
     spending_cut: NDArray[np.float64]
@@ -345,6 +348,7 @@ class MonthRecord:
         _freeze_tuple_of_arrays(self, "withdrawal_withholding")
         _freeze_tuple_of_arrays(self, "resp_contributions")
         _freeze_tuple_of_arrays(self, "wind_up_to_cash")
+        _freeze_tuple_of_arrays(self, "wind_up_withholding")
         _freeze_tuple_of_arrays(self, "resp_close")
         _freeze_tuple_of_bool_arrays(self, "alive")
         object.__setattr__(self, "withdrawals", tuple(self.withdrawals))

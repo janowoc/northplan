@@ -554,10 +554,15 @@ def aip_penalty(accumulated_income: ArrayLike, params: RealParamSet) -> NDArray[
     ``accumulated_income * aip.penalty_rate``, nothing more. Assessed as
     line 41800 by ``engine.tax.combined.person_assessment`` on
     ``IncomeLedger.resp_accumulated_income``, within ``Assessment.total``.
+    ``engine.core.step`` also calls this at the wind-up itself, to withhold
+    the same amount from the payment into cash (``docs/limitations.md``
+    L60) — the prepayment and the December assessment come from one
+    function.
 
     Args:
-        accumulated_income: The AIP paid to the subscriber, from
-            :func:`wind_up`, ``(n_paths,)``.
+        accumulated_income: The AIP paid to the subscriber, or to the living
+            spouse where the subscriber has died (L41), from :func:`wind_up`,
+            ``(n_paths,)``.
         params: The ``resp`` parameter set, supplying ``aip.penalty_rate``.
 
     Returns:

@@ -13,6 +13,8 @@ synthetic in a comment.
 from __future__ import annotations
 
 import dataclasses
+import re
+import shutil
 from pathlib import Path
 from types import MappingProxyType
 
@@ -190,6 +192,7 @@ def _assert_identities_hold(record) -> None:
         - _sum_by_kind(record.contributions)
         - _sum_arrays(record.resp_contributions)
         + _sum_arrays(record.wind_up_to_cash)
+        - _sum_arrays(record.wind_up_withholding)
         + _sum_by_kind(record.floor_withdrawals)
         + record.depletion_deficit
     )
@@ -215,6 +218,115 @@ def _w(state) -> np.ndarray:
             + person.taxable.balance
         )
     return total
+
+
+def _aip_resp_state(
+    n_paths: int,
+    *,
+    income: float,
+    contributions: float = 0.0,
+    grants: float = 0.0,
+    subscriber_index: int = 0,
+    education_start_month_index: int = 4,
+    education_months: int = 1,
+) -> RespState:
+    """A synthetic RESP plan, wound up at
+    ``education_start_month_index + education_months``, for #57's AIP-withholding tests.
+    """
+    return RespState(
+        contributions=np.full(n_paths, contributions),
+        grants=np.full(n_paths, grants),
+        income=np.full(n_paths, income),
+        contributions_lifetime=np.zeros(n_paths),
+        grants_lifetime=np.zeros(n_paths),
+        grant_room=np.zeros(n_paths),
+        grant_received_ytd=np.zeros(n_paths),
+        contributed_ytd=np.zeros(n_paths),
+        subscriber_index=subscriber_index,
+        education_start_month_index=education_start_month_index,
+        education_months=education_months,
+        education_monthly_cost=0.0,
+        wound_up=np.zeros(n_paths, dtype=bool),
+    )
+
+
+def _swap_beneficiary(state, resp_state: RespState):
+    """``state`` with its beneficiaries replaced by a single synthetic one carrying
+    ``resp_state``."""
+    beneficiary = BeneficiaryState(
+        beneficiary_id="child", birth_year=2015, birth_month=1, resp=resp_state
+    )
+    return updated(state, beneficiaries=(beneficiary,))
+
+
+def _aip_expected_accumulated(
+    market, draws, *, income: float = 5_000.0, wind_up_month_index: int = 5
+) -> np.ndarray:
+    """Accumulated income :func:`_aip_resp_state`'s plan holds the moment it winds up,
+    computed independently of the step under test: the whole opening amount sits in the
+    income bucket and compounds at the ``resp`` asset weights for every month strictly
+    before ``wind_up_month_index`` (the phase-8 wind-up in that month precedes that
+    month's own phase-10 growth -- the same arithmetic as ``engine.accounts.resp.grow``).
+
+    Args:
+        market: Supplies ``weights("resp")``.
+        draws: Supplies ``real_returns``, ``(n_months, n_assets, n_paths)``, and
+            ``n_paths``.
+        income: The fixture's opening ``income`` bucket.
+        wind_up_month_index: Month index the plan winds up in.
+
+    Returns:
+        Accumulated income at the wind-up, ``(n_paths,)``.
+    """
+    r_resp = market.weights("resp")
+    expected = np.full(draws.n_paths, income)
+    for m in range(wind_up_month_index):
+        expected = expected * (1 + r_resp @ draws.real_returns[m])
+    return expected
+
+
+def _synthetic_resp_params(scenario, real_params, tmp_path, *, rate: float = 0.37):
+    """A real param set identical to ``real_params`` except ``resp.yaml``'s
+    ``aip.penalty_rate`` is replaced by an obviously synthetic ``rate``.
+
+    Copies ``params/<start_year>`` to ``tmp_path``, substitutes the rate (asserting the
+    substitution hit exactly once), then loads and real-values the copy. Asserts the
+    loaded rate differs from ``real_params``'s -- the control that proves a caller
+    reading the synthetic set would notice a step that (wrongly) reads the real one
+    instead.
+
+    Args:
+        scenario: Supplies ``start_year`` and ``assumptions.inflation``.
+        real_params: The real param set built from the unmodified files, for the
+            control comparison.
+        tmp_path: A pytest-provided, per-test temporary directory.
+        rate: The synthetic ``aip.penalty_rate``, obviously distinct from the real one.
+
+    Returns:
+        The synthetic real param set.
+    """
+    shutil.copytree(
+        REPO_ROOT / "params" / str(scenario.start_year), tmp_path / str(scenario.start_year)
+    )
+    resp_path = tmp_path / str(scenario.start_year) / "resp.yaml"
+    original = resp_path.read_text()
+    # SYNTHETIC TEST FIXTURE: an obviously fake rate, to prove this reads the copied
+    # file rather than a hardcoded value.
+    substituted, count = re.subn(
+        r"penalty_rate:\s*[0-9.]+[^\n]*",
+        f"penalty_rate: {rate}  # SYNTHETIC TEST FIXTURE",
+        original,
+    )
+    assert count == 1
+    resp_path.write_text(substituted)
+
+    synthetic_params = real_year(
+        load_year(scenario.start_year, tmp_path), scenario.assumptions.inflation
+    )
+    assert synthetic_params.resp.number("aip.penalty_rate") != real_params.resp.number(
+        "aip.penalty_rate"
+    )
+    return synthetic_params
 
 
 class TestCashIdentityDoNothing:
@@ -1291,6 +1403,7 @@ class TestConservation:
             rhs = (
                 -_sum_arrays(record_m.withdrawal_withholding)
                 + _sum_arrays(record_m.wind_up_to_cash)
+                - _sum_arrays(record_m.wind_up_withholding)
                 + record_m.depletion_deficit
                 + _sum_arrays(inflow.to_cash for inflow in context_m1.inflows)
                 + _sum_arrays(context_m1.education_draws)
@@ -3388,6 +3501,438 @@ class TestDeadPersonStopsParticipating:
         # Path 1: a is alive -> credited to a, the subscriber; b's ledger gets 0.
         np.testing.assert_allclose(a_income[1], expected_value[1])
         np.testing.assert_allclose(b_income[1], 0.0)
+
+
+class TestAipWithholdingAtWindUp:
+    """#57: the RESP provider withholds the special tax when it pays the AIP.
+
+    ``WIND_UP_MONTH_INDEX`` is the AIP fixture's wind-up month:
+    ``education_start_month_index (4) + education_months (1)``.
+    ``DECEMBER_CLOSE_INDEX`` is 2026's December close; the run opens 1 January 2026 at
+    month index 0.
+    """
+
+    WIND_UP_MONTH_INDEX = 5
+    DECEMBER_CLOSE_INDEX = 11
+
+    def _filing_index(self, real_params) -> int:
+        filing_month = int(real_params.federal.number("filing_month"))
+        return 12 + (filing_month - 1)
+
+    def test_wind_up_month_pays_cash_net_of_the_penalty_and_withholds_it_from_remitted(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        n_paths = opening_state.n_paths
+        control_state = _swap_beneficiary(opening_state, _aip_resp_state(n_paths, income=0.0))
+        aip_state = _swap_beneficiary(opening_state, _aip_resp_state(n_paths, income=5_000.0))
+
+        control_recorder = RecordingPolicy(
+            DoNothingPolicy(control_state.elections, withdrawal_order)
+        )
+        control_result = run(
+            control_state, control_recorder, draws, market, real_params, trace_path=0
+        )
+        aip_recorder = RecordingPolicy(DoNothingPolicy(aip_state.elections, withdrawal_order))
+        aip_result = run(aip_state, aip_recorder, draws, market, real_params, trace_path=0)
+
+        # Guard: the control plan's own wind-up really has zero accumulated income.
+        control_record = control_result.trace[self.WIND_UP_MONTH_INDEX]
+        np.testing.assert_allclose(control_record.wind_up_to_cash[0], 0.0)
+        np.testing.assert_allclose(control_record.wind_up_withholding[0], 0.0)
+
+        aip_record = aip_result.trace[self.WIND_UP_MONTH_INDEX]
+        accumulated = _aip_expected_accumulated(market, draws)
+        assert np.all(accumulated > 0.0)  # guard
+        # The field is checked against an independent computation, not trusted.
+        np.testing.assert_allclose(aip_record.wind_up_to_cash[0], accumulated)
+
+        rate = real_params.resp.number("aip.penalty_rate")
+        penalty = accumulated * rate
+        np.testing.assert_allclose(aip_record.wind_up_withholding[0], penalty)
+
+        for m in range(self.WIND_UP_MONTH_INDEX):
+            np.testing.assert_allclose(
+                aip_result.trace[m].cash_close, control_result.trace[m].cash_close, atol=1e-6
+            )
+        np.testing.assert_allclose(
+            aip_record.cash_close - control_record.cash_close, accumulated - penalty, atol=1e-6
+        )
+
+        after_wind_up_aip = aip_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+        after_wind_up_control = control_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+        np.testing.assert_allclose(
+            after_wind_up_aip.persons[0].income.remitted
+            - after_wind_up_control.persons[0].income.remitted,
+            penalty,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            after_wind_up_aip.persons[0].income.resp_accumulated_income
+            - after_wind_up_control.persons[0].income.resp_accumulated_income,
+            accumulated,
+            atol=1e-6,
+        )
+
+    def test_who_remits_both_branches_of_the_credit_rule_in_one_run(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        """Both branches of the who-remits rule, side by side in one run: the
+        subscriber (person 0) is forced dead before the wind-up on path 0 only, so
+        path 0 exercises the dead-subscriber branch and path 1 the living-subscriber
+        branch. Asserts that path 0 credits the spouse and leaves the subscriber's own
+        ledger untouched, and path 1 the reverse.
+        """
+        n_paths = 2
+        draws = build_draws(
+            couple_scenario, couple_market, n_paths=n_paths, mortality=couple_mortality
+        )
+        state = build_initial_state(couple_scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, couple_mortality)
+
+        # Subscriber (person 0): dead before the wind-up on path 0, alive through the
+        # run on path 1.
+        person_a = updated(
+            state.persons[0],
+            death_month_index=np.array([3, draws.n_months - 2], dtype=np.int64),
+        )
+        state = updated(state, persons=(person_a, state.persons[1]))
+        # Spouse (person 1): alive through the wind-up and the filing month on both
+        # paths, so neither branch's credited person happens to be dead too.
+        state = _force_death(state, 1, draws.n_months - 2)
+
+        aip_state = _swap_beneficiary(state, _aip_resp_state(n_paths, income=5_000.0))
+        control_state = _swap_beneficiary(state, _aip_resp_state(n_paths, income=0.0))
+
+        aip_recorder = RecordingPolicy(
+            DoNothingPolicy(aip_state.elections, couple_withdrawal_order)
+        )
+        run(aip_state, aip_recorder, draws, couple_market, couple_real_params)
+        control_recorder = RecordingPolicy(
+            DoNothingPolicy(control_state.elections, couple_withdrawal_order)
+        )
+        run(control_state, control_recorder, draws, couple_market, couple_real_params)
+
+        accumulated = _aip_expected_accumulated(couple_market, draws)
+        assert np.all(accumulated > 0.0)  # guard
+        rate = couple_real_params.resp.number("aip.penalty_rate")
+        penalty = accumulated * rate
+
+        after_aip = aip_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+        after_ctrl = control_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+
+        # Path 0: the subscriber is dead -> the spouse (person 1) remits the penalty;
+        # the subscriber's own ledger is untouched.
+        np.testing.assert_allclose(
+            after_aip.persons[1].income.remitted[0] - after_ctrl.persons[1].income.remitted[0],
+            penalty[0],
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            after_aip.persons[0].income.remitted[0] - after_ctrl.persons[0].income.remitted[0],
+            0.0,
+            atol=1e-6,
+        )
+        # Path 1: the subscriber is alive -> the subscriber remits the penalty; the
+        # spouse's ledger is untouched.
+        np.testing.assert_allclose(
+            after_aip.persons[0].income.remitted[1] - after_ctrl.persons[0].income.remitted[1],
+            penalty[1],
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            after_aip.persons[1].income.remitted[1] - after_ctrl.persons[1].income.remitted[1],
+            0.0,
+            atol=1e-6,
+        )
+
+    def test_december_assessment_includes_the_penalty_and_april_nets_it_to_zero(
+        self, opening_state, draws, market, real_params, scenario, withdrawal_order, tmp_path
+    ):
+        control_state = _swap_beneficiary(
+            opening_state, _aip_resp_state(opening_state.n_paths, income=0.0)
+        )
+        aip_state = _swap_beneficiary(
+            opening_state, _aip_resp_state(opening_state.n_paths, income=5_000.0)
+        )
+        filing_index = self._filing_index(real_params)
+
+        control_recorder = RecordingPolicy(
+            DoNothingPolicy(control_state.elections, withdrawal_order)
+        )
+        control_result = run(
+            control_state, control_recorder, draws, market, real_params, trace_path=0
+        )
+        aip_recorder = RecordingPolicy(DoNothingPolicy(aip_state.elections, withdrawal_order))
+        aip_result = run(aip_state, aip_recorder, draws, market, real_params, trace_path=0)
+
+        accumulated = _aip_expected_accumulated(market, draws)
+        assert np.all(accumulated > 0.0)  # guard
+        # The field is checked against an independent computation, not trusted.
+        np.testing.assert_allclose(
+            aip_result.trace[self.WIND_UP_MONTH_INDEX].wind_up_to_cash[0], accumulated
+        )
+        rate_real = real_params.resp.number("aip.penalty_rate")
+        penalty = accumulated * rate_real
+
+        # Neither run's cash floor fires -- a forgiven depletion deficit would move the
+        # comparison off the flows this test names.
+        for m in range(filing_index + 1):
+            assert np.all(_sum_by_kind(control_result.trace[m].floor_withdrawals) == 0.0)
+            assert np.all(_sum_by_kind(aip_result.trace[m].floor_withdrawals) == 0.0)
+
+        assert np.all(control_result.trace[filing_index].alive[0])
+        assert np.all(aip_result.trace[filing_index].alive[0])
+
+        assert control_result.years[0] == 2026
+        assert aip_result.years[0] == 2026
+        tax_assessed_ctrl = control_result.tax_assessed[0]
+        tax_assessed_with = aip_result.tax_assessed[0]
+
+        ordinary_delta = (tax_assessed_with - penalty) - tax_assessed_ctrl
+        assert np.all(ordinary_delta > 0.0)  # guard: the gross really is taxed
+
+        state_after_close_with = aip_recorder.calls[self.DECEMBER_CLOSE_INDEX + 1][0]
+        state_after_close_ctrl = control_recorder.calls[self.DECEMBER_CLOSE_INDEX + 1][0]
+        balance_owing_with = state_after_close_with.persons[0].balance_owing
+        balance_owing_ctrl = state_after_close_ctrl.persons[0].balance_owing
+        np.testing.assert_allclose(
+            balance_owing_with - balance_owing_ctrl, ordinary_delta, atol=0.005
+        )
+
+        settlement_with = aip_result.trace[filing_index].context.tax_settlement[0]
+        settlement_ctrl = control_result.trace[filing_index].context.tax_settlement[0]
+        np.testing.assert_allclose(settlement_with - settlement_ctrl, ordinary_delta, atol=0.005)
+
+        # A second AIP run, identical to this one except for the penalty rate,
+        # isolates the penalty's own contribution to the December assessment: the
+        # ordinary tax on the gross income is the same in both runs (same accumulated
+        # income, same rate-independent brackets), so the whole difference between the
+        # two runs' ``tax_assessed`` is the penalty's rate-times-accumulated delta. A
+        # run-level rate comparison catches a step that (wrongly) zeroes the penalty
+        # out of ``engine.tax.combined``'s ``total``, which none of this run's own checks
+        # above would detect. Because this run's own withholding always matches this run's own
+        # assessed penalty (both read the same rate), ``balance_owing`` and the April
+        # settlement do not move at all between the two runs, whatever the rate is.
+        synthetic_params = _synthetic_resp_params(scenario, real_params, tmp_path)
+        rate_synth = synthetic_params.resp.number("aip.penalty_rate")
+        synthetic_recorder = RecordingPolicy(DoNothingPolicy(aip_state.elections, withdrawal_order))
+        synthetic_result = run(
+            aip_state, synthetic_recorder, draws, market, synthetic_params, trace_path=0
+        )
+        np.testing.assert_allclose(
+            synthetic_result.trace[self.WIND_UP_MONTH_INDEX].wind_up_to_cash[0],
+            accumulated,
+        )
+
+        tax_assessed_synth = synthetic_result.tax_assessed[0]
+        np.testing.assert_allclose(
+            tax_assessed_synth - tax_assessed_with,
+            accumulated * (rate_synth - rate_real),
+            atol=0.005,
+        )
+
+        state_after_close_synth = synthetic_recorder.calls[self.DECEMBER_CLOSE_INDEX + 1][0]
+        balance_owing_synth = state_after_close_synth.persons[0].balance_owing
+        np.testing.assert_allclose(balance_owing_synth, balance_owing_with, atol=0.005)
+
+        settlement_synth = synthetic_result.trace[filing_index].context.tax_settlement[0]
+        np.testing.assert_allclose(settlement_synth, settlement_with, atol=0.005)
+
+    def test_no_accumulated_income_remits_nothing(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        """A plan holding contributions only, wound up before any growth reaches
+        it (``education_start_month_index = education_months = 0``), remits nothing;
+        a wholly empty plan wound up the same way moves no cash, and its cash close
+        matches a household with no beneficiary at all.
+        """
+        n_paths = opening_state.n_paths
+        contributions_only = _aip_resp_state(
+            n_paths,
+            income=0.0,
+            contributions=5_000.0,
+            education_start_month_index=0,
+            education_months=0,
+        )
+        empty = updated(contributions_only, contributions=np.zeros(n_paths))
+
+        contributions_state = _swap_beneficiary(opening_state, contributions_only)
+        empty_state = _swap_beneficiary(opening_state, empty)
+        no_beneficiary_state = updated(opening_state, beneficiaries=())
+
+        recorder_c = RecordingPolicy(
+            DoNothingPolicy(contributions_state.elections, withdrawal_order)
+        )
+        result_c = run(contributions_state, recorder_c, draws, market, real_params, trace_path=0)
+        recorder_e = RecordingPolicy(DoNothingPolicy(empty_state.elections, withdrawal_order))
+        result_e = run(empty_state, recorder_e, draws, market, real_params, trace_path=0)
+        recorder_n = RecordingPolicy(
+            DoNothingPolicy(no_beneficiary_state.elections, withdrawal_order)
+        )
+        result_n = run(no_beneficiary_state, recorder_n, draws, market, real_params, trace_path=0)
+
+        record_c = result_c.trace[0]
+        record_e = result_e.trace[0]
+        record_n = result_n.trace[0]
+
+        np.testing.assert_allclose(record_c.wind_up_withholding[0], 0.0)
+        np.testing.assert_allclose(record_c.wind_up_to_cash[0], 5_000.0)
+
+        # The contributions-only plan's cash rises by exactly the tax-free
+        # contributions, against the empty plan's own wind-up, which moves no cash.
+        np.testing.assert_allclose(record_c.cash_close - record_e.cash_close, 5_000.0, atol=1e-6)
+
+        after_c = recorder_c.calls[1][0]
+        after_e = recorder_e.calls[1][0]
+        # Guard: no accumulated income reaches the ledger.
+        np.testing.assert_allclose(
+            after_c.persons[0].income.resp_accumulated_income
+            - after_e.persons[0].income.resp_accumulated_income,
+            0.0,
+        )
+        np.testing.assert_allclose(
+            after_c.persons[0].income.remitted, after_e.persons[0].income.remitted
+        )
+
+        # The wholly empty plan's own wind-up moves no cash and remits nothing -- and
+        # its cash close matches a household with no beneficiary at all.
+        np.testing.assert_allclose(record_e.wind_up_to_cash[0], 0.0)
+        np.testing.assert_allclose(record_e.wind_up_withholding[0], 0.0)
+        np.testing.assert_allclose(record_e.cash_close, record_n.cash_close, atol=1e-6)
+
+    def test_subscriber_dead_credits_the_survivor_and_household_sums_hold(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        n_paths = couple_opening_state.n_paths
+        aip_resp = _aip_resp_state(n_paths, income=5_000.0)
+        control_resp = updated(aip_resp, income=np.zeros(n_paths))
+
+        def _prepare(resp_state):
+            state = _swap_beneficiary(couple_opening_state, resp_state)
+            state = _force_death(state, 0, 3)  # subscriber dies before the month-5 wind-up
+            state = _force_death(state, 1, couple_draws.n_months - 2)  # alive through filing
+            return state
+
+        aip_state = _prepare(aip_resp)
+        control_state = _prepare(control_resp)
+
+        aip_recorder = RecordingPolicy(
+            DoNothingPolicy(aip_state.elections, couple_withdrawal_order)
+        )
+        aip_result = run(
+            aip_state, aip_recorder, couple_draws, couple_market, couple_real_params, trace_path=0
+        )
+        control_recorder = RecordingPolicy(
+            DoNothingPolicy(control_state.elections, couple_withdrawal_order)
+        )
+        control_result = run(
+            control_state,
+            control_recorder,
+            couple_draws,
+            couple_market,
+            couple_real_params,
+            trace_path=0,
+        )
+
+        accumulated = _aip_expected_accumulated(couple_market, couple_draws)
+        assert np.all(accumulated > 0.0)  # guard
+        # The field is checked against an independent computation, not trusted.
+        np.testing.assert_allclose(
+            aip_result.trace[self.WIND_UP_MONTH_INDEX].wind_up_to_cash[0], accumulated
+        )
+        rate = couple_real_params.resp.number("aip.penalty_rate")
+        penalty = accumulated * rate
+
+        after_aip = aip_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+        after_ctrl = control_recorder.calls[self.WIND_UP_MONTH_INDEX + 1][0]
+        np.testing.assert_allclose(
+            after_aip.persons[1].income.remitted - after_ctrl.persons[1].income.remitted,
+            penalty,
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            after_aip.persons[0].income.remitted - after_ctrl.persons[0].income.remitted,
+            0.0,
+            atol=1e-6,
+        )
+
+        filing_index = self._filing_index(couple_real_params)
+        assert np.all(aip_result.trace[filing_index].alive[1])
+        assert np.all(control_result.trace[filing_index].alive[1])
+
+        for m in range(filing_index + 1):
+            assert np.all(_sum_by_kind(aip_result.trace[m].floor_withdrawals) == 0.0)
+            assert np.all(_sum_by_kind(control_result.trace[m].floor_withdrawals) == 0.0)
+
+        assert control_result.years[0] == 2026
+        assert aip_result.years[0] == 2026
+        tax_assessed_ctrl = control_result.tax_assessed[0]
+        tax_assessed_with = aip_result.tax_assessed[0]
+        ordinary_delta = (tax_assessed_with - penalty) - tax_assessed_ctrl
+        assert np.all(ordinary_delta > 0.0)  # guard: the gross really is taxed
+
+        state_after_close_with = aip_recorder.calls[self.DECEMBER_CLOSE_INDEX + 1][0]
+        state_after_close_ctrl = control_recorder.calls[self.DECEMBER_CLOSE_INDEX + 1][0]
+        balance_owing_with = sum(p.balance_owing for p in state_after_close_with.persons)
+        balance_owing_ctrl = sum(p.balance_owing for p in state_after_close_ctrl.persons)
+        np.testing.assert_allclose(
+            balance_owing_with - balance_owing_ctrl, ordinary_delta, atol=0.005
+        )
+
+        # The April half of the identity, on household sums: the 2027 filing month's
+        # settlement moves by exactly the ordinary-tax delta; the penalty, already
+        # withheld at the wind-up, nets to zero.
+        settlement_with = _sum_arrays(aip_result.trace[filing_index].context.tax_settlement)
+        settlement_ctrl = _sum_arrays(control_result.trace[filing_index].context.tax_settlement)
+        np.testing.assert_allclose(
+            settlement_with[0] - settlement_ctrl[0], ordinary_delta, atol=0.005
+        )
+
+    def test_the_withholding_rate_comes_from_params_not_a_hardcoded_value(
+        self, opening_state, draws, market, real_params, scenario, withdrawal_order, tmp_path
+    ):
+        synthetic_params = _synthetic_resp_params(scenario, real_params, tmp_path)
+        synthetic_rate = synthetic_params.resp.number("aip.penalty_rate")
+
+        aip_state = _swap_beneficiary(
+            opening_state, _aip_resp_state(opening_state.n_paths, income=5_000.0)
+        )
+        policy = DoNothingPolicy(aip_state.elections, withdrawal_order)
+        result = run(aip_state, policy, draws, market, synthetic_params, trace_path=0)
+
+        record = result.trace[self.WIND_UP_MONTH_INDEX]
+        accumulated = _aip_expected_accumulated(market, draws)
+        assert np.all(accumulated > 0.0)  # guard
+        # The field is checked against an independent computation, not trusted.
+        np.testing.assert_allclose(record.wind_up_to_cash[0], accumulated)
+        np.testing.assert_allclose(record.wind_up_withholding[0], accumulated * synthetic_rate)
+
+    def test_cash_identity_reaches_the_wind_up_withholding_branch(
+        self, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        aip_state = _swap_beneficiary(
+            opening_state, _aip_resp_state(opening_state.n_paths, income=5_000.0)
+        )
+        recorder = RecordingPolicy(DoNothingPolicy(aip_state.elections, withdrawal_order))
+        result = run(aip_state, recorder, draws, market, real_params, trace_path=0)
+
+        withheld_somewhere = False
+        for record in result.trace:
+            _assert_identities_hold(record)
+            if np.any(_sum_arrays(record.wind_up_withholding) > 0):
+                withheld_somewhere = True
+
+        assert withheld_somewhere, "wind_up_withholding never fired; the test would be vacuous"
 
 
 class TestJanuaryFinalDeathAtRunLevel:

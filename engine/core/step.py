@@ -110,9 +110,10 @@ def advance_month(
        phase 6.
     8. Transfers: withdrawals to cash first, in the order given, each with its registered
        withholding; then contributions from cash, in the order given, capped at room and at the
-       cash available. The RESP wind-up in the first month after the education window. The
-       RRSP-to-RRIF and LIRA-to-LIF conversions are :func:`close_year` item 2's, not this phase's.
-       Recorded into the ledger.
+       cash available. The RESP wind-up in the first month after the education window pays the
+       accumulated income into cash net of the special tax, which is withheld into the credited
+       person's ``IncomeLedger.remitted`` (L60). The RRSP-to-RRIF and LIRA-to-LIF conversions are
+       :func:`close_year` item 2's, not this phase's. Recorded into the ledger.
     9. Cash floor: where cash is negative, force-withdraw in ``policy.withdrawal_order()``, kind
        by kind and person by person, from non-RESP accounts, respecting LIF maxima, with no
        withholding (L58). Where still negative, reduce ``spending_achieved_ytd`` by the deficit,
@@ -300,6 +301,7 @@ def advance_month_traced(
         contributions,
         resp_contributions,
         wind_up_to_cash,
+        wind_up_withholding,
     ) = _phase8_transfers(
         persons,
         beneficiaries,
@@ -360,6 +362,7 @@ def advance_month_traced(
         contributions=tuple(contributions),
         resp_contributions=tuple(resp_contributions),
         wind_up_to_cash=tuple(wind_up_to_cash),
+        wind_up_withholding=tuple(wind_up_withholding),
         floor_withdrawals=tuple(floor_withdrawals),
         depletion_deficit=depletion_deficit,
         spending_cut=spending_cut,
@@ -876,13 +879,16 @@ def _phase8_transfers(
     list[ByKind],
     list[NDArray[np.float64]],
     list[NDArray[np.float64]],
+    list[NDArray[np.float64]],
 ]:
     """Apply every withdrawal, in order, then every contribution, in order; then wind up any
     RESP whose education window has ended.
 
     A contribution to a dead person's own account is capped at zero (L41); an RESP
     wind-up's accumulated income is credited to the living spouse where the subscriber
-    has died (L41).
+    has died (L41). The wind-up pays the accumulated income into cash net of the special
+    tax, withheld into the credited person's ``IncomeLedger.remitted`` (L60); the gross
+    still reaches ``IncomeLedger.resp_accumulated_income`` in full.
     """
     n_paths = cash.balance.shape[0]
     for transfer in decision.transfers:
@@ -978,6 +984,7 @@ def _phase8_transfers(
         cash = cash_mod.pay(cash, contributed)
 
     wind_up_to_cash: list[NDArray[np.float64]] = []
+    wind_up_withholding: list[NDArray[np.float64]] = []
     for b, beneficiary in enumerate(beneficiaries):
         resp_state = beneficiary.resp
         threshold = resp_state.education_start_month_index + resp_state.education_months
@@ -985,17 +992,22 @@ def _phase8_transfers(
             new_resp, to_cash_tax_free, accumulated, _grants_repaid = resp_mod.wind_up(resp_state)
             total_to_cash = to_cash_tax_free + accumulated
             cash = cash_mod.deposit(cash, total_to_cash)
+            penalty = resp_mod.aip_penalty(accumulated, real_params.resp)  # L60
+            cash = cash_mod.pay(cash, penalty)
             subscriber_index = resp_state.subscriber_index
             subscriber = persons[subscriber_index]
             # D-B(ii): credited to the subscriber where alive, otherwise to the living
             # spouse (successor subscriber). On a household of one, or where neither is
             # alive, the path is already finished and the plan already zeroed, so
-            # ``accumulated`` is 0 either way.
+            # ``accumulated`` is 0 either way. The special tax is withheld from the same
+            # person's ``remitted`` as the gross is credited to (L60).
             if len(persons) == 2:
                 spouse_index = 1 - subscriber_index
                 spouse = persons[spouse_index]
                 credit_to_subscriber = np.where(subscriber.alive, accumulated, 0.0)
                 credit_to_spouse = np.where(subscriber.alive, 0.0, accumulated)
+                withheld_from_subscriber = np.where(subscriber.alive, penalty, 0.0)
+                withheld_from_spouse = np.where(subscriber.alive, 0.0, penalty)
                 persons[subscriber_index] = updated(
                     subscriber,
                     income=updated(
@@ -1003,6 +1015,7 @@ def _phase8_transfers(
                         resp_accumulated_income=(
                             subscriber.income.resp_accumulated_income + credit_to_subscriber
                         ),
+                        remitted=subscriber.income.remitted + withheld_from_subscriber,
                     ),
                 )
                 persons[spouse_index] = updated(
@@ -1012,6 +1025,7 @@ def _phase8_transfers(
                         resp_accumulated_income=(
                             spouse.income.resp_accumulated_income + credit_to_spouse
                         ),
+                        remitted=spouse.income.remitted + withheld_from_spouse,
                     ),
                 )
             else:
@@ -1020,12 +1034,15 @@ def _phase8_transfers(
                     resp_accumulated_income=(
                         subscriber.income.resp_accumulated_income + accumulated
                     ),
+                    remitted=subscriber.income.remitted + penalty,
                 )
                 persons[subscriber_index] = updated(subscriber, income=new_income)
             beneficiaries[b] = updated(beneficiary, resp=new_resp)
             wind_up_to_cash.append(total_to_cash)
+            wind_up_withholding.append(penalty)
         else:
             wind_up_to_cash.append(np.zeros(n_paths))
+            wind_up_withholding.append(np.zeros(n_paths))
 
     withdrawals = [
         ByKind(**{kind: amounts[kind] for kind in WITHDRAWAL_KINDS})
@@ -1050,6 +1067,7 @@ def _phase8_transfers(
         contributions,
         resp_contribution_amounts,
         wind_up_to_cash,
+        wind_up_withholding,
     )
 
 
