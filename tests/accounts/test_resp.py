@@ -770,7 +770,7 @@ def test_governing_income_year_offset_reads_get_not_number(rp, monkeypatch) -> N
     ``number()`` is made to raise, and the guard must still pass without calling it.
     """
 
-    def _number_must_not_be_called(self: object, path: str) -> float:
+    def _number_must_not_be_called(_self: object, path: str) -> float:
         raise AssertionError(
             f"governing_income_year_offset called number({path!r}); it must use get()."
         )

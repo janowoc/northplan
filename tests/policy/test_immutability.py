@@ -56,8 +56,9 @@ def test_composite_policy_is_frozen(scenario) -> None:
         policy.spec = policy.spec  # type: ignore[misc]
 
 
+@pytest.mark.usefixtures("deepcopy_supports_mappingproxy")
 def test_decide_leaves_every_field_equal_to_before(
-    couple_scenario, couple_real_params, make_context, deepcopy_supports_mappingproxy
+    couple_scenario, couple_real_params, make_context
 ) -> None:
     policy = build_policy(couple_scenario.policies[0], couple_scenario.household)
     # A real (deep) copy taken before `decide` runs, not a shallow `dataclasses.replace`

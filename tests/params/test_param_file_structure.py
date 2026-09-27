@@ -188,9 +188,9 @@ def test_credit_valuation_rate_is_not_above_the_lowest_bracket_rate(year: ParamY
 # --- Age-keyed factor tables ------------------------------------------------
 
 
-@pytest.mark.parametrize(("only_set", "table_path", "terminal_path"), AGE_TABLES)
+@pytest.mark.parametrize(("only_set", "table_path", "_terminal_path"), AGE_TABLES)
 def test_age_factor_tables_are_contiguous_and_monotonic(
-    year: ParamYear, only_set: str | None, table_path: str, terminal_path: str
+    year: ParamYear, only_set: str | None, table_path: str, _terminal_path: str
 ) -> None:
     """One row per age, no gaps, and factors that never fall.
 
@@ -1300,14 +1300,14 @@ def test_a_correctly_shaped_synthetic_table_passes_the_shape_check(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    ("check", "description", "mutate", "expected"),
+    ("check", "_description", "mutate", "expected"),
     MORTALITY_BREAKAGES,
     ids=[description for _, description, _, _ in MORTALITY_BREAKAGES],
 )
 def test_a_broken_mortality_table_fails_the_check_that_covers_it(
     tmp_path: Path,
     check: Callable[[str, ParamSet], None],
-    description: str,
+    _description: str,
     mutate: Callable[[dict], None],
     expected: str,
 ) -> None:

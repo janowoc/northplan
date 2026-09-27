@@ -321,7 +321,7 @@ def test_parse_yaml_does_not_wrap_a_base_exception(monkeypatch: pytest.MonkeyPat
     """
     import engine.params.loader as loader
 
-    def _raise_keyboard_interrupt(*args: object, **kwargs: object) -> None:
+    def _raise_keyboard_interrupt(*_args: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(loader._UniqueKeyLoader, "compose_mapping_node", _raise_keyboard_interrupt)

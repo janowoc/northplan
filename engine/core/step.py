@@ -244,7 +244,7 @@ def advance_month_traced(
         interim_state = updated(
             state, persons=tuple(persons), beneficiaries=tuple(beneficiaries), cash=cash
         )
-        settled_state = settle_tax_balance(interim_state, real_params)
+        settled_state = settle_tax_balance(interim_state)
         persons = list(settled_state.persons)
         cash = settled_state.cash
     else:
@@ -1558,11 +1558,11 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
     )
 
 
-def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
+def settle_tax_balance(state: HouseholdState) -> HouseholdState:
     """Filing-month phase: pay the prior year's balance owing in cash.
 
-    Called by :func:`advance_month`, never directly. The month comes from
-    ``real_params``; it is not written into the code.
+    Called by :func:`advance_month`, never directly. ``advance_month`` decides the filing
+    month from ``real_params``; this phase only settles.
 
     The settlement is a **debit** to household cash at phase 5 (a refund is a deposit); it
     realizes nothing itself. If paying it takes cash negative, phase 9's floor funds the
@@ -1578,8 +1578,6 @@ def settle_tax_balance(state: HouseholdState, real_params: RealParamYear) -> Hou
     Args:
         state: State in the filing month; ``balance_owing`` may be positive, negative, or
             zero on any path.
-        real_params: Parameters for the current tax year, in the scenario's
-            real-dollar view, supplying the filing month.
 
     Returns:
         State with every person's balance owing paid or refunded, and ``balance_owing`` zeroed.

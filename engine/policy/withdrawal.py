@@ -113,7 +113,7 @@ class OrderedWithdrawal:
             account = getattr(person, kind)
             return np.clip(account.annual_minimum - account.withdrawn_ytd, 0, None)
 
-        def net_of(kind: str, gross: ArrayLike, m: ArrayLike) -> NDArray[np.float64]:
+        def net_of(gross: ArrayLike, m: ArrayLike) -> NDArray[np.float64]:
             gross_arr = np.asarray(gross, dtype=np.float64)
             above = np.clip(gross_arr - np.asarray(m, dtype=np.float64), 0, None)
             return gross_arr - registered_withholding(above, rrif_params, context.month_index)
@@ -150,8 +150,8 @@ class OrderedWithdrawal:
         need = np.clip(-context.cash_after_flows, 0, None)
         w1_net_total = zeros.copy()
         for i in range(n_persons):
-            w1_net_total = w1_net_total + net_of("rrif", g0[i]["rrif"], m_by_person[i]["rrif"])
-            w1_net_total = w1_net_total + net_of("rrsp", g0[i]["rrsp"], m_by_person[i]["rrsp"])
+            w1_net_total = w1_net_total + net_of(g0[i]["rrif"], m_by_person[i]["rrif"])
+            w1_net_total = w1_net_total + net_of(g0[i]["rrsp"], m_by_person[i]["rrsp"])
         remaining = np.clip(need - w1_net_total, 0, None)
 
         g1 = [dict(person_g0) for person_g0 in g0]
@@ -175,13 +175,13 @@ class OrderedWithdrawal:
                         avail = np.clip(np.minimum(account.balance, max_remaining) - g0_ik, 0, None)
                     else:
                         avail = np.clip(account.balance - g0_ik, 0, None)
-                    net_g0 = net_of(kind, g0_ik, m_ik)
+                    net_g0 = net_of(g0_ik, m_ik)
                     target = net_g0 + remaining
                     cap = g0_ik + avail
                     candidate = np.minimum(cap, _gross_for_net(target, g0_ik, m_ik, edges, rates))
-                    net_candidate = net_of(kind, candidate, m_ik)
+                    net_candidate = net_of(candidate, m_ik)
                     g1_ik = np.where(net_candidate < net_g0, g0_ik, candidate)
-                    delta_net = net_of(kind, g1_ik, m_ik) - net_g0
+                    delta_net = net_of(g1_ik, m_ik) - net_g0
                 remaining = np.clip(remaining - delta_net, 0, None)
                 g1[i][kind] = g1_ik
 
@@ -215,7 +215,7 @@ class OrderedWithdrawal:
         total_net = zeros.copy()
         for i in range(n_persons):
             for kind in _REGISTERED_KINDS:
-                total_net = total_net + net_of(kind, g1[i][kind], m_by_person[i][kind])
+                total_net = total_net + net_of(g1[i][kind], m_by_person[i][kind])
             for kind in _UNTAXED_KINDS:
                 total_net = total_net + g1[i][kind]
 

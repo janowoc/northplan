@@ -198,10 +198,10 @@ BAD_TABLES: tuple[tuple[str, tuple[float, ...], tuple[float, ...]], ...] = (
 
 
 @pytest.mark.parametrize(
-    ("description", "edges", "rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
+    ("_description", "edges", "rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
 )
 def test_tax_on_income_rejects_a_bad_table(
-    description: str, edges: tuple[float, ...], rates: tuple[float, ...]
+    _description: str, edges: tuple[float, ...], rates: tuple[float, ...]
 ) -> None:
     """Every malformed table raises, at every income."""
     for income in INCOMES:
@@ -210,10 +210,10 @@ def test_tax_on_income_rejects_a_bad_table(
 
 
 @pytest.mark.parametrize(
-    ("description", "edges", "rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
+    ("_description", "edges", "rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
 )
 def test_marginal_rate_rejects_a_bad_table(
-    description: str, edges: tuple[float, ...], rates: tuple[float, ...]
+    _description: str, edges: tuple[float, ...], rates: tuple[float, ...]
 ) -> None:
     """The same tables, refused the same way, at every income.
 
@@ -227,10 +227,10 @@ def test_marginal_rate_rejects_a_bad_table(
 
 
 @pytest.mark.parametrize(
-    ("description", "edges", "rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
+    ("_description", "edges", "_rates"), BAD_TABLES, ids=[case[0] for case in BAD_TABLES]
 )
 def test_room_below_edge_rejects_a_bad_edge_ladder(
-    description: str, edges: tuple[float, ...], rates: tuple[float, ...]
+    _description: str, edges: tuple[float, ...], _rates: tuple[float, ...]
 ) -> None:
     """A bad ladder raises; a bad rate count is not this function's business.
 

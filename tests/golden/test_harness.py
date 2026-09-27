@@ -1150,9 +1150,8 @@ cases:
     assert "never both" in message
 
 
-def test_real_params_case_reaches_annual_amount_at_zero_inflation(
-    tmp_path: Path, synthetic_params_root: Path
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_real_params_case_reaches_annual_amount_at_zero_inflation(tmp_path: Path) -> None:
     """The success criterion: a synthetic case reaches the real-terms view and passes.
 
     ``cases/`` and ``params/`` are kept as separate subdirectories of
@@ -1183,9 +1182,8 @@ cases:
     run_case(cases[0])  # must not raise
 
 
-def test_real_params_case_reaches_annual_amount_at_a_non_zero_inflation(
-    tmp_path: Path, synthetic_params_root: Path
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_real_params_case_reaches_annual_amount_at_a_non_zero_inflation(tmp_path: Path) -> None:
     """The stated rate actually reaches the target, end to end through ``run_case``.
 
     The expected value is computed with :func:`erosion_factor` here, in the
@@ -1218,9 +1216,8 @@ cases:
     run_case(cases[0])  # must not raise
 
 
-def test_real_params_case_missing_inflation_fails_discovery(
-    tmp_path: Path, synthetic_params_root: Path
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_real_params_case_missing_inflation_fails_discovery(tmp_path: Path) -> None:
     """The twin of the case above, with ``inflation`` dropped: fails at discovery."""
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
@@ -1511,9 +1508,8 @@ cases:
     assert repr("names all three parameter inputs") in message
 
 
-def test_real_params_year_case_reaches_annual_amount_at_zero_inflation(
-    tmp_path: Path, synthetic_params_root: Path
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_real_params_year_case_reaches_annual_amount_at_zero_inflation(tmp_path: Path) -> None:
     """The success criterion: a synthetic case reaches the whole-year real-terms view and passes."""
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
@@ -1539,9 +1535,8 @@ cases:
     run_case(cases[0])  # must not raise
 
 
-def test_resolve_real_params_year_returns_the_stated_rate_and_the_cached_raw_year(
-    synthetic_params_root: Path,
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_resolve_real_params_year_returns_the_stated_rate_and_the_cached_raw_year() -> None:
     """``.inflation_rate`` is the case's own stated rate, and ``.raw`` is the cached ``ParamYear``.
 
     ``.raw`` identity, not just equality, proves this reuses
@@ -1596,7 +1591,7 @@ def test_each_rounding_member_derives_its_documented_tolerance(
     assert cases[0].tolerance == pytest.approx(expected_tolerance)
 
 
-def test_rounding_tolerances_and_id_suffixes_stay_in_step(tmp_path: Path) -> None:
+def test_rounding_tolerances_and_id_suffixes_stay_in_step() -> None:
     """Guards the one extension path the issue sanctions: adding a fifth member.
 
     ``GoldenCase.id`` falls back to the unsuffixed id on a lookup miss in
@@ -2177,9 +2172,8 @@ def test_resolve_inputs_dispatches_params_and_leaves_others_alone() -> None:
     assert isinstance(resolved["params"], ParamSet)
 
 
-def test_resolve_inputs_dispatches_real_params_under_the_params_key(
-    synthetic_params_root: Path,
-) -> None:
+@pytest.mark.usefixtures("synthetic_params_root")
+def test_resolve_inputs_dispatches_real_params_under_the_params_key() -> None:
     """A ``real_params`` input resolves under the keyword ``"params"``, not its own name.
 
     Every engine function names its parameter-set argument ``params``, so a

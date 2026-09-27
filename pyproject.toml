@@ -102,12 +102,6 @@ select = [
     "PTH",  # use pathlib
     "CPY001",  # missing copyright notice (preview; see the two flags above)
 ]
-ignore = [
-    # Stub bodies raise NotImplementedError, so their arguments are unused by
-    # construction. Removed by roadmap issue 23, "Command line", whose success
-    # criterion is that the example runs end to end without it.
-    "ARG001",
-]
 
 [tool.ruff.lint.flake8-copyright]
 # CPY001 covers Python only, and reads just the first 4096 bytes of a file.
@@ -126,6 +120,8 @@ notice-rgx = "(?i)SPDX-FileCopyrightText:\\s*\\d{4}"
 "tests/**" = ["E501"]
 # Embedded CSS and HTML templates.
 "docs/roadmap_page.py" = ["E501"]
+# The two endpoint stubs; removed by #24.
+"api/main.py" = ["ARG001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["engine", "api", "cli"]

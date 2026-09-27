@@ -130,7 +130,7 @@ def test_synthetic_room_accrued_hand_computed(synth) -> None:
     np.testing.assert_allclose(result, 400.0)
 
 
-def test_synthetic_contribute_caps_at_room_not_penalised(synth) -> None:
+def test_synthetic_contribute_caps_at_room_not_penalised() -> None:
     state = _state(balance=100.0, room=50.0)
     new_state, contributed = rrsp.contribute(state, np.array([80.0]))
     np.testing.assert_allclose(contributed, [50.0])
@@ -143,7 +143,7 @@ def test_contribute_raises_on_negative_requested() -> None:
         rrsp.contribute(_state(room=100.0), np.array([-5.0]))
 
 
-def test_synthetic_withdraw_is_fully_taxable(synth) -> None:
+def test_synthetic_withdraw_is_fully_taxable() -> None:
     state = _state(balance=500.0)
     new_state, result = rrsp.withdraw(state, np.array([200.0]))
     np.testing.assert_allclose(result.gross, [200.0])
