@@ -110,10 +110,13 @@ def advance_month(
        phase 6.
     8. Transfers: withdrawals to cash first, in the order given, each with its registered
        withholding; then contributions from cash, in the order given, capped at room and at the
-       cash available. The RESP wind-up in the first month after the education window pays the
-       accumulated income into cash net of the special tax, which is withheld into the credited
-       person's ``IncomeLedger.remitted`` (L60). The RRSP-to-RRIF and LIRA-to-LIF conversions are
-       :func:`close_year` item 2's, not this phase's. Recorded into the ledger.
+       cash available -- an RRSP contribution is capped at zero past the statutory conversion
+       age (``real_params.rrif.number("conversion_age_years")``), even with room still stated
+       and even though validation still accepts the transfer. The RESP wind-up in the
+       first month after the education window pays the accumulated income into cash net of the
+       special tax, which is withheld into the credited person's ``IncomeLedger.remitted``
+       (L60). The RRSP-to-RRIF and LIRA-to-LIF conversions are :func:`close_year` item 2's, not
+       this phase's. Recorded into the ledger.
     9. Cash floor: where cash is negative, force-withdraw in ``policy.withdrawal_order()``, kind
        by kind and person by person, from non-RESP accounts, respecting LIF maxima, with no
        withholding (L58). Where still negative, reduce ``spending_achieved_ytd`` by the deficit,
@@ -884,11 +887,14 @@ def _phase8_transfers(
     """Apply every withdrawal, in order, then every contribution, in order; then wind up any
     RESP whose education window has ended.
 
-    A contribution to a dead person's own account is capped at zero (L41); an RESP
-    wind-up's accumulated income is credited to the living spouse where the subscriber
-    has died (L41). The wind-up pays the accumulated income into cash net of the special
-    tax, withheld into the credited person's ``IncomeLedger.remitted`` (L60); the gross
-    still reaches ``IncomeLedger.resp_accumulated_income`` in full.
+    A contribution to a dead person's own account is capped at zero (L41); so is an RRSP
+    contribution once the person's age at the end of ``year`` exceeds
+    ``real_params.rrif.number("conversion_age_years")`` -- the contribution is no longer legal,
+    though validation still accepts the transfer. An RESP wind-up's accumulated income is
+    credited to the living spouse where the subscriber has died (L41). The wind-up pays the
+    accumulated income into cash net of the special tax, withheld into the credited person's
+    ``IncomeLedger.remitted`` (L60); the gross still reaches
+    ``IncomeLedger.resp_accumulated_income`` in full.
     """
     n_paths = cash.balance.shape[0]
     for transfer in decision.transfers:
@@ -960,6 +966,15 @@ def _phase8_transfers(
             # account. Validation still accepts the transfer; the effective amount is 0.
             requested = np.where(person.alive, np.minimum(transfer.amount, available), 0.0)
             if transfer.to_kind == "rrsp":
+                # No RRSP contribution is legal past the statutory conversion deadline (31
+                # December of the year the person reaches conversion_age_years), even though
+                # validation still accepts the transfer.
+                conversion_age_years = real_params.rrif.number("conversion_age_years")
+                person_age_end = timeline.age_at_end_of_year(
+                    person.birth_year, person.birth_month, year
+                )
+                if person_age_end > conversion_age_years:
+                    requested = np.zeros_like(requested)
                 new_rrsp, contributed = rrsp_mod.contribute(person.rrsp, requested)
                 new_income = updated(
                     person.income, rrsp_deductions=person.income.rrsp_deductions + contributed
@@ -1176,7 +1191,9 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
        the taxable account, and each beneficiary's RESP (L57).
     2. TFSA: restore last year's withdrawals to room, then grant this year's room.
     3. RRSP room on last year's employment income, read from the ledger before item 6 resets it
-       (L25).
+       (L25); then, regardless of that accrual and regardless of ``first_year``, ``room`` is
+       fixed at zero for anyone whose age at the end of ``year`` exceeds
+       ``real_params.rrif.number("conversion_age_years")``.
     4. RESP grant room per beneficiary under the cessation age.
     5. RRIF and LIF minimum, and LIF maximum, from the opening 1 January balances by age at the
        start of the year. The LIF's maximum from
@@ -1189,7 +1206,8 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
        still owed until the filing month.
 
     At month index zero items 1-4 erode, restore and grant nothing (#33 item 5): the scenario's
-    figures are already post-grant. Items 5 and 6 still run.
+    figures are already post-grant. Item 3's zeroing past the conversion age is the one
+    exception: it runs at month index zero too. Items 5 and 6 still run.
 
     Args:
         state: Opening state for January.
@@ -1227,22 +1245,31 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
         tfsa_state = person.tfsa
         taxable_state = person.taxable
 
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+        conversion_age_years = real_params.rrif.number("conversion_age_years")
+
         if not first_year:
             rrsp_state = rrsp_mod.erode_nominal(rrsp_state, inflation_rate)
             tfsa_state = tfsa_mod.erode_nominal(tfsa_state, inflation_rate)
             taxable_state = taxable_mod.erode_nominal(taxable_state, inflation_rate)
 
             tfsa_state = tfsa_mod.restore_room(tfsa_state, real_params.tfsa)
-            age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
             tfsa_room_accrued = tfsa_mod.room_accrued(
                 age_end, real_params.tfsa, january_month_index
             )
             tfsa_state = updated(tfsa_state, room=tfsa_state.room + tfsa_room_accrued)
 
-            rrsp_room_accrued = rrsp_mod.room_accrued(
-                person.income.employment, real_params.rrif, january_month_index
-            )
-            rrsp_state = updated(rrsp_state, room=rrsp_state.room + rrsp_room_accrued)
+            if age_end <= conversion_age_years:
+                rrsp_room_accrued = rrsp_mod.room_accrued(
+                    person.income.employment, real_params.rrif, january_month_index
+                )
+                rrsp_state = updated(rrsp_state, room=rrsp_state.room + rrsp_room_accrued)
+
+        # Room is fixed at zero past the conversion age, every January including month index
+        # zero -- a scenario may state room for someone already past the deadline, and that
+        # figure is illegal state, not merely one that should stop growing.
+        if age_end > conversion_age_years:
+            rrsp_state = updated(rrsp_state, room=np.zeros_like(rrsp_state.room))
 
         age_start = timeline.age_at_start_of_year(person.birth_year, person.birth_month, year)
 
@@ -1330,8 +1357,9 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
     2. Conversions, per person, with ``age_end = timeline.age_at_end_of_year(birth_year,
        birth_month, state.year)``: ``statutory = rrsp_mod.must_convert(age_end,
        real_params.rrif)``; ``elected = age_end == state.elections.rrif_conversion_age_years``.
-       If ``statutory``, convert fraction ``1.0``; otherwise, if ``elected``, convert
-       ``state.elections.rrif_conversion_fraction``; otherwise no RRSP conversion. Likewise a
+       If ``statutory``, convert fraction ``1.0`` and fix the converted RRSP's ``room`` at zero;
+       otherwise, if ``elected``, convert ``state.elections.rrif_conversion_fraction`` and leave
+       ``room`` untouched; otherwise no RRSP conversion. Likewise a
        LIRA whose ``jurisdiction`` is set converts to the LIF once ``lira_mod.must_convert``
        fires for that jurisdiction. **The conversion trigger does not vary by path**: age and
        the household-wide election are the only inputs, so after #36 a dead holder's balance is
@@ -1418,6 +1446,7 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
         elected = age_end == state.elections.rrif_conversion_age_years
         if statutory:
             rrsp_state, moved = rrsp_mod.convert(rrsp_state, 1.0)
+            rrsp_state = updated(rrsp_state, room=np.zeros_like(rrsp_state.room))
             rrif_state = rrif_mod.receive_conversion(rrif_state, moved, year)
         elif elected:
             rrsp_state, moved = rrsp_mod.convert(

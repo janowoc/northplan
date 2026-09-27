@@ -1746,6 +1746,239 @@ class TestRrspAndLiraConversion:
         np.testing.assert_allclose(person.rrif.balance, opening_rrsp)
 
 
+class TestRrspRoomZeroAfterConversion:
+    """No RRSP contribution room, granted or spent, past the statutory conversion deadline --
+    both the January accrual (``open_year``) and what phase 8 lets a contribution reach.
+    """
+
+    def _statutory_age_and_year(self, scenario, real_params):
+        person = scenario.household.persons[0]
+        rrif_age = int(real_params.rrif.number("conversion_age_years"))
+        return person.birth_year, rrif_age, person.birth_year + rrif_age
+
+    # January-1-of-year state building is exactly TestRrspAndLiraConversion._state_at_year;
+    # reused from there rather than copied a second time in this file.
+    _state_at_year = TestRrspAndLiraConversion._state_at_year
+
+    def _state_at_year_month(self, scenario, n_paths, year, month):
+        state = build_initial_state(scenario, n_paths=n_paths)
+        month_index = 12 * (year - scenario.start_year) + (month - 1)
+        spending_monthly = select_spending_level(state.spending_schedule, year)
+        return updated(
+            state,
+            year=year,
+            month=month,
+            month_index=month_index,
+            spending_monthly=spending_monthly,
+        )
+
+    def test_room_is_zeroed_at_the_statutory_close(self, scenario, real_params):
+        _, _, statutory_year = self._statutory_age_and_year(scenario, real_params)
+        state = self._state_at_year(scenario, n_paths=2, year=statutory_year)
+        opened = open_year(state, real_params)
+        closed = close_year(opened, real_params)
+        np.testing.assert_allclose(closed.persons[0].rrsp.room, 0.0)
+
+    def test_an_elected_partial_conversion_at_a_younger_age_keeps_room(self, scenario, real_params):
+        birth_year, _, statutory_year = self._statutory_age_and_year(scenario, real_params)
+        elected_age = scenario.policies[0].elections.rrif_conversion.age_years
+        year = birth_year + elected_age
+        assert year < statutory_year
+
+        state = self._state_at_year(scenario, n_paths=2, year=year)
+        opened = open_year(state, real_params)
+        room_before = opened.persons[0].rrsp.room.copy()
+        # Preconditions: room is positive before the close, and there is an actual RRIF
+        # balance to convert into -- without both, "room unchanged" would pass just as
+        # vacuously if the elected conversion had silently failed to fire at all.
+        assert np.all(room_before > 0.0)
+        assert np.all(opened.persons[0].rrif.balance == 0.0)
+
+        closed = close_year(opened, real_params)
+        assert np.all(closed.persons[0].rrif.balance > 0.0), "the elected conversion must fire"
+        np.testing.assert_allclose(closed.persons[0].rrsp.room, room_before)
+        assert np.all(closed.persons[0].rrsp.room > 0.0)
+
+    def test_room_still_granted_the_january_of_the_conversion_year(self, scenario, real_params):
+        """The legal side of ``open_year``'s ``age_end <= conversion_age_years`` boundary.
+        ``age_end == conversion_age_years`` is still legal -- the deadline is 31 December of
+        that year -- so employment income earned the year before still grants room this
+        January. A narrower ``<`` in its place would zero this January's accrual too, one
+        year early.
+        """
+        _, rrif_age, statutory_year = self._statutory_age_and_year(scenario, real_params)
+        person_a = scenario.household.persons[0]
+        assert (
+            timeline.age_at_end_of_year(person_a.birth_year, person_a.birth_month, statutory_year)
+            == rrif_age
+        )
+        extended_employment = person_a.employment[0].model_copy(
+            update={"to_year": statutory_year - 1}
+        )
+        new_person = person_a.model_copy(update={"employment": (extended_employment,)})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = self._state_at_year(new_scenario, n_paths=1, year=statutory_year)
+        person = state.persons[0]
+        employment_income = np.full(1, extended_employment.annual)
+        state = updated(
+            state,
+            persons=(updated(person, income=updated(person.income, employment=employment_income)),),
+        )
+        room_before = state.persons[0].rrsp.room.copy()
+
+        opened = open_year(state, real_params)
+        expected_accrual = rrsp.room_accrued(employment_income, real_params.rrif, state.month_index)
+        assert np.all(expected_accrual > 0.0), "the accrual must be nonzero to test anything"
+        expected_room = room_before * nominal_carry_factor(real_params.inflation_rate) + (
+            expected_accrual
+        )
+        np.testing.assert_allclose(opened.persons[0].rrsp.room, expected_room)
+
+    def test_no_room_granted_the_january_after_conversion_even_with_employment_income(
+        self, scenario, real_params
+    ):
+        _, _, statutory_year = self._statutory_age_and_year(scenario, real_params)
+        person_a = scenario.household.persons[0]
+        # Employment runs through the statutory conversion year itself, so the January
+        # after it would otherwise accrue room on a full year of earnings -- the control
+        # this test needs before it can show that no room is granted regardless.
+        extended_employment = person_a.employment[0].model_copy(update={"to_year": statutory_year})
+        new_person = person_a.model_copy(update={"employment": (extended_employment,)})
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        next_year = statutory_year + 1
+        state = self._state_at_year(new_scenario, n_paths=1, year=next_year)
+        # A full year of employment income already sits in the ledger, exactly as it would
+        # after twelve months of the statutory conversion year running through the step.
+        person = state.persons[0]
+        employment_income = np.full(1, extended_employment.annual)
+        state = updated(
+            state,
+            persons=(updated(person, income=updated(person.income, employment=employment_income)),),
+        )
+        room_before = state.persons[0].rrsp.room.copy()
+        assert np.all(room_before > 0.0), "room must start positive for the zeroing to be visible"
+
+        # Room past the conversion age is fixed at zero, not merely left un-accrued on top
+        # of whatever it eroded to.
+        opened = open_year(state, real_params)
+        np.testing.assert_allclose(opened.persons[0].rrsp.room, 0.0)
+
+    def test_phase8_contribution_boundary_both_sides(
+        self, scenario, real_params, market, withdrawal_order
+    ):
+        birth_year, rrif_age, statutory_year = self._statutory_age_and_year(scenario, real_params)
+        birth_month = scenario.household.persons[0].birth_month
+        assert timeline.age_at_end_of_year(birth_year, birth_month, statutory_year) == rrif_age
+        assert (
+            timeline.age_at_end_of_year(birth_year, birth_month, statutory_year + 1) == rrif_age + 1
+        )
+
+        n_assets = len(market.asset_class_names)
+        month_returns = np.zeros((n_assets, 1))
+        contribution_amount = 1000.0
+
+        # Side 1: age_end == conversion_age -- still legal, contributed in full.
+        state_legal = self._state_at_year_month(scenario, n_paths=1, year=statutory_year, month=6)
+        assert np.all(state_legal.persons[0].rrsp.room > 0.0)
+        script_legal = {
+            state_legal.month_index: (
+                Transfer(
+                    person_index=0,
+                    from_kind="cash",
+                    to_kind="rrsp",
+                    amount=np.full(1, contribution_amount),
+                ),
+            )
+        }
+        policy_legal = ScriptedPolicy(state_legal.elections, withdrawal_order, script_legal)
+        _, record_legal = advance_month_traced(
+            state_legal, month_returns, policy_legal, market, real_params
+        )
+        assert record_legal.contributions[0].rrsp[0] == pytest.approx(contribution_amount)
+
+        # Side 2: age_end == conversion_age + 1 -- illegal, contributes zero, even with room
+        # forced positive in the state handed to the step.
+        state_illegal = self._state_at_year_month(
+            scenario, n_paths=1, year=statutory_year + 1, month=6
+        )
+        person = state_illegal.persons[0]
+        person_with_room = updated(person, rrsp=updated(person.rrsp, room=np.full(1, 25000.0)))
+        state_illegal = updated(state_illegal, persons=(person_with_room,))
+        script_illegal = {
+            state_illegal.month_index: (
+                Transfer(
+                    person_index=0,
+                    from_kind="cash",
+                    to_kind="rrsp",
+                    amount=np.full(1, contribution_amount),
+                ),
+            )
+        }
+        policy_illegal = ScriptedPolicy(state_illegal.elections, withdrawal_order, script_illegal)
+        _, record_illegal = advance_month_traced(
+            state_illegal, month_returns, policy_illegal, market, real_params
+        )
+        assert record_illegal.contributions[0].rrsp[0] == pytest.approx(0.0)
+
+    def test_room_is_zeroed_at_month_index_zero_for_someone_already_past_conversion(
+        self, scenario, real_params
+    ):
+        """The scenario's own opening room, for someone already past the statutory
+        conversion age at the run's start, is illegal state -- it is zeroed by the very
+        first ``open_year`` (month index 0), not merely left to stop growing.
+        """
+        _, rrif_age, _ = self._statutory_age_and_year(scenario, real_params)
+        person_a = scenario.household.persons[0]
+        shifted_birth_year = scenario.start_year - (rrif_age + 1)
+        new_person = person_a.model_copy(update={"birth_year": shifted_birth_year})
+        assert (
+            timeline.age_at_end_of_year(
+                shifted_birth_year, person_a.birth_month, scenario.start_year
+            )
+            == rrif_age + 1
+        )
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = build_initial_state(new_scenario, n_paths=1)
+        assert state.month_index == 0
+        assert np.all(state.persons[0].rrsp.room > 0.0), "room must start positive to be zeroed"
+
+        opened = open_year(state, real_params)
+        np.testing.assert_allclose(opened.persons[0].rrsp.room, 0.0)
+
+    def test_room_kept_at_month_index_zero_for_age_equal_to_conversion_age(
+        self, scenario, real_params
+    ):
+        """The other side of that boundary: age_end == conversion_age is still legal, so a
+        scenario opening exactly there keeps its stated room, unchanged, at month index zero.
+        """
+        _, rrif_age, _ = self._statutory_age_and_year(scenario, real_params)
+        person_a = scenario.household.persons[0]
+        shifted_birth_year = scenario.start_year - rrif_age
+        new_person = person_a.model_copy(update={"birth_year": shifted_birth_year})
+        assert (
+            timeline.age_at_end_of_year(
+                shifted_birth_year, person_a.birth_month, scenario.start_year
+            )
+            == rrif_age
+        )
+        new_household = scenario.household.model_copy(update={"persons": (new_person,)})
+        new_scenario = scenario.model_copy(update={"household": new_household})
+
+        state = build_initial_state(new_scenario, n_paths=1)
+        assert state.month_index == 0
+        room_before = state.persons[0].rrsp.room.copy()
+        assert np.all(room_before > 0.0)
+
+        opened = open_year(state, real_params)
+        np.testing.assert_allclose(opened.persons[0].rrsp.room, room_before)
+
+
 class TestNetIncomePairShift:
     """The pair shifts at each close from that year's assessed net income."""
 
