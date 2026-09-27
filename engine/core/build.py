@@ -501,8 +501,6 @@ def _build_person(
         rrsp=RrspState(
             balance=_broadcast(accounts.rrsp.balance, n_paths),
             room=_broadcast(accounts.rrsp.room, n_paths),
-            contributed_ytd=_zeros(n_paths),
-            converted_fraction_applied=False,
         ),
         rrif=RrifState(
             balance=_broadcast(accounts.rrif.balance, n_paths),

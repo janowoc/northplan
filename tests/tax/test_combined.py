@@ -107,8 +107,6 @@ def _person(
         rrsp=RrspState(
             balance=_zeros(n),
             room=_zeros(n),
-            contributed_ytd=_zeros(n),
-            converted_fraction_applied=False,
         ),
         rrif=RrifState(
             balance=_zeros(n),

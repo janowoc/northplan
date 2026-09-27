@@ -82,11 +82,6 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         "Unused contribution room is a dollar figure fixed in nominal terms; held constant it "
         "overstates the room.",
     ),
-    ("RrspState", "contributed_ytd"): (
-        Basis.REAL,
-        "A within-year accumulator, zeroed each January, compared against room already stated "
-        "in real dollars.",
-    ),
     ("RrifState", "balance"): (Basis.REAL, "Returns are real (L6)."),
     ("RrifState", "annual_minimum"): (
         Basis.REAL,

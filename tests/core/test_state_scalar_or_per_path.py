@@ -226,15 +226,6 @@ TABLE: Final[dict[tuple[str, str], tuple[Scalarity, str]]] = {
         "a shared open year costs nothing on a path where the plan holds nothing — including a "
         "path where the holder died before the conversion age.",
     ),
-    ("RrspState", "converted_fraction_applied"): (
-        Scalarity.DETERMINISTIC_TRIGGER,
-        "engine.accounts.rrsp.must_convert takes age_at_end_of_year, which its own docstring "
-        "says is 'not per-path: a person's age does not vary by path', and convert(state, "
-        "fraction) takes a scalar fraction — nothing balance- or depletion-driven decides "
-        "whether the flag fires. convert() still moves only state.balance * fraction "
-        "elementwise, so on a path where the holder already died before that age the shared "
-        "trigger never mixes one path's balance into another's.",
-    ),
     ("SpendingLevel", "from_year"): (
         Scalarity.SCENARIO_INPUT,
         "Copied unchanged from the scenario's stated spending schedule (engine.core.build), not "

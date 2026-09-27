@@ -1200,10 +1200,10 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
        ``real_params.jurisdiction(LifState.jurisdiction)``; where
        ``engine.accounts.lif.has_maximum`` is false, no maximum is stored
        (``annual_maximum`` is ``+inf``).
-    6. Reset the year-to-date ledger, ``remitted`` included, the RRSP's ``contributed_ytd``,
-       each RRIF's and LIF's ``withdrawn_ytd``, each RESP's ``grant_received_ytd`` and
-       ``contributed_ytd``, and ``spending_achieved_ytd``. ``balance_owing`` is untouched: it is
-       still owed until the filing month.
+    6. Reset the year-to-date ledger, ``remitted`` included, each RRIF's and LIF's
+       ``withdrawn_ytd``, each RESP's ``grant_received_ytd`` and ``contributed_ytd``, and
+       ``spending_achieved_ytd``. ``balance_owing`` is untouched: it is still owed until the
+       filing month.
 
     At month index zero items 1-4 erode, restore and grant nothing (#33 item 5): the scenario's
     figures are already post-grant. Item 3's zeroing past the conversion age is the one
@@ -1300,8 +1300,6 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
             annual_maximum=lif_annual_maximum,
             withdrawn_ytd=zeros,
         )
-
-        rrsp_state = updated(rrsp_state, contributed_ytd=zeros)
 
         new_income = updated(
             person.income,

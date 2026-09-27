@@ -80,7 +80,6 @@ def contribute(state: RrspState, requested: ArrayLike) -> tuple[RrspState, NDArr
         state,
         balance=state.balance + contributed,
         room=state.room - contributed,
-        contributed_ytd=state.contributed_ytd + contributed,
     )
     return new_state, np.asarray(contributed, dtype=np.float64)
 
@@ -134,9 +133,8 @@ def convert(state: RrspState, fraction: float) -> tuple[RrspState, NDArray[np.fl
             against one; above one would drive the balance negative.
 
     Returns:
-        ``(new_state, moved)``. ``new_state.converted_fraction_applied`` is
-        ``True``. ``moved`` is the amount the caller adds to the RRIF via
-        ``engine.accounts.rrif.receive_conversion``.
+        ``(new_state, moved)``. ``moved`` is the amount the caller adds to the
+        RRIF via ``engine.accounts.rrif.receive_conversion``.
 
     Raises:
         ValueError: If ``fraction`` is outside ``[0, 1]``.
@@ -144,11 +142,7 @@ def convert(state: RrspState, fraction: float) -> tuple[RrspState, NDArray[np.fl
     if not 0 <= fraction <= 1:
         raise ValueError(f"fraction must be in [0, 1], got {fraction!r}.")
     moved = state.balance * fraction
-    new_state = updated(
-        state,
-        balance=state.balance - moved,
-        converted_fraction_applied=True,
-    )
+    new_state = updated(state, balance=state.balance - moved)
     return new_state, np.asarray(moved, dtype=np.float64)
 
 
@@ -180,9 +174,8 @@ def spousal_rollover(
 
     Balance only. ``room`` dies with the deceased and stays on the deceased's
     own state — the survivor's contribution room is unaffected by what they
-    inherit. ``contributed_ytd`` and ``converted_fraction_applied`` are
-    likewise unchanged on both sides. Paths outside ``mask`` are untouched on
-    both sides (``docs/limitations.md`` L41).
+    inherit. Paths outside ``mask`` are untouched on both sides
+    (``docs/limitations.md`` L41).
 
     Args:
         deceased: The deceased person's opening RRSP state.

@@ -67,9 +67,7 @@ def _cash() -> CashState:
 
 
 def _rrsp() -> RrspState:
-    return RrspState(
-        balance=_zeros(), room=_zeros(), contributed_ytd=_zeros(), converted_fraction_applied=False
-    )
+    return RrspState(balance=_zeros(), room=_zeros())
 
 
 def _rrif(*, balance: float = 0.0, opened_year: int | None = None) -> RrifState:

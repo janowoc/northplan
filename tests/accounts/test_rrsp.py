@@ -26,12 +26,10 @@ from engine.params.loader import load_year
 JANUARY = 0
 
 
-def _state(balance=0.0, room=0.0, contributed_ytd=0.0, converted=False) -> RrspState:
+def _state(balance=0.0, room=0.0) -> RrspState:
     return RrspState(
         balance=np.array([balance], dtype=np.float64),
         room=np.array([room], dtype=np.float64),
-        contributed_ytd=np.array([contributed_ytd], dtype=np.float64),
-        converted_fraction_applied=converted,
     )
 
 
@@ -138,7 +136,6 @@ def test_synthetic_contribute_caps_at_room_not_penalised(synth) -> None:
     np.testing.assert_allclose(contributed, [50.0])
     np.testing.assert_allclose(new_state.balance, [150.0])
     np.testing.assert_allclose(new_state.room, [0.0])
-    np.testing.assert_allclose(new_state.contributed_ytd, [50.0])
 
 
 def test_contribute_raises_on_negative_requested() -> None:
@@ -161,12 +158,11 @@ def test_withdraw_raises_on_negative_requested() -> None:
         rrsp.withdraw(_state(balance=100.0), np.array([-5.0]))
 
 
-def test_convert_moves_the_fraction_and_sets_the_flag() -> None:
-    state = _state(balance=1000.0, converted=False)
+def test_convert_moves_the_fraction() -> None:
+    state = _state(balance=1000.0)
     new_state, moved = rrsp.convert(state, 0.25)
     np.testing.assert_allclose(moved, [250.0])
     np.testing.assert_allclose(new_state.balance, [750.0])
-    assert new_state.converted_fraction_applied is True
 
 
 def test_convert_raises_on_fraction_above_one() -> None:
@@ -189,29 +185,26 @@ def test_erode_nominal_is_identity_at_zero_inflation() -> None:
 
 
 def test_erode_nominal_shrinks_room_and_nothing_else_at_positive_inflation() -> None:
-    state = _state(balance=1000.0, room=500.0, contributed_ytd=100.0)
+    state = _state(balance=1000.0, room=500.0)
     new_state = rrsp.erode_nominal(state, 0.10)
     assert new_state.room[0] < 500.0
     np.testing.assert_allclose(new_state.balance, [1000.0])
-    np.testing.assert_allclose(new_state.contributed_ytd, [100.0])
 
 
 # --- spousal_rollover (#36) ---------------------------------------------------
 
 
-def _multi(balance, room, contributed_ytd) -> RrspState:
+def _multi(balance, room) -> RrspState:
     return RrspState(
         balance=np.array(balance, dtype=np.float64),
         room=np.array(room, dtype=np.float64),
-        contributed_ytd=np.array(contributed_ytd, dtype=np.float64),
-        converted_fraction_applied=False,
     )
 
 
 def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
     mask = np.array([True, False])
-    deceased = _multi([10_000.0, 20_000.0], room=[1000.0, 2000.0], contributed_ytd=[0.0, 0.0])
-    survivor = _multi([5_000.0, 6_000.0], room=[500.0, 600.0], contributed_ytd=[0.0, 0.0])
+    deceased = _multi([10_000.0, 20_000.0], room=[1000.0, 2000.0])
+    survivor = _multi([5_000.0, 6_000.0], room=[500.0, 600.0])
 
     new_deceased, new_survivor = rrsp.spousal_rollover(deceased, survivor, mask)
 
@@ -219,16 +212,12 @@ def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
     np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
 
 
-def test_spousal_rollover_leaves_room_and_contributed_ytd_untouched_on_both_sides() -> None:
+def test_spousal_rollover_leaves_room_untouched_on_both_sides() -> None:
     mask = np.array([True])
-    deceased = _multi([10_000.0], room=[1234.0], contributed_ytd=[111.0])
-    survivor = _multi([5_000.0], room=[4321.0], contributed_ytd=[222.0])
+    deceased = _multi([10_000.0], room=[1234.0])
+    survivor = _multi([5_000.0], room=[4321.0])
 
     new_deceased, new_survivor = rrsp.spousal_rollover(deceased, survivor, mask)
 
     np.testing.assert_allclose(new_deceased.room, [1234.0])
-    np.testing.assert_allclose(new_deceased.contributed_ytd, [111.0])
     np.testing.assert_allclose(new_survivor.room, [4321.0])
-    np.testing.assert_allclose(new_survivor.contributed_ytd, [222.0])
-    assert new_deceased.converted_fraction_applied is False
-    assert new_survivor.converted_fraction_applied is False

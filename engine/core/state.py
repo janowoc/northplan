@@ -126,18 +126,13 @@ class RrspState:
     Attributes:
         balance: Real dollars, ``(n_paths,)``.
         room: Unused contribution room.
-        contributed_ytd: Contributions made so far this year; reset in January.
-        converted_fraction_applied: Whether an RRSP-to-RRIF conversion, elected or statutory,
-            has fired for this person.
     """
 
     balance: NDArray[np.float64]
     room: NDArray[np.float64]
-    contributed_ytd: NDArray[np.float64]
-    converted_fraction_applied: bool
 
     def __post_init__(self) -> None:
-        _freeze_fields(self, "balance", "room", "contributed_ytd")
+        _freeze_fields(self, "balance", "room")
 
 
 @dataclass(frozen=True, slots=True)
