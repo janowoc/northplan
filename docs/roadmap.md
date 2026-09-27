@@ -41,10 +41,10 @@ belongs. `--standalone` writes a full document for a browser.
 | 18 | Account mechanics including RESP buckets and wind-up | agent | 6, 8, 11, 29, 32, 33 | every annual limit year-to-date aware |
 | 19 | The month body and the run loop (month step, part one) | agent | 12, 13, 14, 16, 18, 29, 33, 34 | cash identity holds every month |
 | 20 | Contribution and withdrawal policies, elections, grid | agent | 19, 36 | bracket filled once per year; no clairvoyance |
-| 21 | Spreadsheet verification of the deterministic path | human | 20, 36 | snapshot authorised |
-| 22 | Objectives, search, and the RESP oracle test | agent | 20, 36 | oracle test passes |
-| 23 | Command line | agent | 22 | example runs end to end; `ARG001` ignore removed |
-| 24 | API and web page | agent | 23 | chart renders for the example |
+| 21 | Spreadsheet verification of the deterministic path | human | 20, 36, 63, 64, 65, 66 | snapshot authorised |
+| 22 | Objectives, search, and the RESP oracle test | agent | 20, 36, 64, 68 | oracle test passes |
+| 23 | Command line | agent | 22, 62, 66 | example runs end to end; nothing in `cli/` needs an `ARG001` ignore |
+| 24 | API and web page | agent | 23 | chart renders for the example; no `ARG001` ignore remains |
 | 25 | Derive golden tolerance from a declared rounding | agent | 3 | no numeric tolerance field remains |
 | 26 | Copyright and licence headers on every source file | agent | — | every source file carries an SPDX header; ruff and a test enforce it |
 | 27 | Shape check for mortality tables: fall to a trough, then rise | agent | 4, 5 | a transposed q(x) fails; the boxed warning in both files is narrowed |
@@ -76,11 +76,20 @@ belongs. `--standalone` writes a full document for a browser.
 | 53 | Documentation drift the pending issues will not rewrite | agent | — | every changed hunk is a docstring, a comment or Markdown prose; no phase list touched |
 | 54 | Three guards: the `.raw` allowlist, scalar-vs-per-path state fields, and a scenario older than the life table | agent | 48 | an unclassified scalar field, an unlisted `.raw` access, and a scenario whose run cannot reach a December close, each fail |
 | 55 | A second committed scenario: the late-life couple | agent | 10, 33 | the two-person branch of `household_assessment` is reachable from a committed scenario |
-| 56 | Hand-check the couple scenario's death mechanics | human | 36, 55 | a spreadsheet is linked; a characterization test exists, created on instruction |
+| 56 | Hand-check the couple scenario's death mechanics | human | 36, 55, 63, 67 | a spreadsheet is linked; a characterization test exists, created on instruction |
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |
 | 58 | No scenario field may be infinite or nan | agent | — | every float field refuses `inf` and `nan`; a sum check rewritten as a rejection test fails a test |
 | 59 | Every float in the scenario schema is declared finite on its type, correlation entries and weights included | agent | 58 | a non-finite correlation entry or weight is refused at its own location; dropping the flag from any of the three containers fails a test |
 | 60 | A net capital loss for the year does not reduce other income | agent | 14 | a negative net gain assesses like a zero one; L17 states the direction |
+| 61 | Refuse a repeated key in parameter and golden-case files | agent | — | a repeated key in a params or golden file raises naming the file, line and key |
+| 62 | Dead RRSP fields, unused arguments, and drift no pending issue rewrites | agent | — | the two RRSP fields are gone; the only `ARG001` ignore is on `api/main.py` |
+| 63 | The trace carries what the hand-checks read, with a flat export and a forced-death helper | agent | 62 | a December row carries each person's assessment; a death month can be forced |
+| 64 | Open a run in one place, with the load-time guards | agent | 63 | `prepare_run` refuses a bad grid start age; `evaluate` matches the hand-assembled run |
+| 65 | OAS first pays the month after the elected start; CPP's rule cited | agent | 61 | an OAS election at 65 first pays at 781 months |
+| 66 | `SimulationResult` carries every per-year figure the CLI and API report | agent | — | `after_tax_net_worth` and the GIS counts are per year |
+| 67 | Pension splitting in the year of a death, and the under-65 transferee's credit | agent | 63 | the death year splits pro-rata; an under-65 transferee's credit is capped |
+| 68 | An insolvent estate is worth zero | agent | — | no negative estate or after-tax net worth |
+| 69 | Golden cases for the lines no case reaches yet | human | 61 | each listed line has a passing case or a filed bug |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -338,6 +347,29 @@ assessed until 35, so nothing is wrong yet. It sits right after 55 and before
 35, the first code that assesses a year, rather than inside 35: the fix is one
 line in `engine/tax/`, outside 35's module, and testable there on a hand-built
 ledger.
+
+Pre-21 audit, 2026-09-26. The whole tree was read again after 20 landed, before
+the human's hand-checks (21, 56) and the last agent issues (22 to 24), because
+every patch until then had been reviewed only in isolation. The suite, ruff,
+the formatting, the citations, the calibration of the draws and the mortality
+medians all held, and so did every cash identity, conversion and death traced
+through both committed scenarios. Thirteen decisions and nine issues came out
+of it. 63, 64, 65 and 66 sit before 21 because 21 needs them: the trace it
+checks against, the entry point it should run through, an OAS start one month
+early that changes the example's output from 2031, and the per-year figures
+its snapshot has to pin. 61 and 62 go first because they are small and what
+follows benefits: 61 guards every file the human edits next, and 62 removes
+two meaningless fields before 63 puts them in the trace. 67 sits before 56
+because it changes the couple's death-year tax, and 56 moves after 21, so the
+single-person check comes first. 68 only has to precede 22, which scores
+estates; no deterministic path depletes. 69 is the human's, whenever
+convenient.
+
+The two rules behind 65 and 67 were checked against the statutes rather than
+inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
+when a pension first pays; ITA s.60.03 and s.118(7), with Form T1032, for
+splitting in the year of a death and for the credit of a receiving spouse
+under 65.
 
 Parameters the human supplies along the way, by issue: 6 adds the pension
 splitting share and eligibility age, EI rate and maximum, CPP base rate and
