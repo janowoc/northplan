@@ -97,7 +97,7 @@ def _implied_cpp_base_contributions(
     Only the first tier's base rate generates a non-refundable credit; the
     enhanced portion and the second tier are deductions, not credits, and are
     not computed here. Not the household's actual accrued contribution, which
-    a later issue accrues into the ``IncomeLedger``.
+    the step (``engine/core/step.py``) accrues into the ``IncomeLedger``.
 
     Args:
         annual_earnings: Annualised employment earnings, real dollars.
@@ -126,8 +126,8 @@ def _implied_ei_premiums(
 ) -> NDArray[np.float64]:
     """Payroll-table approximation (L16) of the EI premium implied.
 
-    Not the household's actual accrued premium, which a later issue accrues
-    into the ``IncomeLedger``.
+    Not the household's actual accrued premium, which the step
+    (``engine/core/step.py``) accrues into the ``IncomeLedger``.
 
     Args:
         annual_earnings: Annualised employment earnings, real dollars.

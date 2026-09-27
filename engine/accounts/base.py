@@ -105,8 +105,9 @@ def remaining_annual_allowance(
     one place that comparison is factored out, because
     ``engine.accounts.lif.withdraw`` does not take a year-to-date total at
     all — it takes ``maximum_remaining`` directly, since the LIF maximum has
-    no fixed floor the way a minimum does. The step (#19) is expected to call
-    this once, in January, to turn the year's LIF maximum and the
+    no fixed floor the way a minimum does. The step calls this wherever a
+    LIF is drawn — phase 6's forced minimum, and ``_withdraw_from_kind``,
+    which phases 8 and 9 use — to turn the year's LIF maximum and the
     year-to-date withdrawn total into that argument.
 
     Args:

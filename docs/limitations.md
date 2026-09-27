@@ -245,7 +245,7 @@ month's amount, divided by twelve. CPP and OAS are paid gross, which is the
 default in reality. The balance settles from cash in the filing month; a
 refund arrives the same way. Not modelled: instalments, and the July-to-June
 OAS recovery withholding, which is a refundable prepayment of the repayment
-assessed on the return. Lives in `engine/tax/withholding.py`, to be called by
+assessed on the return. Lives in `engine/tax/withholding.py`, called from
 `engine/core/step.py`.
 
 Three further approximations inside the payroll estimate, and they do not all
