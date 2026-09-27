@@ -12,22 +12,28 @@ plausible wrong number.
 
 from __future__ import annotations
 
+import datetime
 import inspect
 import shutil
+import sys
 from pathlib import Path
 from typing import Final
 
 import pytest
+import yaml
 
 from engine.params.loader import (
     DEFAULT_PARAMS_ROOT,
+    DuplicateYamlKeyError,
     MalformedParamFileError,
     MissingParameterError,
     ParamError,
     ParamFileMissingError,
     ParamSet,
     ParamYearMissingError,
+    YamlConstructionError,
     load_year,
+    parse_yaml,
 )
 
 #: Scaffolding marker left on every unverified line of a draft parameter file.
@@ -146,6 +152,482 @@ def test_non_utf8_file_raises_malformed_naming_that_file(tmp_path: Path) -> None
     assert isinstance(excinfo.value.__cause__, UnicodeDecodeError)
     assert "ab.yaml" not in message
     assert "on.yaml" not in message
+
+
+# --- Repeated keys ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "line", "key"),
+    [
+        pytest.param("71: a\n71: b\n", 2, 71, id="int"),
+        pytest.param("1.5: a\n1.5: b\n", 2, 1.5, id="float"),
+        pytest.param("yes: a\ntrue: b\n", 2, True, id="bool"),
+        pytest.param("~: a\nnull: b\n", 2, None, id="null"),
+        pytest.param("2026-01-01: a\n2026-01-01: b\n", 2, datetime.date(2026, 1, 1), id="date"),
+        pytest.param("!!binary aGk=: a\n!!binary aGk=: b\n", 2, b"hi", id="binary"),
+        pytest.param("a: &k foo\n*k : 1\nfoo: 2\n", 3, "foo", id="anchor-alias"),
+        pytest.param("71: a\n71.0: b\n", 2, 71.0, id="int-then-float"),
+        pytest.param("1: a\ntrue: b\n", 2, True, id="int-then-bool"),
+    ],
+)
+def test_parse_yaml_refuses_a_repeat_under_each_scalar_tag(
+    text: str, line: int, key: object
+) -> None:
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    message = str(excinfo.value)
+    assert f"line {line}" in message
+    assert f"key {key!r} appears" in message
+
+
+def test_repeated_top_level_key_raises_malformed_naming_line_and_key(tmp_path: Path) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text(
+        "zzz_synthetic_key: 1\nzzz_synthetic_key: 2\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "line 2" in message
+    assert repr("zzz_synthetic_key") in message
+    assert "not valid YAML" not in message
+    assert isinstance(excinfo.value.__cause__, DuplicateYamlKeyError)
+
+
+def test_repeated_key_in_a_nested_mapping_raises_malformed_naming_line_and_key(
+    tmp_path: Path,
+) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text(
+        "outer:\n  zzz_synthetic_key: 1\n  zzz_synthetic_key: 2\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "line 3" in message
+    assert repr("zzz_synthetic_key") in message
+    assert "not valid YAML" not in message
+    assert isinstance(excinfo.value.__cause__, DuplicateYamlKeyError)
+
+
+def test_repeated_age_row_in_a_factor_table_raises_malformed(tmp_path: Path) -> None:
+    """A repeated integer age row is refused through ``load_year``, naming the file, line and key.
+
+    The committed tables keyed by integer age are ``rrif.yaml``'s
+    ``rrif.minimum_factors.by_age``, ``ab.yaml``'s ``lif.maximum_factors.by_age``
+    and ``mortality.yaml``'s ``q_x.f`` and ``q_x.m``.
+    """
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "rrif.yaml"
+    path.write_text("factors:\n  71: 0.5\n  72: 0.6\n  71: 0.7\n", encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "line 4" in message
+    assert f"key {71!r} appears" in message
+
+
+def test_same_key_in_two_sibling_mappings_loads_both_values(tmp_path: Path) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    (year / "federal.yaml").write_text(
+        "a: {zzz_synthetic_key: 1}\nb: {zzz_synthetic_key: 2}\n",
+        encoding="utf-8",
+    )
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("a.zzz_synthetic_key") == 1
+    assert federal.get("b.zzz_synthetic_key") == 2
+
+
+def test_duplicate_yaml_key_error_is_a_value_error_not_a_yaml_error() -> None:
+    assert issubclass(DuplicateYamlKeyError, ValueError)
+    assert not issubclass(DuplicateYamlKeyError, yaml.YAMLError)
+
+
+def test_parse_yaml_syntax_error_raises_yaml_error_not_duplicate_key_error() -> None:
+    with pytest.raises(yaml.YAMLError) as excinfo:
+        parse_yaml("a: [unterminated\n")
+    assert not isinstance(excinfo.value, DuplicateYamlKeyError)
+    assert not isinstance(excinfo.value, YamlConstructionError)
+
+
+def test_parse_yaml_reports_a_construction_error_ahead_of_a_later_syntax_error() -> None:
+    """Pins the docstring's claim: a construction error is possibly reported
+    ahead of a syntax error later in the same text.
+
+    ``yaml.safe_load`` of the same text raises a ``yaml.YAMLError`` at the
+    unterminated flow node in ``b`` — not a :class:`YamlConstructionError` —
+    while ``parse_yaml`` never gets that far, because building the malformed
+    ``!!int`` key fails first.
+    """
+    text = "a:\n  !!int abc: 1\nb: [\n"
+
+    with pytest.raises(YamlConstructionError) as excinfo:
+        parse_yaml(text)
+    assert isinstance(excinfo.value.__cause__, ValueError)
+
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "cause_type"),
+    [
+        pytest.param("x: !!int abc\n", ValueError, id="int"),
+        pytest.param("x: !!bool maybe\n", KeyError, id="bool"),
+        pytest.param("x: !!timestamp abc\n", AttributeError, id="timestamp"),
+        pytest.param("rate: !!float\n", IndexError, id="float-no-value"),
+        pytest.param('x: !!int ""\n', IndexError, id="int-empty-string"),
+        pytest.param("x: !!float 1" + ":1" * 400 + "\n", OverflowError, id="base-60-overflow"),
+        pytest.param("[" * (sys.getrecursionlimit() + 1), RecursionError, id="deep-nesting"),
+    ],
+)
+def test_parse_yaml_wraps_a_bare_construction_error_once(
+    text: str, cause_type: type[Exception]
+) -> None:
+    with pytest.raises(YamlConstructionError) as excinfo:
+        parse_yaml(text)
+
+    assert isinstance(excinfo.value, yaml.YAMLError)
+    assert isinstance(excinfo.value.__cause__, cause_type)
+
+
+def test_parse_yaml_does_not_wrap_a_base_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``parse_yaml``'s ``except Exception`` must not catch a ``BaseException``.
+
+    ``KeyboardInterrupt`` is not an ``Exception``, so it passes through the
+    ``except Exception`` wrap unchanged. A guard widened to ``BaseException``
+    would turn it into a ``YamlConstructionError``.
+    """
+    import engine.params.loader as loader
+
+    def _raise_keyboard_interrupt(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(loader._UniqueKeyLoader, "compose_mapping_node", _raise_keyboard_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        parse_yaml("a: 1\n")
+
+
+def test_parse_yaml_reports_a_nested_repeat_ahead_of_a_later_syntax_error() -> None:
+    """A repeated key in a nested mapping is refused before a later syntax error.
+
+    ``yaml.safe_load`` of the same text raises a ``yaml.YAMLError`` at the
+    unterminated flow node in ``c``; ``parse_yaml`` never gets that far,
+    because the repeated key ``b`` is refused first.
+    """
+    text = "a:\n  b: 1\n  b: 2\nc: [\n"
+
+    with pytest.raises(DuplicateYamlKeyError):
+        parse_yaml(text)
+
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(text)
+
+
+def test_parse_yaml_reports_an_alias_key_repeat_at_the_anchor() -> None:
+    """Pins documented behaviour: a repeat made through an alias key is
+    reported at the anchor's location, not the alias's.
+    """
+    text = "&k foo: 1\nx: 0\n*k : 2\n"
+
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    message = str(excinfo.value)
+    assert "line 1" in message
+    assert repr("foo") in message
+
+
+def test_parse_yaml_unhashable_key_raises_yaml_error_not_type_error() -> None:
+    with pytest.raises(yaml.YAMLError) as excinfo:
+        parse_yaml("? [a, b]\n: 1\n")
+    assert not isinstance(excinfo.value, YamlConstructionError)
+
+
+def test_load_year_on_a_file_with_an_unhashable_key_raises_malformed_naming_that_file(
+    tmp_path: Path,
+) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text("? [a, b]\n: 1\n", encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(path) in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "cause_type"),
+    [
+        pytest.param("x: !!int abc\n", ValueError, id="int"),
+        pytest.param("x: !!bool maybe\n", KeyError, id="bool"),
+        pytest.param("x: !!timestamp abc\n", AttributeError, id="timestamp"),
+        pytest.param("by_age:\n  2026-13-45: 1\n", ValueError, id="out-of-range-date-key"),
+        pytest.param("rate: !!float\n", IndexError, id="float-no-value"),
+    ],
+)
+def test_load_year_on_a_construction_error_raises_malformed_naming_that_file(
+    tmp_path: Path, text: str, cause_type: type[Exception]
+) -> None:
+    """PyYAML's scalar constructors raise a bare ``ValueError``, ``KeyError``,
+    ``AttributeError`` or ``IndexError`` on a malformed tagged or date scalar,
+    with no filename attached; ``load_year`` must still name the file rather
+    than let one escape. ``parse_yaml`` converts the bare exception to
+    :class:`YamlConstructionError` once, so it is that class's ``__cause__``
+    that carries the original.
+    """
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "not valid YAML" in message
+    assert isinstance(excinfo.value.__cause__, YamlConstructionError)
+    assert isinstance(excinfo.value.__cause__.__cause__, cause_type)
+
+
+def test_parse_yaml_allows_a_merge_key_matching_safe_load() -> None:
+    text = (
+        "base: &base\n"
+        "  zzz_synthetic_key: 1\n"
+        "  other_synthetic_key: 2\n"
+        "merged:\n"
+        "  <<: *base\n"
+        "  other_synthetic_key: 3\n"
+    )
+    assert parse_yaml(text) == yaml.safe_load(text)
+
+
+def test_parse_yaml_still_refuses_an_explicit_repeat_alongside_a_merge_key() -> None:
+    text = (
+        "base: &base\n"
+        "  zzz_synthetic_key: 1\n"
+        "  other_synthetic_key: 2\n"
+        "merged:\n"
+        "  <<: *base\n"
+        "  other_synthetic_key: 3\n"
+        "  other_synthetic_key: 4\n"
+    )
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    message = str(excinfo.value)
+    assert "line 7" in message
+    assert repr("other_synthetic_key") in message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "a: &a {k: 1}\nx:\n  b: &b\n    <<: *a\n    k: 2\nc:\n  <<: *b\n  k: 3\n",
+            id="nested merge source",
+        ),
+        pytest.param(
+            "a: &a {k: 1}\nx:\n  - &b\n    <<: *a\n    k: 2\nc:\n  <<: [*b]\n  k: 3\n",
+            id="merge source in a sequence",
+        ),
+    ],
+)
+def test_parse_yaml_matches_safe_load_when_a_merge_source_is_itself_a_merge(
+    text: str,
+) -> None:
+    """A merge source built by its own merge must not look like a repeat.
+
+    ``flatten_mapping`` rewrites a mapping node in place, and it builds nested
+    mappings lazily. A duplicate check that runs after that rewrite can see a
+    merge source's own flattened key alongside its override and refuse a
+    document ``safe_load`` accepts.
+    """
+    assert parse_yaml(text) == yaml.safe_load(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("m:\n  <<: {x: 1, x: 2}\n  y: 0\n", id="inline merge source"),
+        pytest.param("m:\n  <<: [{x: 1, x: 2}]\n", id="merge source in a sequence"),
+    ],
+)
+def test_parse_yaml_refuses_a_repeat_inside_a_merge_source(text: str) -> None:
+    """A repeat inside the mapping a merge key points at is still a repeat."""
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    message = str(excinfo.value)
+    assert "line 2" in message
+    assert repr("x") in message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("=: 1\n", id="= at the top level"),
+        pytest.param("a:\n  =: 1\n", id="= in a nested mapping"),
+    ],
+)
+def test_parse_yaml_matches_safe_load_for_a_bare_equals_key(text: str) -> None:
+    """A bare ``=`` key loads as it does under ``safe_load``.
+
+    PyYAML tags a bare ``=`` key ``tag:yaml.org,2002:value``, which SafeLoader
+    has no constructor for until ``flatten_mapping`` rewrites it. The check
+    must not construct it directly.
+    """
+    assert parse_yaml(text) == yaml.safe_load(text)
+
+
+def test_parse_yaml_matches_safe_load_with_two_merge_keys_in_one_mapping() -> None:
+    """Two ``<<`` keys in one mapping are allowed; neither is a repeat."""
+    text = "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n"
+
+    expected = {"a": {"x": 1}, "b": {"y": 2}, "m": {"x": 1, "y": 2}}
+    assert yaml.safe_load(text) == expected
+    assert parse_yaml(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("!!map a: 1\n", id="map-tagged key"),
+        pytest.param("!!set a: 1\n", id="set-tagged key"),
+        pytest.param("x: {!!seq a: 1}\n", id="seq-tagged key, nested"),
+    ],
+)
+def test_parse_yaml_on_a_collection_tagged_key_raises_yaml_error_not_type_error(
+    text: str,
+) -> None:
+    """A scalar key with a collection tag builds an unhashable object.
+
+    ``safe_load`` refuses it with ``ConstructorError``. The check must not let
+    a bare ``TypeError`` from ``key in seen`` escape instead.
+    """
+    with pytest.raises(yaml.YAMLError):
+        parse_yaml(text)
+
+
+def test_load_year_on_a_collection_tagged_key_raises_malformed_naming_that_file(
+    tmp_path: Path,
+) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text("!!map a: 1\n", encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(path) in str(excinfo.value)
+
+
+def test_parse_yaml_matches_safe_load_with_two_value_tagged_keys() -> None:
+    text = "!!value a: 1\n!!value b: 2\n"
+    assert parse_yaml(text) == yaml.safe_load(text)
+
+
+def test_parse_yaml_refuses_a_value_tagged_key_matching_a_plain_one_by_text() -> None:
+    """A ``!!value`` key is compared by its text, not the literal ``"="``."""
+    text = "!!value a: 1\na: 2\n"
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    message = str(excinfo.value)
+    assert "line 2" in message
+    assert repr("a") in message
+
+
+def test_top_level_key_collision_after_str_cast_raises_malformed(tmp_path: Path) -> None:
+    """``"1"`` and ``1`` are different YAML keys but the same key once stored as text."""
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    text = '"1": a\n1: b\n'
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert repr("1") in message
+    assert repr(1) in message
+    assert "top level" in message
+    assert f"{'1'!r} and {1!r}" in message
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+
+    # parse_yaml alone, with no str-cast, sees two distinct keys.
+    assert parse_yaml(text) == {"1": "a", 1: "b"}
+
+
+def test_nested_key_collision_after_str_cast_names_the_path(tmp_path: Path) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text('outer:\n  - {"65": a, 65: b}\n', encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "outer.0" in message
+
+
+def test_nested_key_collision_after_str_cast_names_the_depth_two_path(tmp_path: Path) -> None:
+    year = tmp_path / "2030"
+    year.mkdir()
+    path = year / "federal.yaml"
+    path.write_text('outer:\n  inner:\n    - {"65": a, 65: b}\n', encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "outer.inner.0" in message
+
+
+def test_same_key_text_in_sibling_mappings_loads(tmp_path: Path) -> None:
+    """Control: the same text in two different mappings is not a collision."""
+    year = tmp_path / "2030"
+    year.mkdir()
+    (year / "federal.yaml").write_text(
+        'a: {"65": 1}\nb: {65: 2}\n',
+        encoding="utf-8",
+    )
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("a.65") == 1
+    assert federal.get("b.65") == 2
 
 
 def test_every_loader_error_is_a_param_error() -> None:

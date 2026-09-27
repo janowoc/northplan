@@ -60,7 +60,14 @@ import pytest
 import yaml
 
 from engine.core.indexation import RealParamSet, RealParamYear, real_year
-from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamSet, ParamYear, load_year
+from engine.params.loader import (
+    DEFAULT_PARAMS_ROOT,
+    DuplicateYamlKeyError,
+    ParamSet,
+    ParamYear,
+    load_year,
+    parse_yaml,
+)
 
 __all__ = [
     "CASES_DIR",
@@ -592,16 +599,20 @@ def _validate_inputs(path: Path, name: str, raw_inputs: Any) -> Mapping[str, Any
 def _load_case_file(path: Path) -> Any:
     """Parse one case file's YAML, with the filename attached to any failure.
 
-    Reading the whole file as text before handing it to ``yaml.safe_load``
+    Reading the whole file as text before handing it to :func:`parse_yaml`
     means a syntax error is otherwise reported against the string, not the
-    file it came from. An out-of-range date written unquoted (``2026-13-45``)
-    fails the same way: PyYAML's implicit timestamp resolver constructs a
-    ``datetime.date`` while parsing and raises a bare ``ValueError`` with no
-    filename attached, so that is caught here too.
+    file it came from. A malformed scalar (``!!int abc``, or an unquoted
+    out-of-range date such as ``2026-13-45``) arrives as a
+    ``YamlConstructionError``, a ``yaml.YAMLError``, so it too is reported
+    against the file. A repeated key is reported as such, via
+    :class:`DuplicateYamlKeyError`, rather than folded into the "not valid
+    YAML" message below it.
     """
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (yaml.YAMLError, ValueError) as exc:
+        return parse_yaml(path.read_text(encoding="utf-8"))
+    except DuplicateYamlKeyError as exc:
+        raise GoldenCaseError(f"{path}: {exc}") from exc
+    except yaml.YAMLError as exc:
         raise GoldenCaseError(f"{path}: not valid YAML: {exc}") from exc
 
 
@@ -652,11 +663,13 @@ def discover_cases(cases_dir: Path) -> list[GoldenCase]:
     Raises:
         GoldenCaseError: If ``cases_dir`` does not exist, if it holds a file
             that is neither a case file nor ``.gitkeep``, if any case file is
-            not valid YAML or not a mapping with a ``target``, if a file
-            defines no cases, or if any case is missing a required field,
-            sets an unrecognized field (including the removed ``tolerance``),
-            or fails validation of ``name``, ``source``, ``checked``,
-            ``expected``, ``rounding``, or ``inputs``.
+            not valid YAML, repeats a key within one mapping (the message
+            names the file, line, and key), or is not a mapping with a
+            ``target``, if a file defines no cases, or if any case is
+            missing a required field, sets an unrecognized field (including
+            the removed ``tolerance``), or fails validation of ``name``,
+            ``source``, ``checked``, ``expected``, ``rounding``, or
+            ``inputs``.
     """
     if not cases_dir.is_dir():
         raise GoldenCaseError(f"{cases_dir}: cases directory does not exist.")

@@ -61,7 +61,10 @@ instead. `expected` itself must be non-empty, and every number in it must be
 finite: a case with nothing under `expected` asserts nothing and would
 otherwise report green having checked no number at all, and a case expecting
 `inf` would report green off an overflowing target via `inf == approx(inf)`,
-so both are rejected at discovery.
+so both are rejected at discovery. A key repeated within one mapping anywhere
+in a case file is refused at discovery, naming the file, line, and key — it
+is not silently overwritten with the last value, which is what plain YAML
+would do.
 
 ## Parameter inputs: `params`, `real_params`, `real_params_year`
 

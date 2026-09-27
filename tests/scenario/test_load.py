@@ -22,7 +22,7 @@ from engine.core.build import build_initial_state
 from engine.core.indexation import real_year
 from engine.core.mortality import months_to_terminal
 from engine.core.state import DEATH_NOT_DRAWN
-from engine.params.loader import ParamYear, load_year
+from engine.params.loader import ParamYear, YamlConstructionError, load_year
 from engine.scenario import (
     InvalidScenarioError,
     MalformedScenarioFileError,
@@ -116,6 +116,38 @@ def test_invalid_yaml_is_malformed(tmp_path: Path) -> None:
         load_scenario(path)
 
     assert str(path) in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "cause_type"),
+    [
+        pytest.param("name: !!bool maybe\n", KeyError, id="bool"),
+        pytest.param("name: !!timestamp abc\n", AttributeError, id="timestamp"),
+        pytest.param("name: !!int abc\n", ValueError, id="int"),
+    ],
+)
+def test_a_construction_error_is_malformed_not_a_duplicate_key(
+    tmp_path: Path, text: str, cause_type: type[Exception]
+) -> None:
+    """PyYAML's scalar constructors raise a bare exception with no filename attached.
+
+    ``load_scenario`` must still name the file and say the file is not valid
+    YAML, rather than letting the bare exception escape or misreporting it as
+    ``DuplicateKeyError``. ``parse_yaml`` converts the bare exception to
+    :class:`YamlConstructionError` once, so it is that class's ``__cause__``
+    that carries the original.
+    """
+    path = write(tmp_path, text)
+
+    with pytest.raises(MalformedScenarioFileError) as excinfo:
+        load_scenario(path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "not valid YAML" in message
+    assert not isinstance(excinfo.value, DuplicateKeyError)
+    assert isinstance(excinfo.value.__cause__, YamlConstructionError)
+    assert isinstance(excinfo.value.__cause__.__cause__, cause_type)
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,12 @@ Conventions the files themselves must follow (see the header in any file under
 ``params/``): amounts are annual dollars unless the key says otherwise, rates
 are bare fractions rather than percentages or basis points, and dollar amounts
 are the nominal figures as published for that tax year.
+
+A mapping that repeats a key is refused: YAML permits it and keeps the last
+value without a word. :func:`parse_yaml` is the one parser for hand-edited
+YAML, so the refusal is the same everywhere it is used; a merge key (``<<``)
+is not a repeat. Two keys that read the same once stored as text (``65`` and
+``"65"``) are refused too, because every key is stored as text.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ import yaml
 
 __all__ = [
     "DEFAULT_PARAMS_ROOT",
+    "DuplicateYamlKeyError",
     "MalformedParamFileError",
     "MissingParameterError",
     "ParamError",
@@ -44,8 +51,23 @@ __all__ = [
     "ParamSet",
     "ParamYear",
     "ParamYearMissingError",
+    "YamlConstructionError",
     "load_year",
+    "parse_yaml",
 ]
+
+#: The YAML 1.1 value-key tag, which PyYAML's resolver gives a plain ``=``
+#: key. SafeLoader loads such a key as its text.
+_VALUE_TAG: Final[str] = "tag:yaml.org,2002:value"
+
+#: The scalar tags whose keys the check builds early. A value-tagged key is
+#: compared by its text; any other tag (merge, a collection tag, an unknown
+#: tag) is left to SafeLoader's own construction. They are YAML tags, not tax
+#: constants.
+_SCALAR_KEY_TAGS: Final[frozenset[str]] = frozenset(
+    f"tag:yaml.org,2002:{suffix}"
+    for suffix in ("str", "int", "float", "bool", "null", "binary", "timestamp")
+)
 
 #: Repository-root ``params/`` directory. Resolved from this file's location so
 #: that it works regardless of the process working directory.
@@ -68,11 +90,13 @@ class ParamFileMissingError(ParamError):
 
 
 class MalformedParamFileError(ParamError):
-    """A parameter file exists but is not a YAML mapping.
+    """A parameter file exists but cannot be read as one YAML mapping.
 
     An empty file is *not* malformed — a stub awaiting hand-entered values is
-    the expected state of a new tax year. A file whose top level is a list, a
-    scalar, or invalid YAML is malformed.
+    the expected state of a new tax year. A file that is invalid YAML, whose
+    top level is a list or a scalar, that repeats a key within a mapping, or
+    whose mapping holds two keys that are the same once read as text, is
+    malformed.
     """
 
 
@@ -86,18 +110,131 @@ class MissingParameterError(ParamError):
     """
 
 
-def _freeze(value: Any) -> Any:
+class DuplicateYamlKeyError(ValueError):
+    """A mapping repeats a key, which YAML permits by keeping the last value."""
+
+
+class YamlConstructionError(yaml.YAMLError):
+    """PyYAML raised something other than a YAML error while building the document.
+
+    Typically on a malformed scalar (``!!int abc``, ``rate: !!float`` with no
+    value, an out-of-range unquoted date). The original exception is this
+    one's ``__cause__``.
+    """
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """``yaml.SafeLoader`` that refuses a mapping node that repeats a scalar key.
+
+    Checked when the node is composed, before merge flattening rewrites nodes
+    in place. Only a key whose tag is in ``_SCALAR_KEY_TAGS`` is built and
+    compared; a value-tagged key (``=``) is compared by its text. Every other
+    key, including a merge key, is left to SafeLoader's own construction.
+    """
+
+    def compose_mapping_node(self, anchor: Any) -> yaml.MappingNode:
+        node = super().compose_mapping_node(anchor)
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            if not isinstance(key_node, yaml.ScalarNode):
+                continue
+            if key_node.tag == _VALUE_TAG:
+                key = key_node.value
+            elif key_node.tag in _SCALAR_KEY_TAGS:
+                key = self.construct_object(key_node)
+            else:
+                continue
+            if key in seen:
+                raise DuplicateYamlKeyError(
+                    f"line {key_node.start_mark.line + 1}, column "
+                    f"{key_node.start_mark.column + 1}: key {key!r} appears more "
+                    "than once in this mapping. YAML permits it and keeps the "
+                    "last, so whichever value you meant, one of them is being "
+                    "discarded silently."
+                )
+            seen.add(key)
+        return node
+
+
+def parse_yaml(text: str) -> Any:
+    """Parse ``text`` as YAML, refusing a mapping that repeats a key.
+
+    Args:
+        text: YAML document text.
+
+    Returns:
+        Whatever ``yaml.safe_load(text)`` would return for the same text.
+
+    Raises:
+        DuplicateYamlKeyError: If one mapping in ``text`` repeats a key. Keys
+            are compared as built, so ``1``, ``1.0`` and ``true`` are one key.
+            A merge key (``<<``) is never counted, even when a mapping has
+            two. A ``ValueError``, not a :class:`yaml.YAMLError`.
+        YamlConstructionError: If PyYAML raises anything other than a
+            :class:`yaml.YAMLError` while building the document, such as a
+            malformed scalar or nesting too deep to build. The original
+            exception is its ``__cause__``.
+        yaml.YAMLError: Any other YAML parse failure, unchanged.
+
+    A malformed key or a repeated key in a nested mapping may be reported
+    ahead of a syntax error later in the text, and a repeat made through an
+    alias key is reported at the alias's anchor. The message does not name a
+    file; a caller that has one prefixes it.
+    """
+    try:
+        return yaml.load(text, Loader=_UniqueKeyLoader)
+    except (DuplicateYamlKeyError, yaml.YAMLError):
+        raise
+    except Exception as exc:
+        raise YamlConstructionError(
+            f"the document could not be built: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _freeze(value: Any, *, where: str = "") -> Any:
     """Recursively convert loaded YAML into deeply immutable structures.
 
     Mappings become read-only views, sequences become tuples, scalars pass
     through. Strings and bytes are scalars, not sequences, for this purpose.
+
+    Mapping keys are stored as ``str``. Two keys of one mapping that produce
+    the same text (``65`` and ``"65"``) raise :class:`MalformedParamFileError`
+    rather than silently discarding one of the two values.
+
+    Args:
+        where: Dotted path of the mapping being frozen, used only for the
+            collision message above. The top level is ``""``.
+
+    Raises:
+        MalformedParamFileError: If two keys of one mapping read the same
+            once stored as text. The message gives the key path, not the
+            file — construction is over by then, so it cannot give a line
+            number either; the caller that has a file prefixes it.
     """
     if isinstance(value, Mapping):
-        return MappingProxyType({str(k): _freeze(v) for k, v in value.items()})
+        frozen: dict[str, Any] = {}
+        originals: dict[str, Any] = {}
+        location = f"at {where}" if where else "at the top level"
+        for k, v in value.items():
+            key = str(k)
+            if key in frozen:
+                raise MalformedParamFileError(
+                    f"{originals[key]!r} and {k!r} both read as {key!r} once "
+                    f"stored as text, in the mapping {location}. Keys are "
+                    "stored as text, so one of the two values would be "
+                    "discarded silently."
+                )
+            originals[key] = k
+            child_where = f"{where}{PATH_SEP}{key}" if where else key
+            frozen[key] = _freeze(v, where=child_where)
+        return MappingProxyType(frozen)
     if isinstance(value, (str, bytes)):
         return value
     if isinstance(value, Sequence):
-        return tuple(_freeze(v) for v in value)
+        return tuple(
+            _freeze(v, where=f"{where}{PATH_SEP}{i}" if where else str(i))
+            for i, v in enumerate(value)
+        )
     return value
 
 
@@ -367,7 +504,9 @@ def _read_yaml(path: Path) -> Mapping[str, Any]:
         raise ParamFileMissingError(f"Cannot read parameter file {path}: {exc}") from exc
 
     try:
-        raw = yaml.safe_load(text)
+        raw = parse_yaml(text)
+    except DuplicateYamlKeyError as exc:
+        raise MalformedParamFileError(f"{path}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise MalformedParamFileError(f"{path} is not valid YAML: {exc}") from exc
 
@@ -379,7 +518,10 @@ def _read_yaml(path: Path) -> Mapping[str, Any]:
         raise MalformedParamFileError(
             f"{path} must contain a YAML mapping at its top level, found {type(raw).__name__}."
         )
-    return _freeze(raw)
+    try:
+        return _freeze(raw)
+    except MalformedParamFileError as exc:
+        raise MalformedParamFileError(f"{path}: {exc}") from exc
 
 
 def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
@@ -403,7 +545,9 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
         ParamFileMissingError: If a file in the directory exists but the
             operating system cannot open or read it.
         MalformedParamFileError: If any file in the directory is not valid
-            UTF-8, is not valid YAML, or is not a YAML mapping.
+            UTF-8, is not valid YAML, is not a YAML mapping, repeats a key
+            within a mapping, or holds two keys in one mapping that are the
+            same once read as text.
     """
     root = Path(root)
     year_dir = root / str(year)

@@ -22,21 +22,16 @@ correlation and allocation below it now means something else. The schema cannot
 catch that: by the time it sees a dict the duplicate is gone. So the parse here
 rejects it, which is also the only place the scenario's "asset class names are
 unique" rule can be enforced at all.
-
-The same hole exists in ``engine/params/loader.py``, which also calls
-``yaml.safe_load``. It is not fixed here — that is a different module and a
-different issue — but it is the same failure with a tax parameter on the other
-end.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
+from engine.params.loader import DuplicateYamlKeyError, parse_yaml
 from engine.scenario.schema import Scenario
 
 __all__ = [
@@ -86,30 +81,6 @@ class InvalidScenarioError(ScenarioError):
     """
 
 
-class _UniqueKeyLoader(yaml.SafeLoader):
-    """``yaml.SafeLoader`` that refuses a mapping with a repeated key.
-
-    Subclassing rather than post-processing because the duplicate only exists
-    in the node tree. Once construction finishes there is a plain ``dict`` and
-    the evidence is gone.
-    """
-
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        seen: set[Any] = set()
-        for key_node, _ in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if key in seen:
-                raise DuplicateKeyError(
-                    f"line {key_node.start_mark.line + 1}, column "
-                    f"{key_node.start_mark.column + 1}: key {key!r} appears more "
-                    "than once in this mapping. YAML permits it and keeps the "
-                    "last, so whichever value you meant, one of them is being "
-                    "discarded silently."
-                )
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
-
-
 def load_scenario(path: str | Path) -> Scenario:
     """Read, parse, and validate the scenario file at ``path``.
 
@@ -141,10 +112,8 @@ def load_scenario(path: str | Path) -> Scenario:
         ) from exc
 
     try:
-        # yaml.load with an explicit loader, not yaml.safe_load: the loader
-        # below *is* SafeLoader, with the duplicate-key check added.
-        values = yaml.load(text, Loader=_UniqueKeyLoader)
-    except DuplicateKeyError as exc:
+        values = parse_yaml(text)
+    except DuplicateYamlKeyError as exc:
         raise DuplicateKeyError(f"{source}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise MalformedScenarioFileError(f"{source} is not valid YAML: {exc}") from exc

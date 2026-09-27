@@ -28,7 +28,13 @@ import numpy as np
 import pytest
 
 from engine.core.indexation import RealParamSet, RealParamYear, erosion_factor
-from engine.params.loader import ParamFileMissingError, ParamSet, ParamYearMissingError
+from engine.params.loader import (
+    DuplicateYamlKeyError,
+    ParamFileMissingError,
+    ParamSet,
+    ParamYearMissingError,
+    YamlConstructionError,
+)
 
 from .conftest import (
     _DEFAULT_ROUNDING,
@@ -2009,6 +2015,77 @@ cases:
         discover_cases(tmp_path)
 
     assert str(path) in str(excinfo.value)
+
+
+def test_repeated_case_field_fails_discovery_as_a_duplicate_key_not_bad_yaml(
+    tmp_path: Path,
+) -> None:
+    """A repeated key is reported as a repeat, not as "not valid YAML"."""
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: source written twice
+    source: "synthetic"
+    source: "synthetic, second occurrence"
+    checked: 2026-01-01
+    inputs:
+      x: 7.0
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert repr("source") in message
+    assert "not valid YAML" not in message
+    assert isinstance(excinfo.value.__cause__, DuplicateYamlKeyError)
+
+
+@pytest.mark.parametrize(
+    ("checked_tag", "cause_type"),
+    [
+        pytest.param("!!timestamp abc", AttributeError, id="timestamp"),
+        pytest.param("!!bool maybe", KeyError, id="bool"),
+    ],
+)
+def test_construction_errors_in_checked_fail_discovery_naming_file(
+    tmp_path: Path, checked_tag: str, cause_type: type[Exception]
+) -> None:
+    """PyYAML's scalar constructors raise a bare exception with no filename attached.
+
+    ``parse_yaml`` converts the bare exception to :class:`YamlConstructionError`
+    once, so it is that class's ``__cause__`` that carries the original.
+    """
+    path = _write(
+        tmp_path,
+        "synthetic.yaml",
+        f"""
+target: {_THIS_MODULE}.double
+cases:
+  - name: checked is an unparseable tagged scalar
+    source: "synthetic"
+    checked: {checked_tag}
+    inputs:
+      x: 7.0
+    expected:
+      value: 14.0
+""",
+    )
+
+    with pytest.raises(GoldenCaseError) as excinfo:
+        discover_cases(tmp_path)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert isinstance(excinfo.value.__cause__, YamlConstructionError)
+    assert isinstance(excinfo.value.__cause__.__cause__, cause_type)
 
 
 # --- resolve_params / resolve_real_params / resolve_target -------------------
