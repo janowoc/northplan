@@ -76,6 +76,7 @@ from engine.scenario import (
     Beneficiary,
     DbPension,
     Employment,
+    Household,
     Person,
     PolicySpec,
     Scenario,
@@ -84,10 +85,42 @@ from engine.scenario import (
 __all__ = [
     "build_deterministic_draws",
     "build_draws",
+    "build_elections",
     "build_initial_state",
     "build_market_inputs",
     "draw_deaths",
 ]
+
+
+def build_elections(household: Household, policy: PolicySpec) -> Elections:
+    """The :class:`~engine.core.state.Elections` a policy's spec maps to.
+
+    The one home of the scenario-to-``Elections`` mapping: each person's CPP and OAS start
+    age in months (``None`` where already in pay, via :func:`_cpp_start_age_months` and
+    :func:`_oas_start_age_months`), plus ``policy``'s RRIF conversion age and fraction and its
+    pension-credit fill flag. Called both by :func:`build_initial_state`, for the opening
+    state's elections, and by the code that builds a runtime policy from a spec, for the
+    elections a :class:`~engine.policy.base.Policy` reports back — the two places a policy's
+    spec becomes the runtime :class:`~engine.core.state.Elections` object.
+
+    Args:
+        household: Supplies the persons, in ``HouseholdState.persons`` order.
+        policy: The policy whose elections to read.
+
+    Returns:
+        The elections in force for a run built with ``policy``.
+    """
+    return Elections(
+        cpp_start_age_months=tuple(
+            _cpp_start_age_months(person, policy) for person in household.persons
+        ),
+        oas_start_age_months=tuple(
+            _oas_start_age_months(person, policy) for person in household.persons
+        ),
+        rrif_conversion_age_years=policy.elections.rrif_conversion.age_years,
+        rrif_conversion_fraction=policy.elections.rrif_conversion.fraction,
+        fill_pension_credit=policy.withdrawal.fill_pension_credit,
+    )
 
 
 def _month_offset(base_year: int, year: int, month: int) -> int:
@@ -159,17 +192,7 @@ def build_initial_state(
         for beneficiary in scenario.household.beneficiaries
     )
 
-    elections = Elections(
-        cpp_start_age_months=tuple(
-            _cpp_start_age_months(person, chosen) for person in scenario.household.persons
-        ),
-        oas_start_age_months=tuple(
-            _oas_start_age_months(person, chosen) for person in scenario.household.persons
-        ),
-        rrif_conversion_age_years=chosen.elections.rrif_conversion.age_years,
-        rrif_conversion_fraction=chosen.elections.rrif_conversion.fraction,
-        fill_pension_credit=chosen.withdrawal.fill_pension_credit,
-    )
+    elections = build_elections(scenario.household, chosen)
 
     spending_schedule = _build_spending_schedule(scenario)
 

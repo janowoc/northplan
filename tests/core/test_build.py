@@ -29,6 +29,7 @@ from engine.core.build import (
     _month_offset,
     build_deterministic_draws,
     build_draws,
+    build_elections,
     build_initial_state,
     build_market_inputs,
     draw_deaths,
@@ -52,6 +53,7 @@ from .conftest import walk
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
+COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
 
 N_PATHS = 3
 
@@ -501,6 +503,21 @@ class TestPolicySelection:
 
         state = build_initial_state(two_policies, n_paths=N_PATHS, policy=second)
         assert walk(state, N_PATHS) > 0
+
+
+class TestBuildElections:
+    def test_matches_build_initial_state_on_the_example(self, scenario) -> None:
+        chosen = scenario.policies[0]
+        elections = build_elections(scenario.household, chosen)
+        state = build_initial_state(scenario, n_paths=N_PATHS)
+        assert elections == state.elections
+
+    def test_both_persons_already_in_pay_gives_no_start_ages(self) -> None:
+        couple = load_scenario(COUPLE)
+        chosen = couple.policies[0]
+        elections = build_elections(couple.household, chosen)
+        assert elections.cpp_start_age_months == (None, None)
+        assert elections.oas_start_age_months == (None, None)
 
 
 class TestNPaths:
