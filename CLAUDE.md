@@ -99,6 +99,18 @@
   signature, or a default open is a decision for the two of us, and the
   implementer receives it already made, in writing. Report those decisions to
   me as a numbered list.
+- Before dispatching, probe the design as it will be briefed, not only the
+  code it replaces, in a scratch script against the inputs it could break. A
+  fix brief after a review is probed the same way before it goes back.
+- Where a change must match an existing behaviour in all but one respect, the
+  brief names that behaviour as the oracle and asks for a differential test
+  over a corpus of inputs. The brief's test list follows the design's
+  branches: each skip and each raise gets a named test.
+- A hole found in review that predates the issue becomes a new issue by
+  default, and is folded in only when I say so.
+- A verifier's NIT or test-gap finding does not by itself start a new round.
+  It is batched into the last round or filed. A statement that is wrong is not
+  a nit.
 - The brief carries the issue's comment content the agent needs. A subagent
   reads what you hand it, not the issue.
 - The verifier runs after the implementer has finished, never alongside it. A
