@@ -651,9 +651,20 @@ REJECTIONS = [
         sets("grid", {"withdrawal.fill_pension_credit": [0, 1]}),
     ),
     rejected(
+        # With the ceiling left null (the example's own default), walking `.0` off it
+        # would already raise -- "cannot be walked into any further" fires on any
+        # terminal leaf, None included. Restoring the ceiling to a number first keeps
+        # this case testing what its name says: walking past a resolved *number*, not
+        # merely landing on the same branch by accident on a null one.
         "grid-key-walks-into-a-number",
         "grid[",
+        sets("policies.0.withdrawal.taxable_ceiling_bracket", 1),
         sets("grid", {"withdrawal.taxable_ceiling_bracket.0": [1, 2]}),
+    ),
+    rejected(
+        "grid-over-a-null-ceiling-is-not-a-number",
+        "grid['withdrawal.taxable_ceiling_bracket']",
+        sets("grid", {"withdrawal.taxable_ceiling_bracket": [1, 2]}),
     ),
     rejected(
         "grid-with-nothing-to-try",
@@ -832,6 +843,12 @@ ACCEPTANCES = [
         # can tell ge=0.0 from gt=0.0.
         "risk-aversion-zero",
         sets("risk_aversion", 0.0),
+    ),
+    accepted(
+        # The example's own ceiling, unmutated -- an explicit case so a future
+        # change to the example does not quietly stop covering it.
+        "a-null-taxable-ceiling-bracket",
+        sets("policies.0.withdrawal.taxable_ceiling_bracket", None),
     ),
 ]
 
@@ -1260,7 +1277,6 @@ def policy() -> PolicySpec:
 
 def test_a_path_reaches_a_field_and_a_mapping_key(policy: PolicySpec) -> None:
     """Model fields and mapping keys are both walked, in one path."""
-    assert resolve_policy_path(policy, "withdrawal.taxable_ceiling_bracket") == 1.0
     assert resolve_policy_path(policy, "elections.rrif_conversion.fraction") == 0.05
     assert resolve_policy_path(policy, "elections.cpp_start_age_years.a") == 65.0
     assert resolve_policy_path(policy, "contribution.weights.rrsp") == 0.5

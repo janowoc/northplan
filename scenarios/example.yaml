@@ -111,7 +111,14 @@ policies:
       spill_order: [tfsa, rrsp, taxable]         # where a contribution goes when there is no room
     withdrawal:
       order: [taxable, rrif, rrsp, lif, tfsa]
-      taxable_ceiling_bracket: 1                 # index into the federal bracket table, from 0
+      # An integer here fills year-to-date net income to that federal bracket
+      # edge every month, drawing RRIF then RRSP, whether or not cash is
+      # short that month -- it suits a household drawing down, like
+      # scenarios/late_life_couple.yaml, which keeps 1. This household is
+      # still accumulating, with a salary that sits between two edges: a
+      # fill would draw from the RRSP while this same policy is contributing
+      # to it. null turns the fill off.
+      taxable_ceiling_bracket: null
       fill_pension_credit: true
     elections:
       cpp_start_age_years: {a: 65}

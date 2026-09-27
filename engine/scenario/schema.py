@@ -1054,14 +1054,16 @@ class WithdrawalRule(_Base):
             minimums are applied by the step regardless of this order; it
             governs discretionary withdrawals.
         taxable_ceiling_bracket: Index into the federal bracket table, from
-            zero, that a registered withdrawal is filled up to. The bracket
-            edges themselves are parameters and are not checked here.
+            zero, that a registered withdrawal is filled up to every month,
+            whatever the household's cash need, drawing RRIF then RRSP toward
+            it. The bracket edges themselves are parameters and are not
+            checked here. ``None`` turns this fill off entirely.
         fill_pension_credit: Whether to draw enough eligible pension income to
             use the pension income credit.
     """
 
     order: tuple[str, ...]
-    taxable_ceiling_bracket: Annotated[int, Field(ge=0)]
+    taxable_ceiling_bracket: Annotated[int, Field(ge=0)] | None
     fill_pension_credit: bool
 
     @model_validator(mode="after")

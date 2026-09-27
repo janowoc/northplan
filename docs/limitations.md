@@ -597,10 +597,35 @@ no wrong number at all, so the cost is expressiveness, not accuracy. Lives in
 
 ## Policies and search
 
-**L44. Policies.** The first version offers one contribution rule (fixed
-split with spill) and one withdrawal rule (fixed order, fill to a bracket
-edge, optional pension-credit fill), plus benefit start ages and the RRIF
-conversion election. The optimizer evaluates a named list of policies, with
-optional grid expansion, against common random numbers. Not modelled:
-dynamic rules that respond to market state, spending rules that vary with
-wealth.
+**L44. Policies.** The first version offers one contribution rule (fixed split
+with spill) and one withdrawal rule (fixed order, fill to a bracket edge,
+optional pension-credit fill). The bracket fill draws RRIF then RRSP every
+month, whether or not cash is short, toward a federal bracket edge. It
+measures the edge against year-to-date net income (no pension split, no OAS
+repayment, since neither is known before December) plus a projection of the
+rest of the year: the year to date's run rate, registered withdrawals
+excluded, carried over the months still to come, and the LIF minimum not yet
+drawn. What remains under the edge is spread evenly over the months left in
+the year; a policy may turn the fill off entirely. In reality the bracket
+fill's own brackets apply to taxable income after the pension-splitting
+election and the OAS repayment deduction; we measure it against year-to-date
+net income with neither applied, since neither is known before December.
+Direction: the bracket fill under-fills for a person who transfers pension
+income away and for one who repays OAS -- both lower taxable income below what
+year-to-date net income shows -- and it can over-fill for the person receiving
+a pension-split transfer, whose taxable income ends up above it. In reality
+the year's income is whatever the rest of the year brings; we project it from
+the run rate so far. Direction: income that arrives later than its run rate
+implies -- a pension that starts mid-year, investment income, which posts
+after each month's decision, and any gain December's own draws realise after
+its fill -- lands on top of a fill already taken, so the year can end above
+the edge by that much; income that falls off during the year makes the early
+months under-fill, which December's fill, measured with nothing left to
+project, makes up. The contribution spill pours through `spill_order` person 0
+before person 1, so an unlimited taxable spill concentrates investment income
+on person 0 rather than sharing it the way a real couple would; this is
+pessimistic on tax exactly where person 0 carries the higher marginal rate.
+Benefit start ages and the RRIF conversion election are elections the same
+policy makes. The optimizer evaluates a named list of policies, with optional
+grid expansion, against common random numbers. Not modelled: dynamic rules
+that respond to market state, spending rules that vary with wealth.
