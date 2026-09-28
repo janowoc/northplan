@@ -90,6 +90,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 67 | Pension splitting in the year of a death, and the under-65 transferee's credit | agent | 63 | the death year splits pro-rata; an under-65 transferee's credit is capped |
 | 68 | An insolvent estate is worth zero | agent | — | no negative estate or after-tax net worth |
 | 69 | Golden cases for the lines no case reaches yet | human | 61 | each listed line has a passing case or a filed bug |
+| 70 | Seven statements still describe landed work as future | agent | — | each of the seven reads true of the tree; a re-run search finds no other |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -364,6 +365,12 @@ because it changes the couple's death-year tax, and 56 moves after 21, so the
 single-person check comes first. 68 only has to precede 22, which scores
 estates; no deterministic path depletes. 69 is the human's, whenever
 convenient.
+
+70 came out of the review of 64: `late_life_couple.yaml` still said
+`rrsp.spousal_rollover` did not exist yet. A search of the tree for forward
+references to closed issues, and for `yet`, `for now` and `will add` without
+one, found six more. It sits right after 64 because it is prose only and
+touches the couple scenario 56 reads.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
