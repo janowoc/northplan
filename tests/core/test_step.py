@@ -2692,8 +2692,8 @@ SYNTHETIC_PENSION_MONTHLY = 20_000.0
 
 
 class TestSurvivorStreamWithholding:
-    """R3 (round 3, T2): payroll withholding really does reach the inherited DB stream,
-    on a synthetic pension amount large enough that the withholding is non-zero.
+    """Payroll withholding really does reach the inherited DB stream, on a synthetic
+    pension amount large enough that the withholding is non-zero.
     """
 
     #: April of the second year, as in TestFirstDeathOnTheCouple.
@@ -2820,7 +2820,7 @@ class TestCppSurvivorBothDirections:
         total = record.context.inflows[0].cpp + record.context.inflows[0].cpp_survivor
         np.testing.assert_allclose(total, combined_max)
 
-        # R4 (the b-to-a direction): a's balances hold b's pre-roll balances, kind by
+        # The b-to-a direction: a's balances hold b's pre-roll balances, kind by
         # kind, and the ACB, mirroring TestFirstDeathOnTheCouple's a-to-b check.
         march = result.trace[self.DEATH_MONTH_INDEX - 1]
         march_b_balances = march.balances_close[1]
@@ -2839,9 +2839,9 @@ class TestCppSurvivorBothDirections:
         expected_acb_then = b_taxable_before_march_growth.acb + interest + dividends + gains
         np.testing.assert_allclose(record.context.rolled_acb[1], expected_acb_then)
 
-        # T1 (round 3, R4 redone): the check above compares rolled_out against march's
-        # balances, but resolve_deaths computes rolled_out *before* the six rollover
-        # calls run, so a no-op'd rollover would still pass it. Check the move itself.
+        # The check above compares rolled_out against march's balances, but
+        # resolve_deaths computes rolled_out *before* the six rollover calls run, so a
+        # no-op'd rollover would still pass it. Check the move itself.
         # (a) the deceased's balances stay exactly 0, in the death month and after.
         for later_record in (record, *result.trace[self.DEATH_MONTH_INDEX + 1 :]):
             for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
@@ -2885,7 +2885,7 @@ class TestCppSurvivorBothDirections:
         couple_real_params,
         couple_withdrawal_order,
     ):
-        """R4: the deceased's base can also come from ``contributory_history`` rather
+        """The deceased's base can also come from ``contributory_history`` rather
         than an ``in_pay_monthly`` amount already in pay.
         """
         contributory_history = 0.8
@@ -2917,10 +2917,10 @@ class TestCppSurvivorBothDirections:
         )
         assert np.all(share * base_a < combined_max - own_b)  # guard: the uncapped branch
 
-        # T6 (round 3): the deceased's own monthly_amount, carried into the death
-        # month, differs from the unadjusted base -- her actual age at the run's
-        # opening already exceeds the CPP start window, so her own pension carries a
-        # late-start bonus the survivor formula (L19) does not apply. A mutant reading
+        # The deceased's own monthly_amount, carried into the death month, differs
+        # from the unadjusted base -- her actual age at the run's opening already
+        # exceeds the CPP start window, so her own pension carries a late-start bonus
+        # the survivor formula (L19) does not apply. A mutant reading
         # person_j.cpp.monthly_amount instead of calling base_pension_monthly here
         # would therefore fail the assertion below.
         carried_monthly_amount = (
@@ -3235,7 +3235,7 @@ class TestSecondDeathTerminalReturn:
 
 
 class TestTerminalReturnCapitalLoss:
-    """R2: ITA 111(2) at a terminal return and at ``after_tax_net_worth``, where the
+    """ITA 111(2) at a terminal return and at ``after_tax_net_worth``, where the
     taxable account's deemed gain is negative (``balance < acb``).
     """
 
@@ -3375,7 +3375,7 @@ class TestSecondDeathViaRun:
         recorder = RecordingPolicy(DoNothingPolicy(state.elections, couple_withdrawal_order))
         result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
 
-        # D-A: the run stops at the first December on or after the final death, not at
+        # The run stops at the first December on or after the final death, not at
         # the death month itself.
         december_index = (self.B_DEATH_MONTH_INDEX // 12) * 12 + 11
         assert len(result.trace) == december_index + 1
@@ -3434,7 +3434,7 @@ class TestFinishedPathIsInert:
             assert np.all(_sum_by_kind(record.floor_withdrawals) == 0.0)
             assert np.all(record.depletion_deficit == 0.0)
             assert not record.depleted[0]
-            # R8: every other flow the step can move is also 0 on a finished path.
+            # Every other flow the step can move is also 0 on a finished path.
             assert np.all(_sum_by_kind(record.context.forced_withdrawals) == 0.0)
             assert np.all(_sum_arrays(record.context.payroll_withholding) == 0.0)
             assert np.all(_sum_arrays(record.context.tax_settlement) == 0.0)
@@ -3461,7 +3461,7 @@ class TestFinishedPathIsInert:
         if np.any(later_year_mask):
             np.testing.assert_allclose(result.spending_achieved[later_year_mask, 0], 0.0)
 
-        # R8: after_tax_net_worth (and, again, net_worth and tax_assessed) is 0 on every
+        # after_tax_net_worth (and, again, net_worth and tax_assessed) is 0 on every
         # YearRecord closed after the death year -- gathered incrementally from what
         # RecordingPolicy saw, since a single final snapshot is missing only the very
         # last year closed for the *other*, still-living paths, far beyond what is
@@ -3517,9 +3517,9 @@ class TestFinishedPathIsInert:
         np.testing.assert_allclose(record.contributions[0].tfsa, 0.0)
         np.testing.assert_allclose(record.withdrawals[0].rrif, 0.0)
 
-        # T5 (round 3, R8 guard): the same script on a live path (path 1, forced to
-        # the same long, safe death as every other un-forced path here) really does
-        # move money, so the finished path's zeros above are not vacuous.
+        # The same script on a live path (path 1, forced to the same long, safe death
+        # as every other un-forced path here) really does move money, so the finished
+        # path's zeros above are not vacuous.
         control_result = run(state, policy, draws, market, real_params, trace_path=1)
         control_record = control_result.trace[attempt_month]
         assert not control_record.finished[0]  # guard: this path is still alive
@@ -3673,7 +3673,7 @@ class TestAfterTaxNetWorthOnTheCouple:
 
 
 class TestDeadPersonStopsParticipating:
-    """D-B: a dead person's own account never receives a contribution, and an RESP
+    """A dead person's own account never receives a contribution, and an RESP
     wind-up after the subscriber's death credits the living spouse instead.
     """
 
@@ -3763,9 +3763,9 @@ class TestDeadPersonStopsParticipating:
         couple_real_params,
         couple_withdrawal_order,
     ):
-        """T3 (round 3, D-B(ii)): both branches of the wind-up credit rule, side by side
-        on two paths -- the subscriber's own death forced before the wind-up on path 0
-        only, so path 1 exercises the living-subscriber branch.
+        """Both branches of the wind-up credit rule, side by side on two paths -- the
+        subscriber's own death forced before the wind-up on path 0 only, so path 1
+        exercises the living-subscriber branch.
         """
         n_paths = 2
         draws = build_draws(
@@ -4257,7 +4257,7 @@ class TestAipWithholdingAtWindUp:
 
 
 class TestJanuaryFinalDeathAtRunLevel:
-    """R11: a run-level January final death, at zero inflation so the taxable ACB does
+    """A run-level January final death, at zero inflation so the taxable ACB does
     not erode across the January it dies in. Catches a phase-1/phase-2 swap: if
     ``open_year`` ran after ``resolve_deaths`` instead of before it, the terminal
     return would read last year's ledger, not an empty one.
