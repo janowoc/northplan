@@ -253,6 +253,46 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         Basis.REAL,
         "A within-year accumulator, zeroed each January.",
     ),
+    ("Assessment", "federal"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "provincial"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "oas_repayment"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "aip_penalty"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "total"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "net_income"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "net_income_after_repayment"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "taxable_income"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "transfer_in"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
+    ("Assessment", "transfer_out"): (
+        Basis.REAL,
+        "Assessed on a real-dollar ledger against real-dollar parameters; an output snapshot.",
+    ),
     ("YearRecord", "net_worth"): (Basis.REAL, "An output snapshot of real balances."),
     ("YearRecord", "after_tax_net_worth"): (
         Basis.REAL,
@@ -283,7 +323,7 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
 }
 
 #: A generous floor, not an exact count: high enough that a collector run over every state
-#: dataclass and silently returning too little could not pass. It classifies 55 fields today.
+#: dataclass and silently returning too little could not pass. It classifies 64 fields today.
 MINIMUM_CLASSIFIED = 45
 
 

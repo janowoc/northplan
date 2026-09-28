@@ -599,6 +599,51 @@ def select_spending_level(schedule: tuple[SpendingLevel, ...], year: int) -> flo
 
 
 @dataclass(frozen=True, slots=True)
+class Assessment:
+    """One person's tax assessment for a calendar year, at some elected split.
+
+    ``engine.tax.combined`` computes it. ``net_income`` is the split-adjusted line 23400 the
+    OAS repayment was tested against; ``net_income_after_repayment`` is line 23600, which the
+    brackets and the age amount are both applied to instead; ``taxable_income`` is line 26000,
+    equal to ``net_income_after_repayment`` except in this person's year of death
+    (``docs/limitations.md`` L17).
+
+    Attributes:
+        federal: Federal tax payable after credits, ``(n_paths,)``.
+        provincial: Provincial tax payable after credits, ``(n_paths,)``.
+        oas_repayment: OAS recovery tax for the year, ``(n_paths,)``.
+        aip_penalty: Special tax on RESP accumulated-income payments (line
+            41800), ``(n_paths,)``. Additional tax only — it is excluded from
+            ``net_income`` and ``net_income_after_repayment``.
+        total: ``federal + provincial + oas_repayment + aip_penalty``.
+        net_income: Net income at the elected split (line 23400), ``(n_paths,)``.
+        net_income_after_repayment: ``net_income`` less ``oas_repayment`` (line
+            23600), ``(n_paths,)``.
+        taxable_income: Line 26000: ``net_income_after_repayment`` less the
+            year-of-death capital loss deduction, ``(n_paths,)``. What the
+            brackets and the age amount are actually applied to.
+        transfer_in: Split-eligible pension income received from the other
+            spouse, ``(n_paths,)``; zero where no split applies.
+        transfer_out: Split-eligible pension income given to the other
+            spouse, ``(n_paths,)``; zero where no split applies.
+    """
+
+    federal: NDArray[np.float64]
+    provincial: NDArray[np.float64]
+    oas_repayment: NDArray[np.float64]
+    aip_penalty: NDArray[np.float64]
+    total: NDArray[np.float64]
+    net_income: NDArray[np.float64]
+    net_income_after_repayment: NDArray[np.float64]
+    taxable_income: NDArray[np.float64]
+    transfer_in: NDArray[np.float64]
+    transfer_out: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        _freeze_fields(self, *(field.name for field in dataclasses.fields(self)))
+
+
+@dataclass(frozen=True, slots=True)
 class YearRecord:
     """One calendar year's summary, appended to :attr:`HouseholdState.history`.
 
@@ -612,7 +657,11 @@ class YearRecord:
             ``died_in_year=True`` for everyone). Comes out ``0`` on a finished path.
         tax_assessed: Tax assessed *for* this year at the December close, not paid
             in cash during it.
-        net_income: Line 23600 (``engine.tax.combined.Assessment.net_income_after_repayment``)
+        assessments: Each person's full :class:`Assessment` at the elected split, in
+            ``HouseholdState.persons`` order, as :func:`~engine.tax.combined.household_assessment`
+            returned it at this close. How the tax divides between persons carries the same
+            tie caveat as ``net_income``; ``transfer_in``/``transfer_out`` record the split taken.
+        net_income: Line 23600 (``Assessment.net_income_after_repayment``)
             per person, in ``HouseholdState.persons`` order. Among pension splits that give
             equal household tax, the division between persons is arbitrary — the argmin in
             ``engine.tax.combined.household_assessment`` picks on rounding noise (#50) — so
@@ -628,6 +677,7 @@ class YearRecord:
     after_tax_net_worth: NDArray[np.float64]
     spending: NDArray[np.float64]
     tax_assessed: NDArray[np.float64]
+    assessments: tuple[Assessment, ...]
     net_income: tuple[NDArray[np.float64], ...]
     gis_band: tuple[NDArray[np.bool_], ...]
     depleted: NDArray[np.bool_]
@@ -635,6 +685,7 @@ class YearRecord:
     def __post_init__(self) -> None:
         _freeze_fields(self, "net_worth", "after_tax_net_worth", "spending", "tax_assessed")
         _freeze_fields(self, "depleted")
+        object.__setattr__(self, "assessments", tuple(self.assessments))
         object.__setattr__(self, "net_income", tuple(freeze(arr) for arr in self.net_income))
         object.__setattr__(self, "gis_band", tuple(freeze(arr) for arr in self.gis_band))
 

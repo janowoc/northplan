@@ -110,6 +110,7 @@ def rig(example_values, build_from_values):
 
 def _make_context(state):
     from engine.core.context import AccountAmounts, ByKind, MonthContext, PersonInflows
+    from engine.core.state import Assessment
 
     zeros = np.zeros(N_PATHS, dtype=np.float64)
     n_persons = len(state.persons)
@@ -128,6 +129,21 @@ def _make_context(state):
         db_pension_survivor=zeros,
     )
     zero_bykind = ByKind(rrsp=zeros, rrif=zeros, lif=zeros, tfsa=zeros, taxable=zeros)
+
+    def _zero_assessment() -> Assessment:
+        return Assessment(
+            federal=np.zeros(N_PATHS, dtype=np.float64),
+            provincial=np.zeros(N_PATHS, dtype=np.float64),
+            oas_repayment=np.zeros(N_PATHS, dtype=np.float64),
+            aip_penalty=np.zeros(N_PATHS, dtype=np.float64),
+            total=np.zeros(N_PATHS, dtype=np.float64),
+            net_income=np.zeros(N_PATHS, dtype=np.float64),
+            net_income_after_repayment=np.zeros(N_PATHS, dtype=np.float64),
+            taxable_income=np.zeros(N_PATHS, dtype=np.float64),
+            transfer_in=np.zeros(N_PATHS, dtype=np.float64),
+            transfer_out=np.zeros(N_PATHS, dtype=np.float64),
+        )
+
     return MonthContext(
         month_index=0,
         year=2026,
@@ -136,6 +152,7 @@ def _make_context(state):
         rolled_out=tuple(zero_account for _ in range(n_persons)),
         rolled_acb=tuple(zeros for _ in range(n_persons)),
         terminal_assessment=zeros,
+        terminal_assessments=tuple(_zero_assessment() for _ in range(n_persons)),
         cash_to_estate=zeros,
         inflows=tuple(zero_inflow for _ in range(n_persons)),
         education_draws=tuple(zeros for _ in range(n_beneficiaries)),

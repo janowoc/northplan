@@ -16,7 +16,6 @@ module.
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
 from typing import Final
 
 import numpy as np
@@ -24,7 +23,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from engine.accounts import resp
 from engine.core.indexation import RealParamSet, RealParamYear
-from engine.core.state import HouseholdState, IncomeLedger
+from engine.core.state import Assessment, HouseholdState, IncomeLedger
 from engine.core.timeline import age_at_end_of_year as _age_at_end_of_year
 from engine.tax import federal, provincial
 
@@ -32,44 +31,6 @@ from engine.tax import federal, provincial
 #: rule is the maximum share in params/, and this is how finely the engine
 #: looks between zero and it (docs/limitations.md L51).
 GRID_STEP: Final[float] = 0.05
-
-
-@dataclass(frozen=True, slots=True)
-class Assessment:
-    """One person's tax assessment for a calendar year, at some elected split.
-
-    A return value, not carried state: unlike ``engine.core.state`` classes
-    this is not passed through ``engine.core.state.freeze`` and has no
-    ``__post_init__``. ``net_income`` is the split-adjusted line 23400 the
-    OAS repayment was tested against; ``net_income_after_repayment`` is line
-    23600, which the brackets and the age amount are both applied to instead;
-    ``taxable_income`` is line 26000, equal to ``net_income_after_repayment``
-    except in this person's year of death (``docs/limitations.md`` L17).
-
-    Attributes:
-        federal: Federal tax payable after credits, ``(n_paths,)``.
-        provincial: Provincial tax payable after credits, ``(n_paths,)``.
-        oas_repayment: OAS recovery tax for the year, ``(n_paths,)``.
-        aip_penalty: Special tax on RESP accumulated-income payments (line
-            41800), ``(n_paths,)``. Additional tax only — it is excluded from
-            ``net_income`` and ``net_income_after_repayment``.
-        total: ``federal + provincial + oas_repayment + aip_penalty``.
-        net_income: Net income at the elected split (line 23400), ``(n_paths,)``.
-        net_income_after_repayment: ``net_income`` less ``oas_repayment`` (line
-            23600), ``(n_paths,)``.
-        taxable_income: Line 26000: ``net_income_after_repayment`` less the
-            year-of-death capital loss deduction, ``(n_paths,)``. What the
-            brackets and the age amount are actually applied to.
-    """
-
-    federal: NDArray[np.float64]
-    provincial: NDArray[np.float64]
-    oas_repayment: NDArray[np.float64]
-    aip_penalty: NDArray[np.float64]
-    total: NDArray[np.float64]
-    net_income: NDArray[np.float64]
-    net_income_after_repayment: NDArray[np.float64]
-    taxable_income: NDArray[np.float64]
 
 
 def oas_repayment(
@@ -186,6 +147,12 @@ def person_assessment(
             january_month_index,
         ),
     )
+    transfer_in_arr = np.broadcast_to(
+        np.asarray(transfer_in, dtype=np.float64), fed_tax.shape
+    ).copy()
+    transfer_out_arr = np.broadcast_to(
+        np.asarray(transfer_out, dtype=np.float64), fed_tax.shape
+    ).copy()
     return Assessment(
         federal=fed_tax,
         provincial=prov_tax,
@@ -195,6 +162,8 @@ def person_assessment(
         net_income=net,
         net_income_after_repayment=line_23600,
         taxable_income=line_26000,
+        transfer_in=transfer_in_arr,
+        transfer_out=transfer_out_arr,
     )
 
 

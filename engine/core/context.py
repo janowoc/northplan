@@ -48,7 +48,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from engine.core.state import freeze
+from engine.core.state import Assessment, BeneficiaryState, PersonState, YearRecord, freeze
 
 __all__ = [
     "AccountAmounts",
@@ -224,6 +224,8 @@ class MonthContext:
             pre-roll taxable ACB, on the same condition as ``rolled_out``.
         terminal_assessment: Phase 2 terminal-return tax, household total, non-zero
             only in the month of the second death.
+        terminal_assessments: Phase 2 terminal-return tax, per person; an all-zero
+            :class:`~engine.core.state.Assessment` on every path not finishing this month.
         cash_to_estate: Phase 2 cash paid to the estate, non-zero only in the month
             of the second death, when it equals that month's opening cash.
         inflows: Phase 3 income, per person.
@@ -250,6 +252,7 @@ class MonthContext:
     rolled_out: tuple[AccountAmounts, ...]
     rolled_acb: tuple[NDArray[np.float64], ...]
     terminal_assessment: NDArray[np.float64]
+    terminal_assessments: tuple[Assessment, ...]
     cash_to_estate: NDArray[np.float64]
     inflows: tuple[PersonInflows, ...]
     education_draws: tuple[NDArray[np.float64], ...]
@@ -279,6 +282,7 @@ class MonthContext:
         object.__setattr__(self, "rolled_out", tuple(self.rolled_out))
         object.__setattr__(self, "inflows", tuple(self.inflows))
         object.__setattr__(self, "forced_withdrawals", tuple(self.forced_withdrawals))
+        object.__setattr__(self, "terminal_assessments", tuple(self.terminal_assessments))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -321,6 +325,12 @@ class MonthRecord:
         estate_after_tax: The state's ``estate_after_tax`` after phase 2,
             ``(n_paths,)`` -- ``NaN`` until the month of the second death, finite
             from it on.
+        persons: The state's ``persons`` after phase 11 -- the same point
+            ``balances_close`` reads -- references, not copies.
+        beneficiaries: The state's ``beneficiaries`` at the same point, references, not
+            copies.
+        year_record: This year's appended :class:`~engine.core.state.YearRecord` in
+            December, ``None`` every other month.
     """
 
     context: MonthContext
@@ -340,6 +350,9 @@ class MonthRecord:
     depleted: NDArray[np.bool_]
     finished: NDArray[np.bool_]
     estate_after_tax: NDArray[np.float64]
+    persons: tuple[PersonState, ...]
+    beneficiaries: tuple[BeneficiaryState, ...]
+    year_record: YearRecord | None
 
     def __post_init__(self) -> None:
         _freeze_fields(self, "depletion_deficit", "spending_cut", "cash_close")
@@ -355,6 +368,8 @@ class MonthRecord:
         object.__setattr__(self, "contributions", tuple(self.contributions))
         object.__setattr__(self, "floor_withdrawals", tuple(self.floor_withdrawals))
         object.__setattr__(self, "balances_close", tuple(self.balances_close))
+        object.__setattr__(self, "persons", tuple(self.persons))
+        object.__setattr__(self, "beneficiaries", tuple(self.beneficiaries))
 
     def at_path(self, k: int) -> MonthRecord:
         """This record with every array sliced to path ``k``, copied and frozen.

@@ -34,6 +34,7 @@ from engine.core.build import (
 from engine.core.indexation import nominal_carry_factor, real_year, unindexed_factor
 from engine.core.state import (
     DEATH_NOT_DRAWN,
+    Assessment,
     BeneficiaryState,
     CashState,
     IncomeLedger,
@@ -2971,9 +2972,14 @@ class TestSecondDeathTerminalReturn:
             state, persons=(person_a, person_b), cash=CashState(balance=np.full(n, 3_000.0))
         )
 
-        new_state, _rolled_out, _rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
-            state, couple_real_params
-        )
+        (
+            new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, couple_real_params)
 
         assert np.all(np.isfinite(new_state.estate_after_tax))
         gross = _gross_wealth(state)
@@ -3001,6 +3007,63 @@ class TestSecondDeathTerminalReturn:
                 np.testing.assert_allclose(getattr(person.income, field.name), 0.0)
         np.testing.assert_allclose(new_state.cash.balance, 0.0)
 
+    def test_terminal_assessments_are_masked_per_path(self, couple_scenario, couple_real_params):
+        """#63: ``terminal_assessments`` is masked per path, not just per household --
+        the mask that zeroes a finished-elsewhere or still-both-alive path must fire on
+        every field of every person's ``Assessment``, not merely on the household total.
+        """
+        n = 3
+        state = build_initial_state(couple_scenario, n_paths=n)
+        state = updated(state, month=7, month_index=6)
+        person_a, person_b = state.persons
+        # path 0: a died earlier, b dies now -> finishes this month.
+        # path 1: both alive.
+        # path 2: both died earlier and the path already finished.
+        person_a = updated(
+            person_a,
+            alive=np.array([False, True, False]),
+            death_month_index=np.array([3, 100, 2], dtype=np.int64),
+        )
+        person_b = updated(
+            person_b,
+            alive=np.array([True, True, False]),
+            death_month_index=np.array([6, 100, 3], dtype=np.int64),
+            income=updated(person_b.income, rrif_lif_withdrawals=np.full(n, 5_000.0)),
+        )
+        state = updated(
+            state, persons=(person_a, person_b), estate_after_tax=np.array([np.nan, np.nan, 0.0])
+        )
+
+        (
+            _new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            _cash_to_estate,
+            terminal_assessments,
+        ) = resolve_deaths(state, couple_real_params)
+
+        alive_after_step1 = tuple(
+            updated(p, alive=p.death_month_index > state.month_index) for p in state.persons
+        )
+        _oracle_total, oracle = _recompute_terminal_total(
+            alive_after_step1, state.year, 0, state.province, couple_real_params
+        )
+
+        for person_oracle in oracle:
+            assert np.all(person_oracle.total[1:] > 0.0)
+
+        for i, person_oracle in enumerate(oracle):
+            for field in dataclasses.fields(Assessment):
+                actual = getattr(terminal_assessments[i], field.name)
+                expected = getattr(person_oracle, field.name)
+                assert actual[0] == expected[0]
+                assert actual[1] == 0.0
+                assert actual[2] == 0.0
+
+        assert terminal_assessment[1] == 0.0
+        assert terminal_assessment[2] == 0.0
+
     def test_example_only_death(self, scenario, real_params):
         n = 1
         state = build_initial_state(scenario, n_paths=n)
@@ -3020,9 +3083,14 @@ class TestSecondDeathTerminalReturn:
         )
         state = updated(state, persons=(person,), cash=CashState(balance=np.full(n, 4_000.0)))
 
-        new_state, _rolled_out, _rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
-            state, real_params
-        )
+        (
+            new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, real_params)
 
         assert np.all(np.isfinite(new_state.estate_after_tax))
         gross = _gross_wealth(state)
@@ -3050,9 +3118,14 @@ class TestSecondDeathTerminalReturn:
         )
         state = updated(state, persons=(person_a, person_b))
 
-        new_state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
-            state, couple_real_params
-        )
+        (
+            new_state,
+            rolled_out,
+            rolled_acb,
+            terminal_assessment,
+            cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, couple_real_params)
 
         # No rollover: both masks are false when both die in the same month.
         for i in range(2):
@@ -3098,9 +3171,14 @@ class TestSecondDeathTerminalReturn:
         )
         state = updated(state, persons=(person_a, person_b))
 
-        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
-            state, couple_real_params
-        )
+        (
+            _new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            _cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, couple_real_params)
 
         expected_total, _ = _recompute_terminal_total(
             (person_a, person_b), state.year, 0, state.province, couple_real_params
@@ -3126,9 +3204,14 @@ class TestSecondDeathTerminalReturn:
         )
         state = updated(state, persons=(person,))
 
-        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
-            state, real_params
-        )
+        (
+            _new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            _cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, real_params)
 
         deemed = updated(
             person.income,
@@ -3173,9 +3256,14 @@ class TestTerminalReturnCapitalLoss:
         # Guard: the deemed gain really is negative.
         assert np.all(taxable.deemed_disposition(person.taxable) < 0.0)
 
-        _new_state, _rolled_out, _rolled_acb, terminal_assessment, _cash_to_estate = resolve_deaths(
-            state, real_params
-        )
+        (
+            _new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            _cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, real_params)
 
         expected_true, _ = _recompute_terminal_total(
             (person,), state.year, 0, state.province, real_params
@@ -4235,3 +4323,93 @@ class TestJanuaryFinalDeathAtRunLevel:
             died_in_year=True,
         )
         np.testing.assert_allclose(record.context.terminal_assessment, expected.total)
+
+
+def _walk_month_record_arrays(value: object, path: str, found: list[str]) -> None:
+    """Like ``tests.core.conftest.walk``, but over a :class:`MonthRecord` tree and
+    recording every array's dotted path -- this module's fixtures do not build a
+    ``HouseholdState``-shaped tree, so the shared walker (keyed by field name alone,
+    not by path) is not reused here.
+    """
+    if isinstance(value, np.ndarray):
+        assert value.shape == (1,), path
+        assert not value.flags.writeable, path
+        found.append(path)
+    elif isinstance(value, tuple):
+        for index, item in enumerate(value):
+            _walk_month_record_arrays(item, f"{path}.{index}" if path else str(index), found)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in dataclasses.fields(value):
+            child = f"{path}.{field.name}" if path else field.name
+            _walk_month_record_arrays(getattr(value, field.name), child, found)
+
+
+class TestMonthRecordCarriesPersonsBeneficiariesAndYearRecord:
+    """#63: ``MonthRecord.persons``/``beneficiaries``/``year_record``, and
+    ``MonthContext.terminal_assessments``, survive ``at_path`` fully sliced and frozen.
+    """
+
+    def test_a_sliced_december_record_is_fully_sliced_and_frozen(
+        self, couple_scenario, couple_real_params, couple_market, couple_withdrawal_order
+    ):
+        state = build_initial_state(couple_scenario, n_paths=2)
+        state = updated(state, month=12, month_index=11)
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        n_assets = len(couple_market.asset_class_names)
+        month_returns = np.zeros((n_assets, 2))
+
+        new_state, record = advance_month_traced(
+            state, month_returns, policy, couple_market, couple_real_params
+        )
+
+        # References, not copies, on the unsliced record.
+        assert record.persons is new_state.persons
+        assert record.year_record is not None
+        assert record.year_record is new_state.history[-1]
+        # The couple scenario carries no beneficiaries at all.
+        assert record.beneficiaries == ()
+
+        sliced = record.at_path(1)
+        found: list[str] = []
+        _walk_month_record_arrays(sliced, "", found)
+
+        assert any(path.startswith("persons.") for path in found)
+        assert any(path.startswith("year_record.assessments.") for path in found)
+        assert any(path.startswith("context.terminal_assessments.") for path in found)
+
+    def test_a_sliced_december_record_reaches_beneficiaries(
+        self, scenario, real_params, market, withdrawal_order
+    ):
+        state = build_initial_state(scenario, n_paths=2)
+        state = updated(state, month=12, month_index=11)
+        policy = DoNothingPolicy(state.elections, withdrawal_order)
+        n_assets = len(market.asset_class_names)
+        month_returns = np.zeros((n_assets, 2))
+
+        new_state, record = advance_month_traced(state, month_returns, policy, market, real_params)
+
+        assert record.beneficiaries is new_state.beneficiaries
+        assert len(record.beneficiaries) >= 1
+
+        sliced = record.at_path(1)
+        found: list[str] = []
+        _walk_month_record_arrays(sliced, "", found)
+
+        assert any(path.startswith("beneficiaries.") for path in found)
+        assert any(path.startswith("persons.") for path in found)
+        assert any(path.startswith("year_record.assessments.") for path in found)
+
+    def test_a_non_december_record_has_no_year_record(
+        self, couple_scenario, couple_real_params, couple_market, couple_withdrawal_order
+    ):
+        state = build_initial_state(couple_scenario, n_paths=2)
+        state = updated(state, month=6, month_index=5)
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        n_assets = len(couple_market.asset_class_names)
+        month_returns = np.zeros((n_assets, 2))
+
+        _new_state, record = advance_month_traced(
+            state, month_returns, policy, couple_market, couple_real_params
+        )
+
+        assert record.year_record is None

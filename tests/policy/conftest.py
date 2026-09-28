@@ -43,7 +43,7 @@ from engine.core.build import (
 )
 from engine.core.context import AccountAmounts, ByKind, MonthContext, PersonInflows
 from engine.core.indexation import real_year
-from engine.core.state import HouseholdState, PersonState, updated
+from engine.core.state import Assessment, HouseholdState, PersonState, updated
 from engine.params.loader import load_year
 from engine.scenario import load_scenario
 from engine.scenario.schema import Scenario
@@ -235,6 +235,21 @@ def _make_context(
         db_pension_survivor=zeros,
     )
     zero_bykind = ByKind(rrsp=zeros, rrif=zeros, lif=zeros, tfsa=zeros, taxable=zeros)
+
+    def _zero_assessment() -> Assessment:
+        return Assessment(
+            federal=np.zeros(n_paths, dtype=np.float64),
+            provincial=np.zeros(n_paths, dtype=np.float64),
+            oas_repayment=np.zeros(n_paths, dtype=np.float64),
+            aip_penalty=np.zeros(n_paths, dtype=np.float64),
+            total=np.zeros(n_paths, dtype=np.float64),
+            net_income=np.zeros(n_paths, dtype=np.float64),
+            net_income_after_repayment=np.zeros(n_paths, dtype=np.float64),
+            taxable_income=np.zeros(n_paths, dtype=np.float64),
+            transfer_in=np.zeros(n_paths, dtype=np.float64),
+            transfer_out=np.zeros(n_paths, dtype=np.float64),
+        )
+
     return MonthContext(
         month_index=month_index,
         year=year,
@@ -243,6 +258,7 @@ def _make_context(
         rolled_out=tuple(zero_account for _ in range(n_persons)),
         rolled_acb=tuple(zeros for _ in range(n_persons)),
         terminal_assessment=zeros,
+        terminal_assessments=tuple(_zero_assessment() for _ in range(n_persons)),
         cash_to_estate=zeros,
         inflows=tuple(zero_inflow for _ in range(n_persons)),
         education_draws=tuple(zeros for _ in range(n_beneficiaries)),

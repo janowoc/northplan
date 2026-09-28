@@ -8,10 +8,11 @@ The one place a :class:`~engine.scenario.schema.Scenario` — real dollars of Ja
 start year, except each person's two years of prior net income, which the scenario states as
 filed and this module restates to real dollars (:func:`_build_person`, via
 :func:`engine.core.indexation.as_filed_to_real_factor`) — is turned into the array-valued state
-and draws the monthly loop steps forward. Five public functions:
+and draws the monthly loop steps forward. Six public functions:
 :func:`build_initial_state` and :func:`build_market_inputs` map the scenario; :func:`build_draws`
 and :func:`build_deterministic_draws` generate the run's :class:`~engine.mc.returns.RandomDraws`;
-:func:`draw_deaths` resolves every person's death month from those draws.
+:func:`draw_deaths` resolves every person's death month from those draws; and
+:func:`with_death_months` replaces drawn months with fixed ones for a hand check.
 
 :func:`build_initial_state` and :func:`build_market_inputs` are a mapping, not a decision: no
 balance is projected, no benefit is computed, no bracket is consulted. :func:`draw_deaths` is
@@ -37,6 +38,8 @@ negative result, where this one places a calendar date that may precede the run'
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -89,6 +92,7 @@ __all__ = [
     "build_initial_state",
     "build_market_inputs",
     "draw_deaths",
+    "with_death_months",
 ]
 
 
@@ -410,6 +414,84 @@ def draw_deaths(
         # forward rather than hard-coding "not yet dead" as a bare True.
         alive = drawn > state.month_index
         new_persons.append(updated(person, death_month_index=freeze(drawn), alive=freeze(alive)))
+
+    return updated(state, persons=tuple(new_persons))
+
+
+def with_death_months(state: HouseholdState, months: Sequence[int | None]) -> HouseholdState:
+    """Replace some or all persons' drawn death month with a fixed one, for a hand check.
+
+    For each ``i`` whose ``months[i]`` is not ``None``, sets person ``i``'s
+    ``death_month_index`` to ``months[i]`` on every path, leaving a ``None`` entry's person
+    exactly as :func:`draw_deaths` left them. ``alive`` is then recomputed for every person as
+    ``death_month_index > state.month_index`` -- identity for an untouched person, since
+    that is already how :func:`draw_deaths` set it.
+
+    Args:
+        state: The opening state, before the run starts (``state.month_index == 0``),
+            already run through :func:`draw_deaths`.
+        months: One entry per person, in ``state.persons`` order. ``None`` keeps that
+            person's drawn month; an ``int`` with ``1 <= month < DEATH_NOT_DRAWN`` fixes
+            it on every path.
+
+    Returns:
+        ``state`` with the named persons' ``death_month_index`` and every person's
+        ``alive`` replaced.
+
+    Raises:
+        ValueError: If ``state.month_index != 0``; if ``len(months) != len(state.persons)``;
+            if any ``death_month_index`` is still :data:`DEATH_NOT_DRAWN` (this must run
+            after :func:`draw_deaths`, which would otherwise overwrite the months fixed
+            here); if an entry is not ``None`` and its type is not exactly ``int``
+            (``bool``, ``IntEnum``, ``float``, ``numpy`` integer, and string entries are
+            all refused); or if an ``int`` entry is < 1 or >= :data:`DEATH_NOT_DRAWN`.
+    """
+    if state.month_index != 0:
+        raise ValueError(
+            f"with_death_months requires the opening state, month_index == 0, got "
+            f"{state.month_index!r}."
+        )
+    if len(months) != len(state.persons):
+        raise ValueError(
+            f"months has {len(months)!r} entries but state has {len(state.persons)!r} "
+            "person(s); with_death_months takes exactly one entry per person."
+        )
+    for person in state.persons:
+        if np.any(person.death_month_index == DEATH_NOT_DRAWN):
+            raise ValueError(
+                f"person {person.person_id!r}: death_month_index is still "
+                "DEATH_NOT_DRAWN on at least one path; with_death_months must run "
+                "after draw_deaths, which would otherwise overwrite the months fixed here."
+            )
+    for month in months:
+        if month is None:
+            continue
+        if type(month) is not int:
+            raise ValueError(
+                f"months entry {month!r} is neither None nor a plain int; bool, int "
+                "subclass, float, numpy integer, and string entries are all refused."
+            )
+    for month in months:
+        if month is None:
+            continue
+        if month < 1:
+            raise ValueError(f"months entry {month!r} is less than 1.")
+        if month >= DEATH_NOT_DRAWN:
+            raise ValueError(
+                f"months entry {month!r} is not below DEATH_NOT_DRAWN ({DEATH_NOT_DRAWN}), "
+                "the undrawn sentinel."
+            )
+
+    new_persons = []
+    for person, month in zip(state.persons, months, strict=True):
+        drawn = (
+            person.death_month_index
+            if month is None
+            else np.full(state.n_paths, month, dtype=np.int64)
+        )
+        new_persons.append(
+            updated(person, death_month_index=drawn, alive=drawn > state.month_index)
+        )
 
     return updated(state, persons=tuple(new_persons))
 

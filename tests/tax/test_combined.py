@@ -234,6 +234,35 @@ def test_one_person_household_equals_person_assessment_at_zero_transfers(params)
     np.testing.assert_allclose(result.net_income, expected.net_income)
 
 
+def test_one_person_household_transfers_are_zero_arrays(params) -> None:
+    """A household of one skips the split search entirely, so both transfer fields on
+    the single returned ``Assessment`` come back zero, at the household's own ``(n_paths,)``."""
+    n = 2
+    income = _ledger(n, employment=80_000.0)
+    person = _person("a", n, income=income)
+    household = _household((person,), year=2026, n=n)
+
+    (result,) = household_assessment(household, params)
+
+    zero = np.zeros(n, dtype=np.float64)
+    np.testing.assert_array_equal(result.transfer_in, zero)
+    np.testing.assert_array_equal(result.transfer_out, zero)
+    assert result.transfer_in.shape == (n,)
+    assert result.transfer_out.shape == (n,)
+
+
+def test_person_assessment_with_scalar_transfers_returns_shaped_arrays(params) -> None:
+    """``_deemed_single_assessments`` passes the scalar ``0.0`` for both transfers;
+    ``person_assessment`` must still return ``(n_paths,)`` arrays, not a bare scalar."""
+    n = 3
+    income = _ledger(n, employment=50_000.0)
+    result = person_assessment(income, 66, 0.0, 0.0, "ab", params, JANUARY)
+    assert result.transfer_in.shape == (n,)
+    assert result.transfer_out.shape == (n,)
+    np.testing.assert_array_equal(result.transfer_in, np.zeros(n))
+    np.testing.assert_array_equal(result.transfer_out, np.zeros(n))
+
+
 def test_assessment_total_equals_sum_of_parts(params) -> None:
     n = 3
     income = _ledger(n, employment=50_000.0, db_pension=10_000.0, oas=8_000.0)
@@ -1038,6 +1067,26 @@ def test_splitting_strictly_reduces_total_for_a_one_sided_db_pension(params) -> 
     unsplit_total = unsplit0.total + unsplit1.total
 
     assert np.all(split_total < unsplit_total - 1e-6)
+
+
+def test_household_assessment_transfers_are_each_others_mirror(params) -> None:
+    """At any one elected fraction, person 0's transfer_out is the same array as person
+    1's transfer_in (and vice versa), so the identity holds exactly, not just approximately --
+    and the split really is non-zero here (same one-sided-pension case as the strict test
+    above), so the check is not vacuous.
+    """
+    n = 1
+    income0 = _ledger(n, db_pension=60_000.0)
+    income1 = _ledger(n)
+    person0 = _person("a", n, birth_year=1950, income=income0)
+    person1 = _person("b", n, birth_year=1950, income=income1)
+    household = _household((person0, person1), year=2026, n=n)
+
+    a0, a1 = household_assessment(household, params)
+
+    np.testing.assert_array_equal(a0.transfer_out, a1.transfer_in)
+    np.testing.assert_array_equal(a1.transfer_out, a0.transfer_in)
+    assert np.any(a0.transfer_out != 0.0), "the split must actually be non-zero here"
 
 
 def test_mixed_alive_paths_only_split_where_both_are_alive(params) -> None:

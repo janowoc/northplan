@@ -21,6 +21,7 @@ import pytest
 
 from engine.core.state import (
     DEATH_NOT_DRAWN,
+    Assessment,
     BeneficiaryState,
     BenefitState,
     CashState,
@@ -236,9 +237,28 @@ def _year_record() -> YearRecord:
         after_tax_net_worth=_zeros(),
         spending=_zeros(),
         tax_assessed=_zeros(),
+        assessments=(),
         net_income=(_zeros(),),
         gis_band=(_bools(False),),
         depleted=_bools(False),
+    )
+
+
+def _assessment() -> Assessment:
+    """An all-zero :class:`Assessment`, built from writeable arrays -- so a passing walk
+    (which asserts every array it reaches is non-writeable) proves ``__post_init__`` froze
+    them, not that they arrived frozen already."""
+    return Assessment(
+        federal=_zeros(),
+        provincial=_zeros(),
+        oas_repayment=_zeros(),
+        aip_penalty=_zeros(),
+        total=_zeros(),
+        net_income=_zeros(),
+        net_income_after_repayment=_zeros(),
+        taxable_income=_zeros(),
+        transfer_in=_zeros(),
+        transfer_out=_zeros(),
     )
 
 
@@ -263,6 +283,21 @@ class TestWalker:
         # net_worth, after_tax_net_worth, spending, tax_assessed, depleted (5 bare arrays) plus
         # one array each in net_income and gis_band, since build_household() carries one person.
         assert with_history == without_history + 7
+
+    def test_walk_descends_into_assessments(self) -> None:
+        """A history record's ``assessments`` tuple, empty by default in ``_year_record``,
+        adds exactly one ``Assessment``'s worth of arrays once populated -- and every one of
+        them passes the walk's non-writeable check, so ``Assessment.__post_init__`` really
+        froze them.
+        """
+        without = walk(build_household(history=(_year_record(),)), N_PATHS)
+        with_one = walk(
+            build_household(
+                history=(dataclasses.replace(_year_record(), assessments=(_assessment(),)),)
+            ),
+            N_PATHS,
+        )
+        assert with_one == without + len(dataclasses.fields(Assessment))
 
     def test_walk_descends_into_beneficiaries(self) -> None:
         """A delta proves descent; a floor only proves the tree is not empty."""
@@ -318,6 +353,16 @@ class TestFreezeAndUpdated:
     def test_freeze_rejects_2d_array(self) -> None:
         with pytest.raises(AssertionError):
             freeze(np.zeros((2, 3)))
+
+    def test_assessment_construction_freezes_every_field(self) -> None:
+        """Constructing an :class:`Assessment` from writeable arrays leaves every field
+        non-writeable: its own ``__post_init__`` freezes them, exactly as ``IncomeLedger``'s
+        does.
+        """
+        assessment = _assessment()
+        for field in dataclasses.fields(assessment):
+            array = getattr(assessment, field.name)
+            assert not array.flags.writeable, f"field {field.name!r} is still writeable"
 
     def test_writing_into_a_frozen_array_raises_value_error(self) -> None:
         household = build_household()

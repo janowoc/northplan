@@ -20,6 +20,7 @@ tests, in ``tests/scenario/test_schema.py``, not this module's.
 
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,7 @@ from engine.core.build import (
     build_initial_state,
     build_market_inputs,
     draw_deaths,
+    with_death_months,
 )
 from engine.core.indexation import as_filed_to_real_factor
 from engine.core.mortality import death_month_index, months_to_terminal, survival_curve
@@ -56,6 +58,11 @@ EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
 COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
 
 N_PATHS = 3
+
+
+class _Month(enum.IntEnum):
+    APRIL = 27
+
 
 #: The example scenario currently builds exactly 53 arrays at n_paths=3.
 #: Close to that count, not merely "not zero": at 30 this floor passed with
@@ -924,3 +931,82 @@ class TestDrawDeaths:
             assert person_state.alive.dtype == np.bool_
             assert person_state.alive.shape == (self.N_PATHS,)
             assert not person_state.alive.flags.writeable
+
+
+class TestWithDeathMonths:
+    """``with_death_months``: fixing a drawn death month for a hand check (#63)."""
+
+    N_PATHS = 4
+
+    @pytest.fixture
+    def drawn_two_person_state(self, two_person_scenario, mortality: ParamSet):
+        market = build_market_inputs(two_person_scenario.assumptions)
+        state = build_initial_state(two_person_scenario, n_paths=self.N_PATHS)
+        draws = build_draws(two_person_scenario, market, n_paths=self.N_PATHS, mortality=mortality)
+        return draw_deaths(state, draws, mortality)
+
+    def test_with_death_months_sets_month_and_alive(self, drawn_two_person_state) -> None:
+        original = drawn_two_person_state
+        result = with_death_months(original, (5, None))
+
+        person0, person1 = result.persons
+        np.testing.assert_array_equal(person0.death_month_index, np.full(self.N_PATHS, 5))
+        assert person0.alive.all()  # death_month_index (5) > month_index (0)
+
+        np.testing.assert_array_equal(
+            person1.death_month_index, original.persons[1].death_month_index
+        )
+        np.testing.assert_array_equal(person1.alive, original.persons[1].alive)
+
+    def test_rejects_a_state_not_at_month_index_zero(self, drawn_two_person_state) -> None:
+        later_state = updated(drawn_two_person_state, month_index=1)
+        with pytest.raises(ValueError, match="requires the opening state"):
+            with_death_months(later_state, (5, None))
+
+    def test_rejects_the_wrong_number_of_entries(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="entries"):
+            with_death_months(drawn_two_person_state, (5,))
+
+    def test_rejects_an_undrawn_state(self, two_person_scenario) -> None:
+        undrawn = build_initial_state(two_person_scenario, n_paths=self.N_PATHS)
+        with pytest.raises(ValueError, match="DEATH_NOT_DRAWN"):
+            with_death_months(undrawn, (5, None))
+
+    def test_rejects_a_bool_entry(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="None nor a plain int"):
+            with_death_months(drawn_two_person_state, (True, None))
+
+    def test_rejects_a_float_entry(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="None nor a plain int"):
+            with_death_months(drawn_two_person_state, (27.0, None))
+
+    def test_rejects_a_numpy_integer_entry(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="None nor a plain int"):
+            with_death_months(drawn_two_person_state, (np.int64(27), None))
+
+    def test_rejects_an_int_subclass_entry(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="None nor a plain int"):
+            with_death_months(drawn_two_person_state, (_Month.APRIL, None))
+
+    def test_rejects_zero(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="less than 1"):
+            with_death_months(drawn_two_person_state, (0, None))
+
+    def test_rejects_a_negative_month(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="less than 1"):
+            with_death_months(drawn_two_person_state, (-1, None))
+
+    def test_type_is_checked_before_value_across_entries(self, drawn_two_person_state) -> None:
+        """Every entry's type is checked before any entry's value: ``(0, 27.0)`` raises the
+        type error for the second entry, not "less than 1" for the first.
+        """
+        with pytest.raises(ValueError, match="None nor a plain int"):
+            with_death_months(drawn_two_person_state, (0, 27.0))
+
+    def test_rejects_the_undrawn_sentinel_as_a_month(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="not below DEATH_NOT_DRAWN"):
+            with_death_months(drawn_two_person_state, (DEATH_NOT_DRAWN, None))
+
+    def test_rejects_a_month_past_int64(self, drawn_two_person_state) -> None:
+        with pytest.raises(ValueError, match="not below DEATH_NOT_DRAWN"):
+            with_death_months(drawn_two_person_state, (2**63, None))

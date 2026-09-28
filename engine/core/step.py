@@ -68,6 +68,11 @@ from engine.tax.combined import Assessment, household_assessment, person_assessm
 #: ``close_year``'s assertions can never silently miss a field the dataclass grows.
 _INCOME_LEDGER_FIELDS: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(IncomeLedger))
 
+#: Every field of ``Assessment``, in declaration order. Read once at import time so
+#: ``_zero_assessment`` and ``resolve_deaths``'s terminal-return masking can never silently
+#: miss a field the dataclass grows.
+_ASSESSMENT_FIELD_NAMES: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(Assessment))
+
 #: Contribution kinds a per-person ByKind ledger tracks -- CONTRIBUTION_KINDS less "resp",
 #: which is per-beneficiary and carried in its own tuple (MonthRecord.resp_contributions).
 _ACCOUNT_CONTRIBUTION_KINDS = CONTRIBUTION_KINDS - {"resp"}
@@ -190,8 +195,8 @@ def advance_month_traced(
         state = open_year(state, real_params)
 
     # Phase 2: deaths.
-    state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate = resolve_deaths(
-        state, real_params
+    state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate, terminal_assessments = (
+        resolve_deaths(state, real_params)
     )
 
     # "finished" (every person not alive) and each person's "alive" are fixed by phase 2 for
@@ -272,6 +277,7 @@ def advance_month_traced(
         rolled_out=rolled_out,
         rolled_acb=rolled_acb,
         terminal_assessment=terminal_assessment,
+        terminal_assessments=terminal_assessments,
         cash_to_estate=cash_to_estate,
         inflows=tuple(inflows),
         education_draws=tuple(education_draws),
@@ -376,6 +382,9 @@ def advance_month_traced(
         depleted=depleted,
         finished=finished,
         estate_after_tax=state.estate_after_tax,
+        persons=new_state.persons,
+        beneficiaries=new_state.beneficiaries,
+        year_record=new_state.history[-1] if timeline.is_year_end(state.month) else None,
     )
 
     # Phase 12: advance the month.
@@ -1395,8 +1404,8 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
        with no rollover, via :func:`_deemed_single_assessments` with ``died_in_year=True`` for
        everyone, L42), this year's ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over
        every person's assessment, of ``total`` -- the AIP penalty and the OAS repayment
-       included, everyone included), item 3's ``net_income`` per person, item 6's ``gis_band``
-       per person, and ``depleted``.
+       included, everyone included), item 3's ``assessments`` per person, ``net_income`` per
+       person, item 6's ``gis_band`` per person, and ``depleted``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
@@ -1547,6 +1556,7 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
         after_tax_net_worth=after_tax_net_worth,
         spending=state.spending_achieved_ytd,
         tax_assessed=tax_assessed,
+        assessments=assessments,
         net_income=tuple(assessment.net_income_after_repayment for assessment in assessments),
         gis_band=gis_band,
         depleted=state.depleted,
@@ -1622,7 +1632,7 @@ def _deemed_single_assessments(
             (``docs/limitations.md`` L17), same order as ``persons``.
 
     Returns:
-        One :class:`~engine.tax.combined.Assessment` per person, in ``persons`` order.
+        One :class:`~engine.core.state.Assessment` per person, in ``persons`` order.
     """
     zero = 0.0
     assessments = []
@@ -1656,6 +1666,18 @@ def _deemed_single_assessments(
     return tuple(assessments)
 
 
+def _zero_assessment(n_paths: int) -> Assessment:
+    """An all-zero :class:`~engine.core.state.Assessment`, one fresh array per field.
+
+    The default terminal assessment for a person on a path that does not finish this month.
+    Fields are read from :func:`dataclasses.fields` rather than hand-listed, so a field
+    :class:`Assessment` grows is never silently left out.
+    """
+    return Assessment(
+        **{name: np.zeros(n_paths, dtype=np.float64) for name in _ASSESSMENT_FIELD_NAMES}
+    )
+
+
 def resolve_deaths(
     state: HouseholdState,
     real_params: RealParamYear,
@@ -1665,6 +1687,7 @@ def resolve_deaths(
     tuple[NDArray[np.float64], ...],
     NDArray[np.float64],
     NDArray[np.float64],
+    tuple[Assessment, ...],
 ]:
     """Apply mortality for this month: reads (never draws) ``death_month_index``, already
     resolved once before the run by :func:`engine.core.build.draw_deaths`.
@@ -1688,7 +1711,9 @@ def resolve_deaths(
        wealth, less that tax, less balance owing, plus remitted) are recorded into
        ``estate_after_tax``/``terminal_assessment``/``cash_to_estate``; every balance, the
        income ledger, and the beneficiaries' RESP buckets (L34) are then zeroed.
-       ``depleted`` is left untouched.
+       ``depleted`` is left untouched. ``terminal_assessments`` carries each person's own
+       :class:`~engine.core.state.Assessment` from that same computation, zero-valued (via
+       :func:`_zero_assessment`) on every path that does not finish this month.
 
     Args:
         state: Opening state for the month.
@@ -1696,7 +1721,8 @@ def resolve_deaths(
             view.
 
     Returns:
-        ``(state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate)``.
+        ``(state, rolled_out, rolled_acb, terminal_assessment, cash_to_estate,
+        terminal_assessments)``.
     """
     m = state.month_index
     jan = m - (state.month - 1)
@@ -1774,6 +1800,7 @@ def resolve_deaths(
     estate_after_tax = state.estate_after_tax
     terminal_assessment = np.zeros(n_paths, dtype=np.float64)
     cash_to_estate = np.zeros(n_paths, dtype=np.float64)
+    terminal_assessments = tuple(_zero_assessment(n_paths) for _ in range(n_persons))
 
     if np.any(finished_now):
         died_in_year = tuple(p.death_month_index >= jan for p in persons)
@@ -1781,6 +1808,15 @@ def resolve_deaths(
             tuple(persons), state.year, jan, state.province, real_params, died_in_year
         )
         terminal_total = sum((a.total for a in assessments), np.zeros(n_paths, dtype=np.float64))
+        terminal_assessments = tuple(
+            Assessment(
+                **{
+                    name: np.where(finished_now, getattr(a, name), 0.0)
+                    for name in _ASSESSMENT_FIELD_NAMES
+                }
+            )
+            for a in assessments
+        )
 
         gross = cash.balance.copy()
         balance_owing_total = np.zeros(n_paths, dtype=np.float64)
@@ -1856,4 +1892,11 @@ def resolve_deaths(
         cash=cash,
         estate_after_tax=estate_after_tax,
     )
-    return new_state, tuple(rolled_out), tuple(rolled_acb), terminal_assessment, cash_to_estate
+    return (
+        new_state,
+        tuple(rolled_out),
+        tuple(rolled_acb),
+        terminal_assessment,
+        cash_to_estate,
+        terminal_assessments,
+    )
