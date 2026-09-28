@@ -296,8 +296,8 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
     ("YearRecord", "net_worth"): (Basis.REAL, "An output snapshot of real balances."),
     ("YearRecord", "after_tax_net_worth"): (
         Basis.REAL,
-        "An output snapshot, a copy of net_worth until #36 replaces it with the liquidation "
-        "value from the terminal-return arithmetic.",
+        "An output snapshot: the liquidation value, as if every person died on 31 December "
+        "with no rollover.",
     ),
     ("YearRecord", "spending"): (
         Basis.REAL,

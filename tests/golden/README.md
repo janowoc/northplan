@@ -218,9 +218,9 @@ cases:
 
 ## An empty `cases/` directory is a valid state
 
-This directory ships with nothing under `cases/` but `.gitkeep`, and that is
-correct: the harness exists before the first case does. `pytest tests/golden`
-collects and passes with zero golden tests in that state, and
+`cases/` holding nothing but a `.gitkeep` is a valid state: the harness runs
+without a single case. `pytest tests/golden` collects and passes with zero
+golden tests in that state, and
 `pytest --collect-only -q -m golden` lists nothing. What is *not* valid is a
 case file present in `cases/` that yields zero cases — an empty or missing
 `cases:` list, or a copy-paste mistake — and that is treated as a broken
@@ -236,9 +236,3 @@ editor backup, a case file under the wrong extension, a document left in the
 wrong place — fails at collection naming that file. Nothing under `cases/`
 is ever silently invisible to the harness; it either becomes a test or it is
 a collection error.
-
-While `cases/` holds no case files, `pytest -m golden` on its own reports "no
-tests collected" and exits with status 5 (pytest's `EXIT_NOTESTSCOLLECTED`),
-even though the run is otherwise healthy. Do not wire `pytest -m golden` into
-CI as a standalone step until at least one real case exists; run the full
-suite (or `pytest tests/golden`) instead, which passes in both states.

@@ -7,8 +7,8 @@
 # (engine/tax/combined.py::household_assessment's two-person branch). None of
 # that is reachable from a one-person household, which is what
 # scenarios/example.yaml is and stays: the single-person accumulation path,
-# and what #21 hand-checks. This file is the two-person fixture issues #35
-# and #36 will use instead of inventing a couple inline.
+# and what #21 hand-checks. This file is the two-person fixture the tests
+# use instead of inventing a couple inline.
 #
 # THE HOUSEHOLD IS FICTIONAL. The dates, balances, and benefit amounts
 # already in pay below were made up to exercise the engine, not taken from
@@ -35,12 +35,11 @@
 #   - The RRSP spousal rollover at death is unreachable from this file.
 #     Neither person holds an RRSP: both are past the RRSP conversion age
 #     (params/2026/rrif.yaml's conversion_age_years) and start already
-#     converted, in a RRIF. rrsp.spousal_rollover does not exist yet; #36
-#     will add it, with its own account-level unit test in tests/accounts/.
-#     This file will cover the step-level integration of the rollovers it
-#     can reach, once #36 wires them. The RRSP-to-RRIF conversion is
-#     likewise unreachable here. Do not add a younger spouse just to reach
-#     either one.
+#     converted, in a RRIF. rrsp.spousal_rollover has its account-level
+#     unit test in tests/accounts/test_rrsp.py; the step-level coverage of
+#     the rollovers this file does reach is tests/core/test_step.py's
+#     TestFirstDeathOnTheCouple. The RRSP-to-RRIF conversion is likewise
+#     unreachable here. Do not add a younger spouse just to reach either one.
 #   - The DB pension bridge is zero, as in example.yaml: a bridge ends
 #     decades before this run opens. No committed scenario exercises a
 #     non-zero bridge end to end; engine/benefits/pension.py's bridge branch
@@ -93,9 +92,9 @@ household:
         tfsa:    {balance: 60000, room: 12000}
         taxable: {balance: 120000, acb: 70000}   # ACB below balance: a gain at the deemed disposition
         # jurisdiction of REGISTRATION; both LIFs here are "ab" on purpose —
-        # #36 will refuse a cross-jurisdiction LIF rollover to a survivor's
-        # LIF, and no jurisdiction other than Alberta has a parameter file
-        # yet (limitations.md L3).
+        # lif.spousal_rollover refuses a cross-jurisdiction rollover to a
+        # survivor's LIF with a ValueError, and no jurisdiction other than
+        # Alberta has a parameter file yet (limitations.md L3).
         lif:     {balance: 50000, jurisdiction: ab}
     - id: b
       birth_year: 1943

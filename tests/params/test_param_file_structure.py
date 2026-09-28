@@ -21,11 +21,11 @@ These run against ``DEFAULT_PARAMS_ROOT``, not a fixture. That is deliberate:
 their whole purpose is to fail on the files that ship, and a mistake in the
 2026 files is invisible to a test that builds its own YAML in ``tmp_path``.
 
-The mortality block at the end is the exception, and only because it has no
-shipped file to run against yet. Its checks run over the live year like every
-other, but they also run over the template at the ``params/`` root and over
-deliberately broken copies of it in ``tmp_path`` — the copies exercise the
-checks themselves, which is a different job from checking the files.
+The mortality block at the end is the exception. Its checks run over the live
+year like every other, but they also run over the template at the ``params/``
+root, so that a new life table starts from a layout already accepted, and over
+deliberately broken copies of the template in ``tmp_path``, which exercise the
+checks themselves — a different job from checking the files.
 
 Two of these have already earned their keep. ``terminal_age_years`` was 90 in
 ``rrif.yaml`` against a table running to 95, silently capping a 95-year-old's
@@ -1254,12 +1254,13 @@ def test_the_pristine_template_satisfies_every_unexempted_check(
 ) -> None:
     """The template starts from a layout the rest of the suite already accepts.
 
-    This is what makes issue 5 safe. The human filling in real values starts
-    from a layout that has already been proved acceptable, so a layout failure
-    afterwards is one they introduced while filling it in rather than one they
-    inherited. It says nothing about the edited copy: a deleted row, a mistyped
-    age key, or a changed ``terminal_age_years`` are all still layout failures,
-    and the live test above is what catches them once issue 5 lands.
+    Anyone filling in a life table from the template starts from a layout
+    already proved acceptable, so a layout failure afterwards is one they
+    introduced while filling it in rather than one they inherited. It says
+    nothing about the filled-in copy: a deleted row, a mistyped age key, or a
+    changed ``terminal_age_years`` are all still layout failures, and
+    ``test_live_mortality_tables_satisfy_every_structural_check`` is what
+    catches them in a shipped table.
 
     Runs every check except ``PRISTINE_TEMPLATE_EXEMPT``: the shape check
     constrains values, not layout, and the template's repdigit placeholders
