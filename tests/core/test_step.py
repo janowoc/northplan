@@ -1717,6 +1717,69 @@ class TestRrspAndLiraConversion:
         np.testing.assert_allclose(person.rrsp.balance, opening_rrsp)
         assert person.rrif.opened_year is None
 
+    def test_an_election_below_the_start_years_december_age_converts_nothing(
+        self, scenario, real_params
+    ):
+        person = scenario.household.persons[0]
+        december_age = timeline.age_at_end_of_year(
+            person.birth_year, person.birth_month, scenario.start_year
+        )
+        elected_age = december_age - 1
+        assert elected_age < real_params.rrif.number("conversion_age_years")
+
+        elections = scenario.policies[0].elections
+        modified_elections = elections.model_copy(
+            update={
+                "rrif_conversion": elections.rrif_conversion.model_copy(
+                    update={"age_years": elected_age}
+                )
+            }
+        )
+        modified_policy = scenario.policies[0].model_copy(update={"elections": modified_elections})
+        modified_scenario = scenario.model_copy(update={"policies": (modified_policy,)})
+
+        state = self._state_at_year(modified_scenario, n_paths=2, year=scenario.start_year)
+        opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+
+        closed = close_year(opened, real_params)
+        person_state = closed.persons[0]
+        np.testing.assert_allclose(person_state.rrsp.balance, opening_rrsp)
+        assert person_state.rrif.opened_year is None
+
+    def test_an_election_at_the_start_years_december_age_converts_at_the_first_close(
+        self, scenario, real_params
+    ):
+        """The control proving the test above reaches the branch that decides."""
+        person = scenario.household.persons[0]
+        december_age = timeline.age_at_end_of_year(
+            person.birth_year, person.birth_month, scenario.start_year
+        )
+        assert december_age < real_params.rrif.number("conversion_age_years")
+
+        elections = scenario.policies[0].elections
+        modified_elections = elections.model_copy(
+            update={
+                "rrif_conversion": elections.rrif_conversion.model_copy(
+                    update={"age_years": december_age}
+                )
+            }
+        )
+        modified_policy = scenario.policies[0].model_copy(update={"elections": modified_elections})
+        modified_scenario = scenario.model_copy(update={"policies": (modified_policy,)})
+        fraction = modified_elections.rrif_conversion.fraction
+        assert 0 < fraction < 1
+
+        state = self._state_at_year(modified_scenario, n_paths=2, year=scenario.start_year)
+        opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+
+        closed = close_year(opened, real_params)
+        person_state = closed.persons[0]
+        np.testing.assert_allclose(person_state.rrsp.balance, opening_rrsp * (1 - fraction))
+        np.testing.assert_allclose(person_state.rrif.balance, opening_rrsp * fraction)
+        assert person_state.rrif.opened_year == scenario.start_year
+
     def test_when_both_would_fire_in_the_same_year_only_the_statutory_conversion_applies(
         self, scenario, real_params
     ):

@@ -382,7 +382,10 @@ the Home Buyers' and Lifelong Learning plans, contributions in the first sixty
 days of the next year. Lives in `engine/accounts/rrsp.py`.
 
 **L26. RRIF conversion.** Modelled as one optional partial conversion at a
-policy-chosen age, and full conversion at the statutory age. Not modelled: the
+policy-chosen age, and full conversion at the statutory age. An election at
+the statutory age itself converts the whole balance, whatever its fraction,
+and one above it is refused by
+`engine/scenario/start_ages.py::check_start_ages`. Not modelled: the
 younger-spouse election for the minimum, and any one-year reduction of the
 minimum. Lives in `engine/accounts/rrif.py`.
 

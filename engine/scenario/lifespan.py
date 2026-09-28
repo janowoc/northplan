@@ -26,7 +26,8 @@ A parameter year that does not match ``scenario.start_year`` is a caller
 mistake rather than a bad scenario, and raises ``ValueError`` instead, exactly
 like :func:`engine.scenario.start_ages.check_start_ages`.
 
-Whatever opens a run calls :func:`check_lifespan` alongside
+:func:`engine.mc.prepare.prepare_run` calls :func:`check_lifespan` once, on
+the grid-expanded scenario, right after
 :func:`~engine.scenario.start_ages.check_start_ages`.
 """
 

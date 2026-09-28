@@ -172,10 +172,9 @@ def governing_income_year_offset(params: RealParamSet) -> int:
     unlike ``number()``, ``get()`` returns the value's own type, so a caller
     can tell an ``int`` in the file from a ``float``.
 
-    Does not touch :func:`enhanced_grant_rate`, whose docstring keeps the
-    governing year "applied by the caller, not guessed here" — this function
-    is for that caller (#19's ``open_year``) to consult when it decides which
-    of ``PersonState``'s two net-income fields to sum.
+    Its caller is :func:`engine.mc.prepare.prepare_run`, once per run, as a
+    check that the parameter file's reach-back matches the two net-income
+    fields ``PersonState`` carries; the returned value is not otherwise used.
 
     Args:
         params: The ``resp`` parameter set.

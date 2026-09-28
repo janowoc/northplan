@@ -10,12 +10,12 @@ figure appears in a scenario file and no household figure appears in a
 parameter file.
 
 ``schema`` says what a well-formed scenario is; ``load`` turns a file into one.
-``start_ages`` refuses a CPP or OAS start age the scenario's parameter year
-does not allow. ``lifespan`` refuses a scenario the parameter year's life
-table cannot represent, either for one person past the terminal age or for a
-household whose run cannot reach its first December close. Building engine
-state from a scenario lives in ``engine/core/build.py``, not here — this
-package hands out no NumPy arrays.
+``start_ages`` refuses a CPP or OAS start age, or a RRIF conversion age, the
+scenario's parameter year does not allow. ``lifespan`` refuses a scenario the
+parameter year's life table cannot represent, either for one person past the
+terminal age or for a household whose run cannot reach its first December
+close. Building engine state from a scenario lives in
+``engine/core/build.py``, not here — this package hands out no NumPy arrays.
 
 Names ending in ``Spec`` are the deliberate exceptions to plain naming: they
 describe an input that the engine also has a *runtime* class for, and the two

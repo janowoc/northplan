@@ -1076,8 +1076,10 @@ class RrifConversion(_Base):
     """When an RRSP becomes a RRIF, and how much of it.
 
     Attributes:
-        age_years: Age the conversion happens at. Not checked against the
-            statutory deadline, which is a parameter of a tax year.
+        age_years: Age the conversion happens at. The schema does not check it
+            against the statutory deadline, which is a parameter of a tax
+            year; ``engine/scenario/start_ages.py::check_start_ages`` refuses
+            one above ``conversion_age_years``.
         fraction: Share of the RRSP converted, ``[0, 1]``. A partial conversion
             is how a household buys eligible pension income without committing
             the whole balance to a minimum.

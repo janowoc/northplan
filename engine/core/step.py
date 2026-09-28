@@ -953,7 +953,6 @@ def _phase8_transfers(
             requested = np.minimum(transfer.amount, available)
             b = transfer.person_index
             beneficiary = beneficiaries[b]
-            resp_mod.governing_income_year_offset(real_params.resp)
             family_income = sum(p.net_income_two_years_prior for p in persons)
             age_end = timeline.age_at_end_of_year(
                 beneficiary.birth_year, beneficiary.birth_month, year

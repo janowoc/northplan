@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 import yaml
 
-from engine.core.timeline import MONTHS_PER_YEAR, age_in_months
+from engine.core.timeline import MONTHS_PER_YEAR, age_at_end_of_year, age_in_months
 from engine.params.loader import ParamYear, load_year
 from engine.scenario import Scenario, StartAgeNotAllowedError, check_start_ages
 
@@ -562,3 +562,94 @@ def test_cpp_in_pay_skips_the_past_start_check(
     scenario = Scenario.model_validate(values)
 
     check_start_ages(scenario, params)  # must not raise
+
+
+# --- Case 4: RRIF conversion age above conversion_age_years -----------------
+
+
+def test_rrif_conversion_above_limit_is_refused(params: ParamYear) -> None:
+    limit = int(params.rrif.number("conversion_age_years"))
+    elected = limit + 1
+
+    values = example_values()
+    _policy(values)["elections"]["rrif_conversion"]["age_years"] = elected
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "'taxable-first'" in message
+    assert "rrif_conversion.age_years" in message
+    assert str(elected) in message
+    assert "conversion_age_years" in message
+    assert str(params.rrif.source) in message
+
+
+def test_rrif_conversion_equal_to_limit_is_accepted(params: ParamYear) -> None:
+    limit = int(params.rrif.number("conversion_age_years"))
+
+    values = example_values()
+    _policy(values)["elections"]["rrif_conversion"]["age_years"] = limit
+    scenario = Scenario.model_validate(values)
+
+    check_start_ages(scenario, params)  # must not raise
+
+
+def test_rrif_conversion_below_everyones_december_age_is_accepted(
+    params: ParamYear, start_year: int
+) -> None:
+    values = example_values()
+    persons = values["household"]["persons"]
+    december_age = min(
+        age_at_end_of_year(person["birth_year"], person["birth_month"], start_year)
+        for person in persons
+    )
+    elected = december_age - 1
+
+    _policy(values)["elections"]["rrif_conversion"]["age_years"] = elected
+    scenario = Scenario.model_validate(values)
+
+    check_start_ages(scenario, params)  # must not raise
+
+
+def test_committed_late_life_couple_is_accepted(params: ParamYear) -> None:
+    """Its RRIF election, 71, is accepted because it does not exceed conversion_age_years;
+    it is inert because it is below both persons' ages at the opening, so no year-end age
+    ever equals it.
+    """
+    values = yaml.safe_load(
+        (REPO_ROOT / "scenarios" / "late_life_couple.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(values, dict)
+    scenario = Scenario.model_validate(values)
+
+    check_start_ages(scenario, params)  # must not raise
+
+
+def test_rrif_step_runs_after_the_whole_cpp_oas_loop(params: ParamYear, cpp_window) -> None:
+    """The first policy's RRIF election is above the limit, and would raise if the RRIF
+    step ran first; the second policy's CPP election is outside the window, and is what
+    actually raises, since the CPP/OAS loop runs over every policy before the RRIF step
+    begins.
+    """
+    limit = int(params.rrif.number("conversion_age_years"))
+    earliest, _latest = cpp_window
+    earliest_years = math.ceil(earliest / MONTHS_PER_YEAR)
+
+    values = example_values()
+    _policy(values)["elections"]["rrif_conversion"]["age_years"] = limit + 1
+
+    second = yaml.safe_load(yaml.safe_dump(_policy(values)))
+    second["name"] = "taxable-first-2"
+    second["elections"]["cpp_start_age_years"]["a"] = earliest_years - 1
+    second["elections"]["rrif_conversion"]["age_years"] = limit
+    values["policies"].append(second)
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "'taxable-first-2'" in message
+    assert "CPP" in message
