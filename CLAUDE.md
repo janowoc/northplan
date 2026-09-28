@@ -106,8 +106,17 @@
   brief names that behaviour as the oracle and asks for a differential test
   over a corpus of inputs. The brief's test list follows the design's
   branches: each skip and each raise gets a named test.
-- A hole found in review that predates the issue becomes a new issue by
-  default, and is folded in only when I say so.
+- A hole that predates the issue, found in review or while probing, is
+  handled by where it lies:
+  - Inside the area the issue is changing (a missing test, an unchecked edge
+    case in the module or behaviour under work): fold it into the issue by
+    default.
+  - Outside that area, whether or not the same problem also occurs inside it:
+    a new issue by default, folded in only when I say so. Instances inside the
+    area are still fixed under the rule above; one new issue covers every
+    instance outside it.
+  Either way, the hole and what was done with it go in the numbered list of
+  decisions reported to me.
 - A verifier's NIT or test-gap finding does not by itself start a new round.
   It is batched into the last round or filed. A statement that is wrong is not
   a nit.
