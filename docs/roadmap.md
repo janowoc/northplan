@@ -91,6 +91,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 68 | An insolvent estate is worth zero | agent | — | no negative estate or after-tax net worth |
 | 69 | Golden cases for the lines no case reaches yet | human | 61 | each listed line has a passing case or a filed bug |
 | 70 | Seven statements still describe landed work as future | agent | — | each of the seven reads true of the tree; a re-run search finds no other |
+| 71 | RRSP-conversion tests prove their premises, and the two-person election rule is tested | agent | — | a zero opening RRSP fails each conversion test; a two-person close converts only the younger |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -371,6 +372,10 @@ convenient.
 references to closed issues, and for `yet`, `for now` and `will add` without
 one, found six more. It sits right after 64 because it is prose only and
 touches the couple scenario 56 reads.
+
+71 is the other half of 64's last review: two test gaps the owner chose to
+file rather than widen 64. It follows 70 as the second small cleanup after 64;
+nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
