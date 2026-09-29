@@ -1615,6 +1615,10 @@ class TestRrspAndLiraConversion:
     :meth:`_statutory` asserts, read from parameters rather than typed by hand. The example's
     own elected conversion age falls in an earlier year, so the two clauses below are
     naturally disjoint without touching the scenario.
+
+    Some tests add a second RRSP holder in memory, since no committed scenario has one: the
+    election is one household-wide age compared with each person's own December age, and the
+    statutory deadline is each person's own.
     """
 
     def _lif_age(self, scenario, real_params):
@@ -1651,10 +1655,84 @@ class TestRrspAndLiraConversion:
             state, year=year, month=1, month_index=month_index, spending_monthly=spending_monthly
         )
 
+    def _couple_with_election(self, scenario, elected_age, birth_year_offset=4):
+        """The example plus a second RRSP holder, with the RRIF election at ``elected_age``.
+
+        Person ``b`` copies the example's person ``a``, born ``birth_year_offset`` years later
+        (earlier when negative), and holds half of ``a``'s RRSP and LIRA balances, so a result
+        written to the wrong person shows. ``b`` is second, so a close that looked only at the
+        first person cannot pass a test in which ``b`` converts. ``b``'s CPP and OAS start ages
+        copy ``a``'s.
+        """
+        person_a = scenario.household.persons[0]
+        person_b = person_a.model_copy(
+            update={
+                "id": "b",
+                "birth_year": person_a.birth_year + birth_year_offset,
+                "accounts": person_a.accounts.model_copy(
+                    update={
+                        "rrsp": person_a.accounts.rrsp.model_copy(
+                            update={"balance": person_a.accounts.rrsp.balance / 2}
+                        ),
+                        "lira": person_a.accounts.lira.model_copy(
+                            update={"balance": person_a.accounts.lira.balance / 2}
+                        ),
+                    }
+                ),
+            }
+        )
+        new_household = scenario.household.model_copy(update={"persons": (person_a, person_b)})
+        elections = scenario.policies[0].elections
+        new_elections = elections.model_copy(
+            update={
+                "cpp_start_age_years": {
+                    **elections.cpp_start_age_years,
+                    "b": elections.cpp_start_age_years[person_a.id],
+                },
+                "oas_start_age_years": {
+                    **elections.oas_start_age_years,
+                    "b": elections.oas_start_age_years[person_a.id],
+                },
+                "rrif_conversion": elections.rrif_conversion.model_copy(
+                    update={"age_years": elected_age}
+                ),
+            }
+        )
+        new_policy = scenario.policies[0].model_copy(update={"elections": new_elections})
+        return scenario.model_copy(update={"household": new_household, "policies": (new_policy,)})
+
+    def _opened_couple(self, scenario, real_params, elected_age_offset):
+        """Open the couple's first year, electing at the younger's December age plus an offset.
+
+        Returns:
+            ``(couple, opened)``: the scenario, and its state after ``open_year`` at the start
+            year with two paths.
+        """
+        probe = self._couple_with_election(
+            scenario, scenario.policies[0].elections.rrif_conversion.age_years
+        )
+        december_ages = [
+            timeline.age_at_end_of_year(p.birth_year, p.birth_month, scenario.start_year)
+            for p in probe.household.persons
+        ]
+        younger_age = min(december_ages)
+        assert december_ages[1] < december_ages[0]
+        assert max(december_ages) < real_params.rrif.number("conversion_age_years")
+        couple = self._couple_with_election(scenario, younger_age + elected_age_offset)
+        state = self._state_at_year(couple, n_paths=2, year=scenario.start_year)
+        opened = open_year(state, real_params)
+        for person in opened.persons:
+            assert np.all(person.rrsp.balance > 0.0)
+        return couple, opened
+
     def test_statutory_conversion_fully_converts_both_accounts(self, scenario, real_params):
         _, _, statutory_year = self._statutory(scenario, real_params)
         state = self._state_at_year(scenario, n_paths=2, year=statutory_year)
         opened = open_year(state, real_params)
+        opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
+        opening_lira = opened.persons[0].lira.balance.copy()
+        assert np.all(opening_lira > 0.0)
         # Neither account has ever been opened before, so the conversion year's own minimum
         # is zero -- the control this test needs before checking it turns nonzero.
         np.testing.assert_allclose(opened.persons[0].rrif.annual_minimum, 0.0)
@@ -1666,6 +1744,8 @@ class TestRrspAndLiraConversion:
         np.testing.assert_allclose(person.lira.balance, 0.0)
         assert np.all(person.rrif.balance > 0.0)
         assert np.all(person.lif.balance > 0.0)
+        np.testing.assert_allclose(person.rrif.balance, opening_rrsp)
+        np.testing.assert_allclose(person.lif.balance, opening_lira)
         assert person.rrif.opened_year == statutory_year
         assert person.lif.opened_year == statutory_year
 
@@ -1676,6 +1756,54 @@ class TestRrspAndLiraConversion:
         opened_next = open_year(rolled, real_params)
         assert np.all(opened_next.persons[0].rrif.annual_minimum > 0.0)
         assert np.all(opened_next.persons[0].lif.annual_minimum > 0.0)
+
+    @pytest.mark.parametrize(
+        "birth_year_offset", [-4, 4], ids=["second_person_converts", "first_person_converts"]
+    )
+    def test_the_statutory_conversion_reaches_only_the_person_at_the_age(
+        self, scenario, real_params, birth_year_offset
+    ):
+        """Each person's own December age decides; the other person's accounts are untouched."""
+        _, statutory_age, _ = self._statutory(scenario, real_params)
+        elected_age = scenario.policies[0].elections.rrif_conversion.age_years
+        couple = self._couple_with_election(scenario, elected_age, birth_year_offset)
+        persons = couple.household.persons
+        converter = 0 if persons[0].birth_year < persons[1].birth_year else 1
+        other = 1 - converter
+        year = persons[converter].birth_year + statutory_age
+        december_ages = [
+            timeline.age_at_end_of_year(p.birth_year, p.birth_month, year) for p in persons
+        ]
+        assert december_ages[converter] == statutory_age
+        assert december_ages[other] < statutory_age
+        # Neither person is at the elected age, so only the statutory branch can act.
+        assert elected_age not in december_ages
+
+        state = self._state_at_year(couple, n_paths=2, year=year)
+        opened = open_year(state, real_params)
+        opening_rrsp = [p.rrsp.balance.copy() for p in opened.persons]
+        opening_rrif = [p.rrif.balance.copy() for p in opened.persons]
+        opening_lira = [p.lira.balance.copy() for p in opened.persons]
+        opening_lif = [p.lif.balance.copy() for p in opened.persons]
+        for i in (0, 1):
+            assert np.all(opening_rrsp[i] > 0.0)
+            assert np.all(opening_lira[i] > 0.0)
+
+        closed = close_year(opened, real_params)
+        converted = closed.persons[converter]
+        np.testing.assert_allclose(converted.rrsp.balance, 0.0)
+        np.testing.assert_allclose(converted.rrif.balance, opening_rrsp[converter])
+        assert converted.rrif.opened_year == year
+        np.testing.assert_allclose(converted.lira.balance, 0.0)
+        np.testing.assert_allclose(converted.lif.balance, opening_lira[converter])
+        assert converted.lif.opened_year == year
+        untouched = closed.persons[other]
+        np.testing.assert_allclose(untouched.rrsp.balance, opening_rrsp[other])
+        np.testing.assert_allclose(untouched.rrif.balance, opening_rrif[other])
+        assert untouched.rrif.opened_year is None
+        np.testing.assert_allclose(untouched.lira.balance, opening_lira[other])
+        np.testing.assert_allclose(untouched.lif.balance, opening_lif[other])
+        assert untouched.lif.opened_year is None
 
     def test_elected_conversion_moves_only_the_elected_fraction(self, scenario, real_params):
         birth_year, _, statutory_year = self._statutory(scenario, real_params)
@@ -1691,7 +1819,9 @@ class TestRrspAndLiraConversion:
         state = self._state_at_year(scenario, n_paths=2, year=year)
         opened = open_year(state, real_params)
         opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
         opening_lira = opened.persons[0].lira.balance.copy()
+        assert np.all(opening_lira > 0.0)
 
         closed = close_year(opened, real_params)
         person = closed.persons[0]
@@ -1711,6 +1841,7 @@ class TestRrspAndLiraConversion:
         state = self._state_at_year(scenario, n_paths=2, year=year)
         opened = open_year(state, real_params)
         opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
 
         closed = close_year(opened, real_params)
         person = closed.persons[0]
@@ -1741,6 +1872,7 @@ class TestRrspAndLiraConversion:
         state = self._state_at_year(modified_scenario, n_paths=2, year=scenario.start_year)
         opened = open_year(state, real_params)
         opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
 
         closed = close_year(opened, real_params)
         person_state = closed.persons[0]
@@ -1773,12 +1905,44 @@ class TestRrspAndLiraConversion:
         state = self._state_at_year(modified_scenario, n_paths=2, year=scenario.start_year)
         opened = open_year(state, real_params)
         opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
 
         closed = close_year(opened, real_params)
         person_state = closed.persons[0]
         np.testing.assert_allclose(person_state.rrsp.balance, opening_rrsp * (1 - fraction))
         np.testing.assert_allclose(person_state.rrif.balance, opening_rrsp * fraction)
         assert person_state.rrif.opened_year == scenario.start_year
+
+    def test_an_election_below_both_persons_december_ages_converts_for_neither(
+        self, scenario, real_params
+    ):
+        _, opened = self._opened_couple(scenario, real_params, -1)
+        opening_rrsp = [p.rrsp.balance.copy() for p in opened.persons]
+
+        closed = close_year(opened, real_params)
+        for i in (0, 1):
+            np.testing.assert_allclose(closed.persons[i].rrsp.balance, opening_rrsp[i])
+            assert closed.persons[i].rrif.opened_year is None
+
+    def test_an_election_at_the_younger_persons_december_age_converts_only_them(
+        self, scenario, real_params
+    ):
+        """The control proving the test above reaches the branch that decides."""
+        couple, opened = self._opened_couple(scenario, real_params, 0)
+        fraction = couple.policies[0].elections.rrif_conversion.fraction
+        assert 0 < fraction < 1
+        opening_rrsp = [p.rrsp.balance.copy() for p in opened.persons]
+        opening_rrif = [p.rrif.balance.copy() for p in opened.persons]
+
+        closed = close_year(opened, real_params)
+        younger = closed.persons[1]
+        np.testing.assert_allclose(younger.rrsp.balance, opening_rrsp[1] * (1 - fraction))
+        np.testing.assert_allclose(younger.rrif.balance, opening_rrsp[1] * fraction)
+        assert younger.rrif.opened_year == scenario.start_year
+        older = closed.persons[0]
+        np.testing.assert_allclose(older.rrsp.balance, opening_rrsp[0])
+        np.testing.assert_allclose(older.rrif.balance, opening_rrif[0])
+        assert older.rrif.opened_year is None
 
     def test_when_both_would_fire_in_the_same_year_only_the_statutory_conversion_applies(
         self, scenario, real_params
@@ -1803,6 +1967,7 @@ class TestRrspAndLiraConversion:
         state = self._state_at_year(conflicting_scenario, n_paths=2, year=statutory_year)
         opened = open_year(state, real_params)
         opening_rrsp = opened.persons[0].rrsp.balance.copy()
+        assert np.all(opening_rrsp > 0.0)
 
         closed = close_year(opened, real_params)
         person = closed.persons[0]
