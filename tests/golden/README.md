@@ -227,6 +227,22 @@ case file present in `cases/` that yields zero cases — an empty or missing
 file, not an empty one, and fails at collection naming the file, exactly like
 a missing `source` or `checked` would.
 
+Reaching that state takes two steps beyond deleting the case files. First,
+`cases/` must still exist: a missing `cases/` is a collection error, because
+`discover_cases` raises when `test_cases.py` is imported. Git does not track
+an empty directory, so keeping `cases/` means committing a `.gitkeep` in it.
+Second, `test_every_tracked_file_is_either_in_scope_or_exempt` in
+`tests/test_licence_headers.py` requires every tracked file to be either a
+kind that carries a licence header or listed as exempt. A `.gitkeep` is
+neither, so that test fails until `tests/golden/cases/.gitkeep` is added to
+`EXEMPT`. Then
+`test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt` fails
+until the path is also added to the literal set it checks `EXEMPT` against.
+The exemption test also rejects an exempt file containing `SPDX-` text, so the
+`.gitkeep` must carry no licence header.
+`test_cases_collection.py` collects `test_cases.py` against an empty
+`cases/`, a `.gitkeep`-only one, and a missing one.
+
 Discovery walks `cases/` recursively, so a case in a subdirectory (e.g.
 `cases/federal/brackets.yaml`, once there are enough cases to want one) is
 found, not skipped. The flip side is symmetric: *any* file anywhere under

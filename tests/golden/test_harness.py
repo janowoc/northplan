@@ -349,7 +349,7 @@ cases:
     assert "checked with a timestamp" in str(excinfo.value)
 
 
-# --- BLOCKER 1: source must be a real, non-empty string, not just present --
+# --- source must be a real, non-empty string, not just present -------------
 
 
 def test_null_source_fails_discovery(tmp_path: Path) -> None:
@@ -538,8 +538,8 @@ def test_missing_cases_directory_raises(tmp_path: Path) -> None:
     assert "does_not_exist" in str(excinfo.value)
 
 
-# --- Blocker 2: discovery must see every file under cases/, recursively, or
-# --- reject it loudly rather than silently skip it. ------------------------
+# --- discovery must see every file under cases/, recursively, or reject it
+# --- loudly rather than silently skip it. ----------------------------------
 
 
 def test_case_in_a_subdirectory_is_discovered(tmp_path: Path) -> None:
@@ -577,7 +577,7 @@ def test_gitkeep_itself_is_not_treated_as_a_stray_file(tmp_path: Path) -> None:
     assert discover_cases(tmp_path) == []
 
 
-# --- The blocker: an empty `expected` must not silently assert nothing -----
+# --- an empty `expected` must not silently assert nothing ------------------
 
 
 def test_empty_expected_fails_discovery_naming_file_and_case(tmp_path: Path) -> None:
