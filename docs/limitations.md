@@ -356,19 +356,25 @@ CPP (adjusted annually) than for OAS (quarterly). Lives in
 unstarted CPP or OAS pension can be backdated a limited time, with a back
 payment. We refuse an elected start age below the person's age in whole
 years at the run's opening (1 January of `start_year`), along with any start
-age outside the window in `params/` and any OAS in pay for someone younger
-than its earliest start age. An election equal to the person's age in whole
-years at the opening starts the pension at the opening, at their age in
-months then, capped at the latest start age, with no back payment. A person
-whose age in whole years at the opening is above the latest start age, and
-whose benefit is not yet in pay, has no valid election; the scenario must
-state that benefit as in pay. Direction: neither optimistic nor conservative
-for a refused scenario, which produces no wrong number — the cost is
-expressiveness. Either way for an election that starts at the opening: it
-forgoes any back payment but pays the adjustment for the later start for
-life, and which is worth more depends on survival. Lives in
-`engine/scenario/start_ages.py::check_start_ages`, and in
-`engine/benefits/cpp.py::pension_monthly` and
+age outside the window in `params/` and any OAS in pay for someone not older
+than its earliest start age, since OAS is first paid the month after it. An
+election equal to the person's age in whole years at the opening is first
+paid at the opening, with no back payment; an OAS election reached in the
+opening month is the exception (below). CPP starts at the person's age in
+months at the opening. OAS, which is first paid in the month after its start
+(OAS Act s.8(1)), starts at their age in months in the month before the
+opening, so that it too is first paid at the opening; an OAS election whose
+age in months is reached in the opening month itself has not passed: it is
+first paid the month after the opening, like any other OAS election. Either
+start is capped at the latest start age. A person whose age in whole years
+at the opening is above the latest start age, and whose benefit is not yet
+in pay, has no valid election; the scenario must state that benefit as in
+pay. Direction: neither optimistic nor conservative for a refused scenario,
+which produces no wrong number — the cost is expressiveness. Either way for
+an election first paid at the opening: it forgoes any back payment but pays
+the adjustment for the later start for life, and which is worth more depends
+on survival. Lives in `engine/scenario/start_ages.py::check_start_ages`, and
+in `engine/benefits/cpp.py::pension_monthly` and
 `oas.py::gross_pension_monthly` for the start at the opening.
 
 ## Registered accounts

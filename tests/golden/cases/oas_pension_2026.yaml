@@ -31,24 +31,24 @@
 
 target: engine.benefits.oas.gross_pension_annual
 cases:
-  - name: taken at 65, age 65
+  - name: at 65, taken at 65
     source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/benefit-amount.html"
     checked: 2026-09-18
     rounding: monthly_cent_times_twelve
     inputs:
-      current_age_months: 780          # 65 * 12
+      current_age_months: 781          # 65 * 12 + 1: the first month paid
       start_age_months: 780
       month_index: 0
       real_params: {year: 2026, file: oas, inflation: 0.0}
     expected:
       value: 9023.64                   # 12 * 751.97
 
-  - name: deferred to 70, age 70
+  - name: at 70, taken at 70
     source: "https://www.canada.ca/en/services/benefits/publicpensions/old-age-security/when-start.html"
     checked: 2026-09-18
     rounding: monthly_cent_times_twelve
     inputs:
-      current_age_months: 840          # 70 * 12
+      current_age_months: 841          # 70 * 12 + 1: the first month paid
       start_age_months: 840
       month_index: 0
       real_params: {year: 2026, file: oas, inflation: 0.0}

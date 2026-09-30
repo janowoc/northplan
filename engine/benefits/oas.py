@@ -27,10 +27,14 @@ read by no module here; it is there for a future GIS implementation. See
 age at a threshold (:func:`gross_pension_monthly`'s band lookup); an amount
 already in pay carries that step-up as a ratio, exact because it is the same
 step-up that produced the published maxima, and no erosion factor, since the
-factor cancels in the ratio (L52); an amount not yet in pay starts at the
-later of the elected age and the age when the run opens, clipped to the
-statutory window; the election itself was checked at load against the
-window and the person's age in whole years
+factor cancels in the ratio (L52). An amount not yet in pay is first paid in
+the month after its start: OAS Act s.8(1) commences payment "in the first
+month after the application therefor has been approved", and OAS
+Regulations s.5 makes that approval effective no earlier than the day the
+person qualifies. The start is the later of the elected age and the age in
+the month before the run opens, clipped to the statutory window, and the
+deferral factor is taken at it; the election itself was checked at load
+against the window and the person's age in whole years
 (``engine/scenario/start_ages.py``, L54). Amounts come through the real view
 (:class:`~engine.core.indexation.RealParamSet`), which already applies OAS's
 quarterly erosion factor (L5, L24, L52).
@@ -136,10 +140,13 @@ def gross_pension_monthly(
     Two mutually exclusive sources, mirroring :class:`BenefitState`. In pay:
     the amount in pay scaled by the ratio of this month's band maximum to the
     band maximum at the age the run opened, not eroded since the erosion
-    factor cancels out of the ratio (L52). Elected: the band maximum at the
-    effective start age (the later of the election and the age at open,
-    clipped to the statutory window; the election was checked at load, L54)
-    times :func:`deferral_factor`, from the effective start month.
+    factor cancels out of the ratio (L52). Elected: this month's band maximum
+    times :func:`deferral_factor` at the start, first paid in the month after
+    the start (OAS Act s.8(1), OAS Regulations s.5). The start is the later of
+    the election and the age in the month before the run opened, clipped to
+    the statutory window, so an election already passed at the opening is
+    paid from month 0 and one reached in the opening month is first paid in
+    month 1 (the election was checked at load, L54).
 
     Args:
         benefit: This person's OAS standing.
@@ -150,8 +157,8 @@ def gross_pension_monthly(
 
     Returns:
         Monthly OAS in real dollars, shape of ``benefit.monthly_amount``,
-        zero before the start month. Nothing is deducted: the repayment is
-        assessed at the December close.
+        zero up to and including the start month. Nothing is deducted: the
+        repayment is assessed at the December close.
 
     Raises:
         ValueError: If neither ``in_pay_monthly`` nor ``start_age_months`` is set.
@@ -173,10 +180,10 @@ def gross_pension_monthly(
 
     earliest = params.number("start_age.earliest_months")
     latest = params.number("start_age.latest_months")
-    effective_start = np.clip(max(benefit.start_age_months, age_at_open), earliest, latest)
+    effective_start = np.clip(max(benefit.start_age_months, age_at_open - 1), earliest, latest)
     max_at_current = _band_max(current_age_months, month_index, params)
     factor = deferral_factor(effective_start, params)
-    started = current_age_months >= effective_start
+    started = current_age_months > effective_start
     result = np.where(started, max_at_current * factor, 0.0)
     return np.broadcast_to(result, benefit.monthly_amount.shape).astype(np.float64)
 
@@ -196,19 +203,22 @@ def gross_pension_annual(
 
     Args:
         current_age_months: Age in months this month.
-        start_age_months: Age in months at which OAS started, clipped to the
-            statutory window before the started test, as
-            :func:`gross_pension_monthly` clips its effective start.
+        start_age_months: Age in months at which OAS starts, clipped to the
+            statutory window as :func:`gross_pension_monthly` clips its
+            start. The first payment is in the month after it (OAS Act
+            s.8(1), OAS Regulations s.5), so a case at the start age itself
+            is zero.
         month_index: Months since January of the scenario's start year.
         params: The ``oas`` parameter set.
 
     Returns:
-        Twelve times the monthly OAS, ``(n_paths,)``, zero before start.
+        Twelve times the monthly OAS, ``(n_paths,)``, zero up to and
+        including the start month.
     """
     earliest = params.number("start_age.earliest_months")
     latest = params.number("start_age.latest_months")
     start = np.clip(np.asarray(start_age_months, dtype=np.float64), earliest, latest)
     max_at_current = _band_max(current_age_months, month_index, params)
     factor = deferral_factor(start, params)
-    started = current_age_months >= start
+    started = current_age_months > start
     return np.asarray(np.where(started, 12 * max_at_current * factor, 0.0), dtype=np.float64)

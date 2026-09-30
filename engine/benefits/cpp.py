@@ -101,7 +101,11 @@ def pension_monthly(
     Two mutually exclusive sources, mirroring :class:`BenefitState`: a
     pension already in pay is returned unchanged from month 0 (L18, L52), or
     an elected start age and contributory history are turned into a monthly
-    amount, scaled by :func:`start_adjustment_factor`.
+    amount, scaled by :func:`start_adjustment_factor`. An elected pension is
+    paid from the month the elected age is reached, the birthday month: CPP
+    s.67(3.1) makes it payable "for each month commencing with the latest
+    of" the month the applicant reached sixty and the month the applicant
+    chose.
 
     Args:
         benefit: This person's CPP standing.

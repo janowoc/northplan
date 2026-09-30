@@ -11,9 +11,12 @@ Four refusals, all raised as :class:`StartAgeNotAllowedError`:
    benefit is already in pay.
 2. An election, for a person whose benefit is *not* in pay, below that
    person's age in whole years on 1 January of ``start_year``. An election
-   equal to that age is accepted and starts the pension at the opening.
-3. OAS already ``in_pay_monthly`` for a person younger than OAS's
-   ``start_age.earliest_months`` at the run's opening.
+   equal to that age is accepted and is first paid at the opening, except
+   an OAS election whose age in months is reached in the opening month,
+   which is first paid the month after (L54).
+3. OAS already ``in_pay_monthly`` for a person not older than OAS's
+   ``start_age.earliest_months`` at the run's opening: OAS is first paid in
+   the month after that age (L54).
 4. A ``rrif_conversion.age_years`` election above ``rrif``'s
    ``conversion_age_years``: an RRSP must already be converted to a RRIF by
    then, so the election could never take effect. An election equal to
@@ -79,11 +82,13 @@ def _check_election(
     """Case 1 then case 2 for one person's election of one benefit, on one policy.
 
     Case 2 refuses an election below the person's age in whole years at the
-    run's opening; an election equal to that age is accepted and starts the
-    pension at the opening. Does nothing when ``person.id`` has no entry in
-    ``elections`` — the schema already guarantees an entry for anyone whose
-    benefit is not in pay, and a leftover entry for someone in pay is still
-    checked by case 1, never case 2.
+    run's opening; an election equal to that age is accepted and is first
+    paid at the opening, except an OAS election whose age in months is
+    reached in the opening month, which is first paid the month after (L54).
+    Does nothing when ``person.id`` has no entry in ``elections`` — the
+    schema already guarantees an entry for anyone whose benefit is not in
+    pay, and a leftover entry for someone in pay is still checked by case 1,
+    never case 2.
     """
     if person.id not in elections:
         return
@@ -125,7 +130,9 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
        before OAS, and for each benefit the statutory window (case 1) before
        the past-start check (case 2): an election below the person's age in
        whole years at the opening is refused, and an election equal to that
-       age is accepted and starts the pension at the opening.
+       age is accepted and is first paid at the opening, except an OAS
+       election reached in the opening month, which is first paid the month
+       after (L54).
     3. After the whole loop above: for each policy in file order, a
        ``rrif_conversion.age_years`` above ``conversion_age_years`` (case 4).
 
@@ -158,13 +165,14 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
         if person.oas.in_pay_monthly is None:
             continue
         age_at_open = _age_at_open(person, scenario.start_year)
-        if age_at_open < oas_earliest:
+        if age_at_open <= oas_earliest:
             raise StartAgeNotAllowedError(
                 f"household.persons: {person.id!r} has OAS in pay "
                 f"(oas.in_pay_monthly) but is {age_at_open} months old when "
-                f"the run opens on 1 January {scenario.start_year}, younger "
+                f"the run opens on 1 January {scenario.start_year}, not older "
                 f"than start_age.earliest_months "
-                f"({_format_number(oas_earliest)}) in {params.oas.source}."
+                f"({_format_number(oas_earliest)}) in {params.oas.source}; "
+                f"OAS is first paid in the month after that age."
             )
 
     for policy in scenario.policies:

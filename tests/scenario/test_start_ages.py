@@ -242,8 +242,8 @@ def test_oas_in_pay_below_earliest_start_age_is_refused(
     assert "'a'" in message
     assert "OAS" in message
     assert "'taxable-first'" not in message
-    assert str(int(earliest)) in message
-    assert str(age_months) in message
+    assert f"{age_months} months old" in message
+    assert f"({int(earliest)})" in message
 
 
 def test_oas_in_pay_wins_over_an_out_of_window_cpp_election(
@@ -269,6 +269,47 @@ def test_oas_in_pay_wins_over_an_out_of_window_cpp_election(
     message = str(excinfo.value)
     assert "oas.in_pay_monthly" in message
     assert "'taxable-first'" not in message
+
+
+def test_oas_in_pay_exactly_at_earliest_start_age_is_refused(
+    params: ParamYear, oas_window, start_year: int
+) -> None:
+    earliest, _latest = oas_window
+    age_months = int(earliest)
+    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
+
+    values = example_values()
+    _person(values)["birth_year"] = birth_year
+    _person(values)["birth_month"] = birth_month
+    _clear_db_pensions(values)
+    _person(values)["oas"] = {"in_pay_monthly": 500.0}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "oas.in_pay_monthly" in message
+    assert f"{age_months} months old" in message
+    assert f"({int(earliest)})" in message
+    assert "first paid in the month after" in message
+
+
+def test_oas_in_pay_one_month_past_earliest_start_age_is_accepted(
+    params: ParamYear, oas_window, start_year: int
+) -> None:
+    earliest, _latest = oas_window
+    age_months = int(earliest) + 1
+    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
+
+    values = example_values()
+    _person(values)["birth_year"] = birth_year
+    _person(values)["birth_month"] = birth_month
+    _clear_db_pensions(values)
+    _person(values)["oas"] = {"in_pay_monthly": 500.0}
+    scenario = Scenario.model_validate(values)
+
+    check_start_ages(scenario, params)  # must not raise
 
 
 # --- Case 1 in a second policy only ------------------------------------------
@@ -521,23 +562,6 @@ def test_election_at_the_inclusive_window_edge_is_accepted(
     assert years * MONTHS_PER_YEAR >= age_at_open
 
     _policy(values)["elections"][field]["a"] = years
-    scenario = Scenario.model_validate(values)
-
-    check_start_ages(scenario, params)  # must not raise
-
-
-def test_oas_in_pay_exactly_at_earliest_start_age_is_accepted(
-    params: ParamYear, oas_window, start_year: int
-) -> None:
-    earliest, _latest = oas_window
-    age_months = int(earliest)
-    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
-
-    values = example_values()
-    _person(values)["birth_year"] = birth_year
-    _person(values)["birth_month"] = birth_month
-    _clear_db_pensions(values)
-    _person(values)["oas"] = {"in_pay_monthly": 500.0}
     scenario = Scenario.model_validate(values)
 
     check_start_ages(scenario, params)  # must not raise

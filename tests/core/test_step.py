@@ -23,6 +23,7 @@ import pytest
 
 from engine.accounts import lif, resp, rrif, rrsp, taxable, tfsa
 from engine.benefits import cpp as cpp_mod
+from engine.benefits.oas import deferral_factor
 from engine.core import timeline
 from engine.core.build import (
     build_deterministic_draws,
@@ -1605,6 +1606,62 @@ class TestNoIncomeAssessesZero:
         for person in closed.persons:
             np.testing.assert_allclose(person.balance_owing, 0.0)
         np.testing.assert_allclose(closed.history[-1].tax_assessed, 0.0)
+
+
+class TestBenefitFirstPaymentMonth:
+    """On the example scenario, CPP is first paid in the month the elected age is reached and
+    OAS in the month after (CPP s.67(3.1); OAS Act s.8(1)), through the step's own ages.
+    """
+
+    def _monthly_amounts(
+        self, scenario, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        person = opening_state.persons[0]
+        age_at_open = person.age_months(scenario.start_year, 1)
+        cpp_start = opening_state.elections.cpp_start_age_months[0]
+        oas_start = opening_state.elections.oas_start_age_months[0]
+        assert cpp_start is not None and oas_start is not None, "both starts must be elected"
+        cpp_month = cpp_start - age_at_open
+        oas_month = oas_start - age_at_open
+        assert cpp_month > 0, "the CPP start must fall after the opening"
+        assert oas_month > 0, "the OAS start must fall after the opening"
+        assert person.death_month_index[0] > oas_month + 1, "alive through the months checked"
+
+        policy = DoNothingPolicy(opening_state.elections, withdrawal_order)
+        state = opening_state
+        amounts = {}
+        for month_index in range(oas_month + 2):
+            state = advance_month(
+                state, draws.real_returns[month_index], policy, market, real_params
+            )
+            amounts[month_index] = (
+                float(state.persons[0].cpp.monthly_amount[0]),
+                float(state.persons[0].oas.monthly_amount[0]),
+            )
+        return amounts, cpp_month, oas_month, oas_start
+
+    def test_cpp_is_first_paid_in_the_month_the_elected_age_is_reached(
+        self, scenario, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        amounts, cpp_month, _, _ = self._monthly_amounts(
+            scenario, opening_state, draws, market, real_params, withdrawal_order
+        )
+        assert amounts[cpp_month - 1][0] == 0.0
+        assert amounts[cpp_month][0] > 0.0
+
+    def test_oas_is_first_paid_in_the_month_after_the_elected_age_is_reached(
+        self, scenario, opening_state, draws, market, real_params, withdrawal_order
+    ):
+        amounts, _, oas_month, oas_start = self._monthly_amounts(
+            scenario, opening_state, draws, market, real_params, withdrawal_order
+        )
+        second_band_from = int(real_params.oas.sequence("pension.age_bands")[1]["from_age_months"])
+        assert oas_start + 1 < second_band_from, "the first payment must fall in the first band"
+        band0 = real_params.oas.amounts("pension.age_bands.*.maximum_monthly", oas_month + 1)[0]
+        assert amounts[oas_month][1] == 0.0
+        assert amounts[oas_month + 1][1] == pytest.approx(
+            band0 * deferral_factor(oas_start, real_params.oas)
+        )
 
 
 class TestRrspAndLiraConversion:
