@@ -93,6 +93,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 70 | Seven statements still describe landed work as future | agent | — | each of the seven reads true of the tree; a re-run search finds no other |
 | 71 | RRSP-conversion tests prove their premises, and the two-person election rule is tested | agent | — | a zero opening RRSP fails each conversion test; a two-person close converts only the younger |
 | 72 | Golden harness: a reachable, tested empty cases/, and no review labels | agent | — | the README says how to reach the empty state; a test collects zero golden items from it; no review label remains |
+| 73 | Test fixtures state scenarios the load checks refuse | agent | 65 | every scenario a test builds passes the load checks or names why not; a guard enforces it |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -383,6 +384,12 @@ harness claiming that `cases/` ships empty, the empty state it still called
 valid turned out to be unreachable as described, and untested; three of the
 harness's comments also kept review labels. It follows 71 as the third small
 cleanup; nothing depends on it.
+
+73 came out of the third review round of 65. Once 65 refused a pension stated
+in pay for someone too young to receive it, 17 tests turned out to build
+scenarios the load checks refuse, most of them to switch pension income off.
+They get through only because `build_initial_state` does not run the checks.
+It follows 65, whose refusals it depends on; nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
