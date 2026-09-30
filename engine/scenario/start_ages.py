@@ -14,9 +14,11 @@ Four refusals, all raised as :class:`StartAgeNotAllowedError`:
    equal to that age is accepted and is first paid at the opening, except
    an OAS election whose age in months is reached in the opening month,
    which is first paid the month after (L54).
-3. OAS already ``in_pay_monthly`` for a person not older than OAS's
-   ``start_age.earliest_months`` at the run's opening: OAS is first paid in
-   the month after that age (L54).
+3. CPP already ``in_pay_monthly`` for a person younger than CPP's
+   ``start_age.earliest_months`` at the run's opening, or OAS already
+   ``in_pay_monthly`` for a person not older than OAS's
+   ``start_age.earliest_months``: CPP is payable from the month that age is
+   reached, OAS from the month after (L54).
 4. A ``rrif_conversion.age_years`` election above ``rrif``'s
    ``conversion_age_years``: an RRSP must already be converted to a RRIF by
    then, so the election could never take effect. An election equal to
@@ -48,11 +50,13 @@ __all__ = ["StartAgeNotAllowedError", "check_start_ages"]
 class StartAgeNotAllowedError(ScenarioError):
     """A CPP, OAS, or RRIF conversion age the parameter year does not allow.
 
-    Raised by :func:`check_start_ages` naming the person, the policy (where
-    one applies), the benefit, the elected age, and the window it was
-    checked against. Covers the RRIF conversion election too: there, it names
-    the policy, the elected age, ``conversion_age_years``, and the source it
-    was checked against.
+    Raised by :func:`check_start_ages`. For a CPP or OAS election, it names
+    the person, the policy, the benefit, the elected age, and the window or
+    the age at the opening it was checked against; for the RRIF conversion
+    election, the policy, the elected age, ``conversion_age_years``, and the
+    source it was checked against; for CPP or OAS already in pay, the person,
+    their age in months at the opening, and the earliest start age it was
+    checked against.
     """
 
 
@@ -125,7 +129,8 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
     Checks run in a fixed order and this raises on the first failure, never
     collecting more than one:
 
-    1. OAS already in pay, for each person in household order (case 3).
+    1. For each person in household order, CPP then OAS already in pay
+       (case 3).
     2. For each policy in file order, and each person in household order: CPP
        before OAS, and for each benefit the statutory window (case 1) before
        the past-start check (case 2): an election below the person's age in
@@ -146,8 +151,8 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
 
     Raises:
         ValueError: If ``params.year != scenario.start_year``.
-        StartAgeNotAllowedError: On the first election, or OAS-in-pay person,
-            the rules do not allow.
+        StartAgeNotAllowedError: On the first election, or person with CPP or
+            OAS in pay, the rules do not allow.
     """
     if params.year != scenario.start_year:
         raise ValueError(
@@ -162,10 +167,17 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
     oas_latest = params.oas.number("start_age.latest_months")
 
     for person in scenario.household.persons:
-        if person.oas.in_pay_monthly is None:
-            continue
         age_at_open = _age_at_open(person, scenario.start_year)
-        if age_at_open <= oas_earliest:
+        if person.cpp.in_pay_monthly is not None and age_at_open < cpp_earliest:
+            raise StartAgeNotAllowedError(
+                f"household.persons: {person.id!r} has CPP in pay "
+                f"(cpp.in_pay_monthly) but is {age_at_open} months old when "
+                f"the run opens on 1 January {scenario.start_year}, younger "
+                f"than start_age.earliest_months "
+                f"({_format_number(cpp_earliest)}) in {params.cpp.source}; "
+                f"CPP is first paid in the month that age is reached."
+            )
+        if person.oas.in_pay_monthly is not None and age_at_open <= oas_earliest:
             raise StartAgeNotAllowedError(
                 f"household.persons: {person.id!r} has OAS in pay "
                 f"(oas.in_pay_monthly) but is {age_at_open} months old when "

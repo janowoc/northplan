@@ -211,8 +211,9 @@ class CppEntitlement(_Base):
       the fraction of the maximum they are on course for. The engine turns it
       into an amount using the start age the policy elects.
     - ``in_pay_monthly`` — the person is already receiving CPP, and this is
-      the gross monthly amount. The start-age election no longer applies to
-      them.
+      the gross monthly amount. The start-age election no longer decides when
+      it begins; one still written for them is checked only against the
+      statutory window (``engine/scenario/start_ages.py``).
 
     Attributes:
         contributory_history: Fraction of the maximum pension earned, ``[0,
@@ -474,7 +475,9 @@ class OasEntitlement(_Base):
     started OAS — the common case, where the start-age election in
     :class:`ElectionsSpec` decides when it begins. When ``in_pay_monthly`` is
     given, the person is already receiving OAS, it is the gross monthly
-    amount, and the start-age election no longer applies to them.
+    amount, and the start-age election no longer decides when OAS begins; one
+    still written for them is checked only against the statutory window
+    (``engine/scenario/start_ages.py``).
 
     Attributes:
         in_pay_monthly: Real dollars a month, already being received: the

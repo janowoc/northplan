@@ -11,6 +11,7 @@ literals.
 
 from __future__ import annotations
 
+import copy
 import math
 from pathlib import Path
 from typing import Any
@@ -218,7 +219,7 @@ def test_oas_start_already_past_is_refused(params: ParamYear, oas_window, start_
     assert str(age_at_open_years * MONTHS_PER_YEAR) in message
 
 
-# --- Case 3: OAS already in pay, too young ----------------------------------
+# --- Case 3: CPP or OAS already in pay, too young ---------------------------
 
 
 def test_oas_in_pay_below_earliest_start_age_is_refused(
@@ -310,6 +311,104 @@ def test_oas_in_pay_one_month_past_earliest_start_age_is_accepted(
     scenario = Scenario.model_validate(values)
 
     check_start_ages(scenario, params)  # must not raise
+
+
+def test_cpp_in_pay_below_earliest_start_age_is_refused(
+    params: ParamYear, cpp_window, start_year: int
+) -> None:
+    earliest, _latest = cpp_window
+    age_months = int(earliest) - 1
+    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
+
+    values = example_values()
+    _person(values)["birth_year"] = birth_year
+    _person(values)["birth_month"] = birth_month
+    _clear_db_pensions(values)
+    _person(values)["cpp"] = {"in_pay_monthly": 900.0}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "'a'" in message
+    assert "cpp.in_pay_monthly" in message
+    assert f"{age_months} months old" in message
+    assert f"({int(earliest)})" in message
+    assert "first paid in the month that age is reached" in message
+
+
+def test_cpp_in_pay_exactly_at_earliest_start_age_is_accepted(
+    params: ParamYear, cpp_window, start_year: int
+) -> None:
+    earliest, _latest = cpp_window
+    age_months = int(earliest)
+    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
+
+    values = example_values()
+    _person(values)["birth_year"] = birth_year
+    _person(values)["birth_month"] = birth_month
+    _clear_db_pensions(values)
+    _person(values)["cpp"] = {"in_pay_monthly": 900.0}
+    scenario = Scenario.model_validate(values)
+
+    check_start_ages(scenario, params)  # must not raise
+
+
+def test_cpp_in_pay_refusal_comes_before_oas_in_pay_refusal(
+    params: ParamYear, cpp_window, oas_window, start_year: int
+) -> None:
+    """Both in pay and both too young: CPP is checked first, so its refusal wins."""
+    age_months = int(cpp_window[0]) - 1
+    assert age_months <= oas_window[0]  # so the OAS refusal would also fire
+    birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
+
+    values = example_values()
+    _person(values)["birth_year"] = birth_year
+    _person(values)["birth_month"] = birth_month
+    _clear_db_pensions(values)
+    _person(values)["cpp"] = {"in_pay_monthly": 900.0}
+    _person(values)["oas"] = {"in_pay_monthly": 500.0}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "cpp.in_pay_monthly" in message
+    assert "oas.in_pay_monthly" not in message
+
+
+def test_in_pay_refusals_run_person_by_person_in_household_order(
+    params: ParamYear, cpp_window, oas_window, start_year: int
+) -> None:
+    """``a``'s OAS refusal wins over ``b``'s CPP refusal: each person's checks run in turn."""
+    values = example_values()
+    _clear_db_pensions(values)
+    person_b = copy.deepcopy(_person(values))
+    person_b["id"] = "b"
+    b_age_months = int(cpp_window[0]) - 1
+    person_b["birth_year"], person_b["birth_month"] = _birth_for_age_at_open(
+        start_year, b_age_months
+    )
+    person_b["cpp"] = {"in_pay_monthly": 900.0}
+    person_b["oas"] = {"in_pay_monthly": 500.0}
+
+    a_age_months = int(oas_window[0]) - 1
+    _person(values)["birth_year"], _person(values)["birth_month"] = _birth_for_age_at_open(
+        start_year, a_age_months
+    )
+    _person(values)["oas"] = {"in_pay_monthly": 500.0}
+    values["household"]["persons"].append(person_b)
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError) as excinfo:
+        check_start_ages(scenario, params)
+
+    message = str(excinfo.value)
+    assert "'a'" in message
+    assert "oas.in_pay_monthly" in message
+    assert "cpp.in_pay_monthly" not in message
 
 
 # --- Case 1 in a second policy only ------------------------------------------

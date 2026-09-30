@@ -110,7 +110,8 @@ def prepare_run(
             schema refuses.
         engine.params.loader.ParamError: A subclass, from ``load_year``.
         engine.scenario.start_ages.StartAgeNotAllowedError: A CPP, OAS, or
-            RRIF conversion election the parameter year does not allow.
+            RRIF conversion age the parameter year does not allow, including
+            a CPP or OAS pension in pay for someone too young to receive it.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or
             household the life table cannot represent.
     """
