@@ -174,8 +174,9 @@ def couple_opening_state(couple_scenario, couple_draws, couple_mortality):
 def _two_person_scenario(scenario: Scenario) -> Scenario:
     """``scenario`` (the example) with a second person and a second beneficiary added.
 
-    Person ``b`` is a copy of person ``a`` with both CPP and OAS already in pay (so no
-    election is needed for them) and the same account balances/room. Beneficiary ``child2``
+    Person ``b`` is a copy of person ``a``, born in 1958 rather than 1966 so that they are old
+    enough to receive CPP and OAS, with both already in pay (so no election is needed for
+    them) and the same account balances/room. Beneficiary ``child2``
     is a copy of ``child1``, still subscribed to person ``a``. Neither committed scenario has
     two persons who both hold an RRSP/TFSA/taxable account, or two RESP beneficiaries, which
     the contribution component's equal-split behaviour needs to exercise. Built by dict
@@ -186,6 +187,7 @@ def _two_person_scenario(scenario: Scenario) -> Scenario:
 
     person_b = copy.deepcopy(values["household"]["persons"][0])
     person_b["id"] = "b"
+    person_b["birth_year"] = 1958
     person_b["cpp"] = {"in_pay_monthly": 500.0}
     person_b["oas"] = {"in_pay_monthly": 500.0}
     person_b["employment"] = []

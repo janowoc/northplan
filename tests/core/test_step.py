@@ -55,7 +55,7 @@ from engine.mc.simulate import run
 from engine.params.loader import load_year
 from engine.policy.base import Transfer
 from engine.scenario import LifAccount, load_scenario
-from engine.scenario.schema import Scenario
+from engine.scenario.schema import CppEntitlement, OasEntitlement, Scenario
 from engine.tax import federal, withholding
 from engine.tax.combined import household_assessment, person_assessment
 
@@ -725,11 +725,15 @@ class TestPensionCreditFill:
         # SYNTHETIC birth date: old enough to be at/above the eligibility age at year end.
         # db_pensions=() keeps eligible pension income exactly zero before any RRIF/LIF
         # withdrawal, so the "spreading" arithmetic below has no other term to account for.
+        # CPP and OAS are stated in pay at zero: at 76 no start-age election is valid, and
+        # no claim here reads either.
         old = person_a.model_copy(
             update={
                 "id": "old",
                 "birth_year": 1950,
                 "birth_month": 1,
+                "cpp": CppEntitlement(in_pay_monthly=0.0),
+                "oas": OasEntitlement(in_pay_monthly=0.0),
                 "db_pensions": (),
                 "accounts": person_a.accounts.model_copy(
                     update={
@@ -745,6 +749,8 @@ class TestPensionCreditFill:
                 "id": "old_lif",
                 "birth_year": 1950,
                 "birth_month": 1,
+                "cpp": CppEntitlement(in_pay_monthly=0.0),
+                "oas": OasEntitlement(in_pay_monthly=0.0),
                 "db_pensions": (),
                 "accounts": person_a.accounts.model_copy(
                     update={
@@ -767,8 +773,8 @@ class TestPensionCreditFill:
         elections = policy_spec.elections
         new_elections = elections.model_copy(
             update={
-                "cpp_start_age_years": {"old": 65, "old_lif": 65},
-                "oas_start_age_years": {"old": 65, "old_lif": 65},
+                "cpp_start_age_years": {},
+                "oas_start_age_years": {},
             }
         )
         new_policy = policy_spec.model_copy(update={"elections": new_elections})
@@ -2220,7 +2226,15 @@ class TestRrspRoomZeroAfterConversion:
         _, rrif_age, _ = self._statutory_age_and_year(scenario, real_params)
         person_a = scenario.household.persons[0]
         shifted_birth_year = scenario.start_year - (rrif_age + 1)
-        new_person = person_a.model_copy(update={"birth_year": shifted_birth_year})
+        # At this age the example's elections at 65, and its grid's CPP elections at 60
+        # and 65, are already past, so CPP and OAS are stated in pay, at zero.
+        new_person = person_a.model_copy(
+            update={
+                "birth_year": shifted_birth_year,
+                "cpp": CppEntitlement(in_pay_monthly=0.0),
+                "oas": OasEntitlement(in_pay_monthly=0.0),
+            }
+        )
         assert (
             timeline.age_at_end_of_year(
                 shifted_birth_year, person_a.birth_month, scenario.start_year
@@ -2246,7 +2260,15 @@ class TestRrspRoomZeroAfterConversion:
         _, rrif_age, _ = self._statutory_age_and_year(scenario, real_params)
         person_a = scenario.household.persons[0]
         shifted_birth_year = scenario.start_year - rrif_age
-        new_person = person_a.model_copy(update={"birth_year": shifted_birth_year})
+        # At this age the example's elections at 65, and its grid's CPP elections at 60
+        # and 65, are already past, so CPP and OAS are stated in pay, at zero.
+        new_person = person_a.model_copy(
+            update={
+                "birth_year": shifted_birth_year,
+                "cpp": CppEntitlement(in_pay_monthly=0.0),
+                "oas": OasEntitlement(in_pay_monthly=0.0),
+            }
+        )
         assert (
             timeline.age_at_end_of_year(
                 shifted_birth_year, person_a.birth_month, scenario.start_year

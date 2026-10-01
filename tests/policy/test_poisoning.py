@@ -43,6 +43,8 @@ _CASH_AFTER_FLOWS = (-3_000.0, -50_000.0, -5_000_000.0, 3_000.0, 80_000.0)
 def _build_scenario(example_values, build_from_values):
     values = example_values()
     person_a = values["household"]["persons"][0]
+    # 67 at the opening: old enough for the CPP and OAS stated in pay below. Person b is a copy.
+    person_a["birth_year"] = 1958
     person_a["cpp"] = {"in_pay_monthly": 1000.0}
     person_a["oas"] = {"in_pay_monthly": 700.0}
     person_a.pop("employment", None)

@@ -695,8 +695,10 @@ def test_gross_up_crosses_a_withholding_band_edge_end_to_end(example_values, bui
     """
     values = example_values()
     person = values["household"]["persons"][0]
-    person["cpp"] = {"in_pay_monthly": 0}
-    person["oas"] = {"in_pay_monthly": 0}
+    # Not yet started, and paying nothing in this one January: CPP has no contributory
+    # history, and OAS is elected at 65, in 2031.
+    person["cpp"] = {"contributory_history": 0}
+    person.pop("oas", None)
     person.pop("employment", None)
     person.pop("db_pensions", None)
     person["accounts"] = {
@@ -718,8 +720,8 @@ def test_gross_up_crosses_a_withholding_band_edge_end_to_end(example_values, bui
         "taxable_ceiling_bracket": None,
         "fill_pension_credit": False,
     }
-    policy["elections"]["cpp_start_age_years"] = {}
-    policy["elections"]["oas_start_age_years"] = {}
+    policy["elections"]["cpp_start_age_years"] = {"a": 65}
+    policy["elections"]["oas_start_age_years"] = {"a": 65}
     del values["grid"]
 
     scenario, state = build_from_values(values, n_paths=1)

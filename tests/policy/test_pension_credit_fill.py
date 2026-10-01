@@ -51,8 +51,10 @@ def _build_scenario(example_values, build_from_values, *, fill_pension_credit: b
     person = values["household"]["persons"][0]
     person["birth_year"] = _BIRTH_YEAR
     person["birth_month"] = _BIRTH_MONTH
-    person["cpp"] = {"in_pay_monthly": 0}
-    person["oas"] = {"in_pay_monthly": 0}
+    # Not yet started, and paying nothing in the years this test reads: CPP has no
+    # contributory history, and OAS is elected at 70, in 2032.
+    person["cpp"] = {"contributory_history": 0}
+    person.pop("oas", None)
     person.pop("employment", None)
     person.pop("db_pensions", None)
     person["accounts"] = {
@@ -75,8 +77,8 @@ def _build_scenario(example_values, build_from_values, *, fill_pension_credit: b
         "taxable_ceiling_bracket": None,
         "fill_pension_credit": fill_pension_credit,
     }
-    policy["elections"]["cpp_start_age_years"] = {}
-    policy["elections"]["oas_start_age_years"] = {}
+    policy["elections"]["cpp_start_age_years"] = {"a": 70}
+    policy["elections"]["oas_start_age_years"] = {"a": 70}
     del values["grid"]
 
     scenario, _state = build_from_values(values, n_paths=1)

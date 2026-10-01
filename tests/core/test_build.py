@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import enum
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -559,6 +560,10 @@ class TestMonthOffset:
 class TestAlreadyInProgress:
     """Section B: a negative month index means 'already under way', not an error."""
 
+    #: 787 months (65 years 7 months) at the opening: old enough for CPP and OAS to be in
+    #: pay, and an election at 65 is not yet past.
+    _IN_PAY_BIRTH = MappingProxyType({"birth_year": 1960, "birth_month": 6})
+
     def test_employment_band_starting_before_the_run(self, scenario) -> None:
         person_a = scenario.household.persons[0]
         earlier_band = person_a.employment[0].model_copy(update={"from_year": 2015})
@@ -658,7 +663,7 @@ class TestAlreadyInProgress:
         assert resp.education_start_month_index < 0
 
     def test_cpp_already_in_pay(self, scenario) -> None:
-        person_a = scenario.household.persons[0]
+        person_a = scenario.household.persons[0].model_copy(update=self._IN_PAY_BIRTH)
         in_pay_cpp = person_a.cpp.model_copy(
             update={"contributory_history": None, "in_pay_monthly": 1200.0}
         )
@@ -677,7 +682,9 @@ class TestAlreadyInProgress:
         assert state.elections.cpp_start_age_months == (None,)
 
     def test_oas_already_in_pay(self, scenario) -> None:
-        person_a = scenario.household.persons[0]
+        person_a = scenario.household.persons[0].model_copy(update=self._IN_PAY_BIRTH)
+        # CPP is not in pay here, and the grid's CPP election at 60 is below this person's age.
+        scenario = scenario.model_copy(update={"grid": MappingProxyType({})})
         in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
         new_person = person_a.model_copy(update={"oas": in_pay_oas})
         new_household = scenario.household.model_copy(update={"persons": (new_person,)})
@@ -695,7 +702,9 @@ class TestAlreadyInProgress:
 
     def test_oas_already_in_pay_with_no_election_at_all(self, scenario) -> None:
         """Proves the builder never looks up an OAS election for a person already in pay."""
-        person_a = scenario.household.persons[0]
+        person_a = scenario.household.persons[0].model_copy(update=self._IN_PAY_BIRTH)
+        # CPP is not in pay here, and the grid's CPP election at 60 is below this person's age.
+        scenario = scenario.model_copy(update={"grid": MappingProxyType({})})
         in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
         new_person = person_a.model_copy(update={"oas": in_pay_oas})
         new_household = scenario.household.model_copy(update={"persons": (new_person,)})
@@ -715,7 +724,9 @@ class TestAlreadyInProgress:
 
     def test_oas_election_looked_up_only_for_the_person_not_yet_in_pay(self, scenario) -> None:
         """Two persons, only one in pay: the builder must key the election by id."""
-        person_a = scenario.household.persons[0]
+        person_a = scenario.household.persons[0].model_copy(update=self._IN_PAY_BIRTH)
+        # CPP is not in pay here, and the grid's CPP election at 60 is below this person's age.
+        scenario = scenario.model_copy(update={"grid": MappingProxyType({})})
         in_pay_oas = person_a.oas.model_copy(update={"in_pay_monthly": 800.0})
         person_a = person_a.model_copy(update={"oas": in_pay_oas})
         person_b = person_a.model_copy(update={"id": "b", "oas": OasEntitlement()})
@@ -742,7 +753,16 @@ class TestAlreadyInProgress:
 
 class TestSpendingMonthlySelection:
     def test_start_year_past_the_second_band(self, scenario) -> None:
-        new_scenario = scenario.model_copy(update={"start_year": 2033})
+        # Both bands begin before the 2026 opening, so the later one is in effect.
+        new_spending = scenario.spending.model_copy(
+            update={
+                "schedule": (
+                    SpendingBand(from_year=2019, annual=80_000.0),
+                    SpendingBand(from_year=2025, annual=65_000.0),
+                )
+            }
+        )
+        new_scenario = scenario.model_copy(update={"spending": new_spending})
         state = build_initial_state(new_scenario, n_paths=N_PATHS)
         assert state.spending_monthly == pytest.approx(65_000.0 / 12.0)
 

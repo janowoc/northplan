@@ -59,6 +59,7 @@ addopts = [
 markers = [
     "golden: expected values supplied by the human in tests/golden/cases. Never edit one to make a test pass.",
     "characterization: behaviour snapshot. Regenerate only on explicit human instruction.",
+    "unchecked_scenario(reason): this test builds a scenario or policy the load checks refuse, for the reason given. Read by tests/conftest.py.",
 ]
 filterwarnings = ["error"]
 # A parametrization that collects nothing is skipped by default, so a suite
