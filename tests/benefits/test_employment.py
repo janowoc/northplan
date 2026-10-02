@@ -142,7 +142,7 @@ def test_base_plus_enhanced_equals_tier1_plus_tier2_with_tier2_nonzero(cpp) -> N
     income_ytd = tier1_ceiling - 2000.0
     monthly_income = 5000.0
     total = income_ytd + monthly_income
-    assert total > tier1_ceiling  # tier 2 must actually be non-zero here
+    assert tier1_ceiling < total < tier2_ceiling  # inside tier 2, below its ceiling
 
     base, enhanced = cpp_contributions_monthly(monthly_income, income_ytd, JANUARY, cpp)
 
