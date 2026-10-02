@@ -21,8 +21,10 @@
 # tfsa.yaml, and resp.yaml.
 #
 # Read by: engine/benefits/employment.py (ei)
+#          engine/core/step.py (eligible_pension_income, credits.pension_income_amount_annual)
 #          engine/core/timeline.py (is_filing_month)
-#          engine/tax/combined.py (pension_splitting)
+#          engine/policy/withdrawal.py (brackets.edges_annual)
+#          engine/tax/combined.py (pension_splitting, eligible_pension_income)
 #          engine/tax/federal.py
 #          engine/tax/provincial.py (non_refundable_credits)
 #          engine/tax/withholding.py (ei)
@@ -142,11 +144,15 @@ investment_income:
   # counterpart.
   eligible_dividend_credit_rate_of_gross_up: 0.54545454       # s.121(b)(iv) => (6/11), truncated
 
-# Pension income
-
-# DB pension at any age;
-# RRIF and LIF withdrawals from the year the transferor is 65 at year end;
-# never CPP, OAS, or RRSP lump sums.
+# --- Pension income ---------------------------------------------------------
+# Eligible pension income: DB pension at any age; RRIF and LIF withdrawals
+# from the year the recipient is 65 at year end; never CPP, OAS, or RRSP lump
+# sums. Read by engine/tax/federal.py::eligible_pension_income.
+#
+# engine/tax/combined.py::household_assessment allows the split in the year
+# of the first death, pro-rated by the months married (L41). An under-65
+# transferee's credit counts at most the split of the DB pension (L15). Both
+# age tests use the age on 31 December (L41).
 
 # 2026-09-06 https://www.canada.ca/en/revenue-agency/services/tax/individuals/topics/pension-income-splitting.html
 pension_splitting:
