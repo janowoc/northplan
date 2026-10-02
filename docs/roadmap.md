@@ -94,6 +94,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 71 | RRSP-conversion tests prove their premises, and the two-person election rule is tested | agent | — | a zero opening RRSP fails each conversion test; a two-person close converts only the younger |
 | 72 | Golden harness: a reachable, tested empty cases/, and no review labels | agent | — | the README says how to reach the empty state; a test collects zero golden items from it; no review label remains |
 | 73 | Test fixtures state scenarios the load checks refuse | agent | 65 | every scenario a test builds passes the load checks or names why not; a guard enforces it |
+| 74 | Comments and test docstrings cite review labels a reader cannot see | agent | — | no review label remains in `engine/` or `tests/`; each `Requirement N` names its issue or is gone |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -390,6 +391,12 @@ in pay for someone too young to receive it, 17 tests turned out to build
 scenarios the load checks refuse, most of them to switch pension income off.
 They get through only because `build_initial_state` does not run the checks.
 It follows 65, whose refusals it depends on; nothing depends on it.
+
+74 came out of the third review round of 66. The file 66 extended still cites
+review labels from earlier work (`D-A`, `R5`, `round 3`) that a reader of the
+repo has no way to look up; two more are in `engine/core/step.py` and two in
+`tests/core/test_step.py`. 72 did the same for `tests/golden/`. It sits right
+after 66 as a small cleanup between pieces of work; nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
