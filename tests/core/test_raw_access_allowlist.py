@@ -148,7 +148,7 @@ class TestEveryRawAccessIsAllowlisted:
 
 class TestTheGuardBites:
     def test_an_unlisted_access_on_a_synthetic_module_is_reported(self) -> None:
-        """The success criterion: a new .raw access is not allowlisted until it is added.
+        """A new .raw access is not allowlisted until it is added.
 
         A synthetic source string, run through the same collector the real test uses, keyed
         against a module path that cannot appear in the real tree — the real ``ALLOWLIST`` does

@@ -96,7 +96,7 @@ def withdrawal_order(scenario):
 
 
 class TestResultRows:
-    """Requirement 12: a row per December close, and the run steps every month."""
+    """A row per December close, and the run steps every month."""
 
     def test_full_run_row_and_month_counts(
         self, opening_state, draws, market, real_params, withdrawal_order
@@ -113,7 +113,7 @@ class TestResultRows:
 
 
 class TestRunRefusals:
-    """Requirement 13: every documented refusal actually refuses."""
+    """Every documented refusal actually refuses."""
 
     def test_death_not_drawn_is_refused(
         self, scenario, draws, market, real_params, withdrawal_order
@@ -187,7 +187,7 @@ class TestRunRefusals:
 
 
 class TestShapes:
-    """Requirement 15: the walker passes and SimulationResult carries the documented shapes."""
+    """The walker passes and SimulationResult carries the documented shapes."""
 
     def test_walker_passes_and_result_arrays_have_documented_shapes(
         self, scenario, market, mortality, withdrawal_order
@@ -223,7 +223,7 @@ class TestShapes:
 
 
 class TestDeathYear:
-    """Requirement 11: ``death_year`` matches the forced/drawn death month, per person."""
+    """``death_year`` matches the forced/drawn death month, per person."""
 
     def test_death_year_matches_forced_death_months(
         self, scenario, market, mortality, real_params, withdrawal_order
@@ -245,8 +245,8 @@ class TestDeathYear:
 
 
 class TestRunStopsAtTheFinalDeath:
-    """Requirement 11 (D-A): the run stops at the first December on or after the final
-    death, or at ``n_months``, whichever comes first -- not at the death month itself.
+    """The run stops at the first December on or after the final death, or at
+    ``n_months``, whichever comes first -- not at the death month itself.
     """
 
     FORCED_DEATH_MONTH_INDEX = 15
@@ -284,8 +284,8 @@ class TestRunStopsAtTheFinalDeath:
     def test_the_final_death_years_own_row_matches_the_trace(
         self, scenario, market, mortality, real_params, withdrawal_order
     ):
-        """D-A's missing leg of requirement 12: the death year's own December is reached
-        by the draws here, so it gets a row, and that row sums the trace exactly.
+        """The death year's own December is reached by the draws here, so the year of the
+        final death gets a row, and that row sums the trace exactly.
         """
         state, draws = self._forced_state(scenario, market, mortality)
         recorder = RecordingPolicy(DoNothingPolicy(state.elections, withdrawal_order))
@@ -306,7 +306,7 @@ class TestRunStopsAtTheFinalDeath:
 
 
 class TestPersonYearCounts:
-    """Requirement 11 / R5: ``gis_band_person_years`` and ``living_person_years``."""
+    """``gis_band_person_years`` and ``living_person_years``."""
 
     def test_on_the_seeded_couple(
         self,
@@ -326,7 +326,7 @@ class TestPersonYearCounts:
         recorder = RecordingPolicy(DoNothingPolicy(state.elections, couple_withdrawal_order))
         result = run(state, recorder, draws, couple_market, couple_real_params)
 
-        assert result.gis_band_person_years.sum() > 0  # guard (R5)
+        assert result.gis_band_person_years.sum() > 0  # guard
 
         # living_person_years is derived purely from death_month_index and result.years,
         # both known exactly regardless of when the run stopped -- no missing data, for
@@ -362,11 +362,12 @@ class TestPersonYearCounts:
     def test_a_december_final_death_does_not_count_that_december(
         self, scenario, market, mortality, real_params, withdrawal_order
     ):
-        """R5, corrected (round 3, T4): k = a December index + 1 cannot distinguish
-        ``>`` from ``>=`` (both agree there). Force the death to k = 11, December of
-        the start year itself: ``alive_new = death_month_index > m`` is false that
-        same December, so it must not count as a living year. The same run also
-        covers D-A's own stopping rule when the final death falls in December.
+        """A death at k = a December index + 1 cannot distinguish ``>`` from ``>=``
+        (both agree there). Force the death to k = 11, December of the start year
+        itself: ``alive_new = death_month_index > m`` is false that same December, so
+        it must not count as a living year. The same run also covers the run stopping
+        at the first December on or after the final death when that death falls in
+        December.
         """
         n_paths = 1
         draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)

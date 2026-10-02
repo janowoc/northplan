@@ -524,9 +524,9 @@ class TestFiniteGuard:
 
 
 class TestCountValueErrors:
-    """An empty draw set is the failure issue 11's review found for
-    ``n_paths=0``: every downstream shape assertion passes vacuously against
-    it, so it must be refused here rather than left to be discovered later."""
+    """An empty draw set (``n_paths=0``, for one) is a failure: every
+    downstream shape assertion passes vacuously against it, so it must be
+    refused here rather than left to be discovered later."""
 
     def test_n_months_below_one(self) -> None:
         with pytest.raises(ValueError, match="n_months"):
@@ -548,12 +548,12 @@ class TestDeterministicCountValueErrors:
     """
 
     def test_n_months_below_one(self) -> None:
-        """A run with zero months, silently accepted before this guard."""
+        """A run with zero months, which would otherwise be silently accepted."""
         with pytest.raises(ValueError, match="n_months"):
             deterministic(0, TWO_ASSET_MEANS, n_persons=1)
 
     def test_n_persons_below_one(self) -> None:
-        """A household with no people, silently accepted before this guard."""
+        """A household with no people, which would otherwise be silently accepted."""
         with pytest.raises(ValueError, match="n_persons"):
             deterministic(6, TWO_ASSET_MEANS, n_persons=0)
 

@@ -104,7 +104,8 @@ def test_cpp_contributions_monthly_returns_named_tuple_and_unpacks(cpp) -> None:
 
 def test_month_crossing_first_ceiling_matches_closed_form(cpp) -> None:
     exemption, tier1_ceiling, tier2_ceiling, _, employee_rate, tier2_rate = _annual_params(cpp)
-    # income_ytd below Y1; income_ytd + monthly_income lands strictly between Y1 and Y2.
+    # income_ytd below tier1_ceiling; income_ytd + monthly_income lands strictly between
+    # tier1_ceiling and tier2_ceiling.
     income_ytd = exemption + 1000.0
     assert income_ytd < tier1_ceiling
     monthly_income = (tier1_ceiling - income_ytd) + 5000.0
@@ -137,7 +138,7 @@ def test_first_month_crossing_basic_exemption(cpp) -> None:
 
 def test_base_plus_enhanced_equals_tier1_plus_tier2_with_tier2_nonzero(cpp) -> None:
     exemption, tier1_ceiling, tier2_ceiling, _, employee_rate, tier2_rate = _annual_params(cpp)
-    # income_ytd just below Y1, monthly_income pushes the total past Y1 into tier 2.
+    # income_ytd just below tier1_ceiling, monthly_income pushes the total past it into tier 2.
     income_ytd = tier1_ceiling - 2000.0
     monthly_income = 5000.0
     total = income_ytd + monthly_income
@@ -175,7 +176,7 @@ def test_year_at_tier1_ceiling_sums_to_tier1_maximum_tier2_zero(cpp) -> None:
 
 def test_high_income_reaches_ceiling_in_a_later_month_then_zero(cpp) -> None:
     exemption, tier1_ceiling, tier2_ceiling, _, employee_rate, tier2_rate = _annual_params(cpp)
-    # Chosen so the Y2 ceiling is crossed partway through a later month, not the first.
+    # Chosen so tier2_ceiling is crossed partway through a later month, not the first.
     monthly_income = tier2_ceiling / 3.5
     income_ytd = 0.0
     crossing_seen = False

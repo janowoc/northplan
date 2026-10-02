@@ -899,9 +899,9 @@ def _check_the_table_falls_to_a_single_trough_then_rises(name: str, params: Para
     decision and not this check.
 
     The trough is the *last* age achieving the minimum, not the first: both
-    published tables carry a tie plateau at the bottom (issue 27's evidence:
-    ages 8-9 for ``f``, 7-10 for ``m``), so the descent must tolerate equality
-    on the way down or a multi-age plateau would fail for the wrong reason.
+    published tables carry a tie plateau at the bottom (ages 8-9 for ``f``,
+    7-10 for ``m``), so the descent must tolerate equality on the way down or
+    a multi-age plateau would fail for the wrong reason.
 
     The ascent tolerates equality too, but only up to the top of
     ``_SHAPE_TROUGH_BOUND``. Around the trough a five-decimal table steps by

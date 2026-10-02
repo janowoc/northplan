@@ -141,7 +141,7 @@ def couple_withdrawal_order(couple_scenario):
 def _force_death(state, index: int, month_index: int):
     """``state`` with ``persons[index].death_month_index`` forced to ``month_index`` on every
     path -- ``alive`` at the opening is untouched (stays ``True``, since every forced
-    ``month_index`` used below is strictly positive), per the brief's forcing recipe.
+    ``month_index`` used below is strictly positive).
     """
     persons = list(state.persons)
     person = persons[index]
@@ -332,7 +332,7 @@ def _synthetic_resp_params(scenario, real_params, tmp_path, *, rate: float = 0.3
 
 
 class TestCashIdentityDoNothing:
-    """Requirement 1: cash identities hold every month, on the do-nothing policy."""
+    """Cash identities hold every month, on the do-nothing policy."""
 
     def test_identities_hold_and_floor_fires_and_cash_chains(
         self, opening_state, draws, market, real_params, withdrawal_order
@@ -346,7 +346,7 @@ class TestCashIdentityDoNothing:
         floor_fired = False
         for record, (seen_state, seen_context) in zip(result.trace, recorder.calls, strict=True):
             _assert_identities_hold(record)
-            # Requirement 7: the state a policy is shown really does carry cash equal to
+            # The state a policy is shown really does carry cash equal to
             # context.cash_after_flows -- the two are supposed to be the same number by
             # construction (Policy.decide's own docstring says so), not merely close.
             np.testing.assert_array_equal(seen_state.cash.balance, seen_context.cash_after_flows)
@@ -362,7 +362,7 @@ class TestCashIdentityDoNothing:
 
 
 class TestCashIdentityScripted:
-    """Requirement 2: identities still hold once transfers actually move money."""
+    """Identities still hold once transfers actually move money."""
 
     def test_identities_hold_with_a_scripted_policy(
         self, opening_state, draws, market, real_params, withdrawal_order
@@ -422,7 +422,7 @@ class TestCashIdentityScripted:
 
 
 class TestAnnualGrantTiming:
-    """Requirement 3: no grant at month zero, full grant at month twelve."""
+    """No grant at month zero, full grant at month twelve."""
 
     def test_no_grant_at_month_zero_full_grant_at_month_twelve(
         self, scenario, opening_state, draws, market, real_params, withdrawal_order
@@ -467,7 +467,7 @@ class TestAnnualGrantTiming:
 
 
 class TestTfsaRestorationLag:
-    """Requirement 4: a TFSA withdrawal restores room in the following January, not sooner."""
+    """A TFSA withdrawal restores room in the following January, not sooner."""
 
     def test_room_is_unchanged_until_the_following_january(
         self, scenario, opening_state, draws, market, real_params, withdrawal_order
@@ -511,7 +511,7 @@ class TestTfsaRestorationLag:
 
 
 class TestRrifMinimumOutByDecember:
-    """Requirement 5: the RRIF minimum is zero all year and forced out by December."""
+    """The RRIF minimum is zero all year and forced out by December."""
 
     def test_forced_out_only_in_december(self, scenario, market, mortality, withdrawal_order):
         rrif_balance = 300_000.0  # SYNTHETIC: exercises the minimum, not a real figure.
@@ -551,7 +551,7 @@ class TestRrifMinimumOutByDecember:
 
 
 class TestLif:
-    """Requirement 5: the LIF's own minimum, maximum, and how the step respects both."""
+    """The LIF's own minimum, maximum, and how the step respects both."""
 
     # SYNTHETIC balance: within the AB maximum table's age range for person a (age ~60 at
     # the example's start year), and small enough that "requesting more than the maximum
@@ -633,8 +633,8 @@ class TestLif:
     ):
         new_scenario, new_person = self._lif_scenario(scenario)
         # Strip every other asset and all income so the floor has nothing else to draw on
-        # and must lean on the LIF every month it fires (requirement 7's pattern, applied
-        # to a household that still holds a LIF).
+        # and must lean on the LIF every month it fires (the pattern ``_broke_scenario``
+        # uses, applied to a household that still holds a LIF).
         accounts = new_person.accounts.model_copy(
             update={
                 "cash": new_person.accounts.cash.model_copy(update={"balance": 0.0}),
@@ -703,14 +703,13 @@ class TestLif:
 
 
 class TestPensionCreditFill:
-    """Requirement 6, and decision B: the fill nets out what is left of the LIF minimum.
+    """The fill nets out what is left of the LIF minimum.
 
     Split into two households, each a size ``household_assessment`` (and therefore
     ``close_year``, which every ``run()`` below now reaches every December) actually accepts:
     ``young`` alone (below the eligibility age, never filled), and a couple of ``old`` (at/above
     it, RRIF only) and ``old_lif`` (at/above it, a RRIF *and* an AB LIF whose own minimum is
-    below the target -- B's case). The three original claims, and every expected expression,
-    are unchanged; only which run and which person index each one reads has moved.
+    below the target).
     """
 
     def _build_couple(self, scenario):
@@ -718,7 +717,7 @@ class TestPensionCreditFill:
         # SYNTHETIC balances: small enough that the ordinary annual minimum stays well below
         # the pension credit target, so the fill logic -- not the mandatory minimum -- is
         # what reaches the target; the LIF balance is small enough its own minimum is below
-        # the target too, per decision B.
+        # the target too.
         old_rrif_balance = 10_000.0
         old_lif_lif_balance = 5_000.0
 
@@ -916,7 +915,7 @@ class TestPensionCreditFill:
 
 
 def _broke_scenario(scenario, *, education_active: bool):
-    """A copy of the example household with no income and no assets (requirements 7-8)."""
+    """A copy of the example household with no income and no assets."""
     person_a = scenario.household.persons[0]
     zero_accounts = person_a.accounts.model_copy(
         update={
@@ -954,7 +953,7 @@ def _broke_scenario(scenario, *, education_active: bool):
 
 
 class TestDepletion:
-    """Requirement 7: no income and no assets depletes from month zero."""
+    """No income and no assets depletes from month zero."""
 
     def test_depleted_from_month_zero(self, scenario, market, mortality, withdrawal_order):
         new_scenario = _broke_scenario(scenario, education_active=False)
@@ -977,7 +976,7 @@ class TestDepletion:
 
 
 class TestWriteOffCap:
-    """Requirement 8: a deficit larger than the month's spending is only partly written off."""
+    """A deficit larger than the month's spending is only partly written off."""
 
     def test_spending_cut_is_capped_and_spending_achieved_never_negative(
         self, scenario, market, mortality, withdrawal_order
@@ -1001,7 +1000,7 @@ class TestWriteOffCap:
 
 
 class TestTransferRefusal:
-    """Requirement 9: every malformed transfer is refused, naming it, before anything moves.
+    """Every malformed transfer is refused, naming it, before anything moves.
 
     Every ``match=`` below is a phrase that only ``_validate_transfer`` produces -- not just
     "raises a ValueError", which a completely different bug could also do -- and every message
@@ -1135,8 +1134,8 @@ class TestTransferRefusal:
     def test_resp_contribution_after_the_education_window_has_ended(
         self, opening_state, draws, market, real_params, withdrawal_order
     ):
-        # Decision C: month_index >= education_start_month_index + education_months refuses
-        # an RESP contribution, wound up or not. Scripted for the first month after the
+        # An RESP contribution at month_index >= education_start_month_index +
+        # education_months is refused, wound up or not. Scripted for the first month after the
         # window closes, and run through the whole household via run() -- no test may
         # drive advance_month/advance_month_traced in a loop over months.
         resp_state = opening_state.beneficiaries[0].resp
@@ -1152,7 +1151,7 @@ class TestTransferRefusal:
 
 
 class TestWithdrawalOrderRefusal:
-    """Requirement 3 (review): ``policy.withdrawal_order()`` is validated too."""
+    """``policy.withdrawal_order()`` is validated too."""
 
     def test_a_repeated_kind_is_refused(self, opening_state, draws, market, real_params):
         policy = DoNothingPolicy(opening_state.elections, ("rrsp", "rrsp"))
@@ -1171,7 +1170,7 @@ class TestWithdrawalOrderRefusal:
 
 
 class TestContributionCappedAtCash:
-    """Requirement 10: a contribution larger than cash contributes only the cash, no floor."""
+    """A contribution larger than cash contributes only the cash, no floor."""
 
     def test_contribution_is_capped_at_cash_and_the_floor_does_not_fire(
         self, opening_state, draws, market, real_params, withdrawal_order
@@ -1191,7 +1190,7 @@ class TestContributionCappedAtCash:
 
 
 class TestTaxableGrowthExact:
-    """Requirement 11: taxable growth and its ledger entries match the account arithmetic."""
+    """Taxable growth and its ledger entries match the account arithmetic."""
 
     def test_growth_matches_distributions_monthly(
         self, opening_state, draws, market, real_params, withdrawal_order
@@ -1223,15 +1222,15 @@ class TestTaxableGrowthExact:
 
 
 class TestWindUpRunsOnce:
-    """Review finding 2 (round 3): ``resp.wind_up`` itself is called exactly once per
-    beneficiary, and its cash effect lands only in the month the window closes.
+    """``resp.wind_up`` itself is called exactly once per beneficiary, and its cash effect
+    lands only in the month the window closes.
 
     On the real example, under the deterministic draws, the plan's value drains to
     exactly zero by month 113 -- before the window even closes at month 140 -- so a
-    repeated wind-up call would have been invisible to ``wind_up_to_cash`` there (round
-    2's version of this test could not have caught that bug: it watched the cash effect,
-    which was already zero every month, and the ``wound_up`` flag, which a second no-op
-    call would not have disturbed either). This variant shrinks the annual education cost
+    repeated wind-up call would have been invisible to ``wind_up_to_cash`` there. A test
+    that watched the cash effect, which was already zero every month, and the
+    ``wound_up`` flag, which a second no-op call would not disturb either, could not
+    catch that bug. This variant shrinks the annual education cost
     so the plan is still funded when the window closes, and wraps ``resp.wind_up`` itself
     with a counting monkeypatch (``engine.core.step`` calls it through the ``resp`` module
     attribute, so patching that attribute is what a call inside the step actually sees).
@@ -1278,8 +1277,7 @@ class TestWindUpRunsOnce:
 
 
 class TestConservation:
-    """Requirement 6, round 3's non-circular form: total wealth (RESP excluded) moves
-    only by the flows the two brackets name.
+    """Total wealth (RESP excluded) moves only by the flows the two brackets name.
 
     ``W = cash + sum_persons(rrsp + rrif + lira + lif + tfsa + taxable)``, read directly
     from a ``RecordingPolicy`` capture each month -- taken after phase 6, so a forced
@@ -1427,7 +1425,7 @@ class TestConservation:
 
 
 class TestPerPensionPayrollWithholding:
-    """Round 3 finding 4: phase 4 withholds on employment and on each pension's own
+    """Phase 4 withholds on employment and on each pension's own
     monthly amount separately, matching ``withholding.payroll_withholding_monthly``
     called the same way phase 4 itself calls it.
     """
@@ -1473,7 +1471,7 @@ class TestPerPensionPayrollWithholding:
 
 
 class TestCloseYearAssertion:
-    """Requirement 14: an unmet RRIF minimum with a non-zero balance raises."""
+    """An unmet RRIF minimum with a non-zero balance raises."""
 
     def test_unmet_minimum_raises(self, scenario, real_params):
         rrif_balance = 100_000.0  # SYNTHETIC: any non-zero balance with an unmet minimum works.
@@ -2630,8 +2628,8 @@ class TestGisBandForACouple:
     def test_a_spouse_who_died_during_the_year_is_out_of_the_household_at_the_close(
         self, couple_scenario, couple_real_params
     ):
-        """Pins the human's decision that the GIS band uses ``alive`` at the close, not
-        "alive at any point in the year" as the net-income pair does.
+        """The GIS band uses ``alive`` at the close, not "alive at any point in the year"
+        as the net-income pair does.
         """
         state = build_initial_state(couple_scenario, n_paths=1)
         state = updated(state, month=12, month_index=11)
@@ -2777,7 +2775,7 @@ class TestYearRecordFields:
         assert np.all(record.after_tax_net_worth < record.net_worth)
         assert record.after_tax_net_worth is not record.net_worth
 
-        # Recompute #36 section 6's formula independently, via person_assessment
+        # Recompute the after-tax net worth independently, via person_assessment
         # directly, rather than trusting close_year's own private helper.
         year = closed.year
         january_month_index = closed.month_index - (closed.month - 1)
@@ -2887,7 +2885,7 @@ def _gross_wealth(state):
 
 
 class TestFirstDeathOnTheCouple:
-    """Requirement 2: the first death's month-k semantics, on the couple."""
+    """The first death's month-k semantics, on the couple."""
 
     #: April of the second year: (2027 - 2026) * 12 + (4 - 1) -- a full January has
     #: already run by then.
@@ -2975,7 +2973,7 @@ class TestFirstDeathOnTheCouple:
             a_pension.survivor_share * a_pension.monthly_amount * factor,
         )
 
-        # Requirement 12: the trace sums to the result, year by year, including the
+        # The trace sums to the result, year by year, including the
         # first-death year.
         for year_index, year in enumerate(result.years):
             year_start = (int(year) - couple_scenario.start_year) * 12
@@ -3048,7 +3046,7 @@ class TestSurvivorStreamWithholding:
 
 
 class TestCppSurvivorBothDirections:
-    """Requirement 3: the CPP survivor increment's capped and uncapped branches."""
+    """The CPP survivor increment's capped and uncapped branches."""
 
     DEATH_MONTH_INDEX = 15
 
@@ -3159,7 +3157,7 @@ class TestCppSurvivorBothDirections:
         # (b) the survivor's balance really absorbed it: march's opening balance plus
         # what rolled in, less this month's own flows, grown by this month's return --
         # exactly _phase10_growth's rule, confirmed for taxable too (balance * (1 + r),
-        # #19 decision 5: distributions_monthly's yield component and price_growth's
+        # as distributions_monthly's yield component and price_growth's
         # price-only component net out to the account's total return).
         returns_k = couple_draws.real_returns[self.DEATH_MONTH_INDEX]
         for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
@@ -3241,7 +3239,7 @@ class TestCppSurvivorBothDirections:
 
 
 class TestSecondDeathTerminalReturn:
-    """Requirements 4, 6, 7, 8: the terminal-return arithmetic at the second death,
+    """The terminal-return arithmetic at the second death,
     exercised directly against ``resolve_deaths`` on hand-built states -- the six
     rollover functions and ``TestFirstDeathOnTheCouple`` already cover the first
     death's own rollover mechanics.
@@ -3662,7 +3660,7 @@ class TestTerminalReturnCapitalLoss:
 
 
 class TestSecondDeathViaRun:
-    """Requirement 13 (second half): cash identities across a full forced two-death run,
+    """Cash identities across a full forced two-death run,
     and the run's own timing of ``estate_after_tax``.
     """
 
@@ -3703,7 +3701,7 @@ class TestSecondDeathViaRun:
 
 
 class TestFinishedPathIsInert:
-    """Requirement 5: after the final death, everything downstream is exactly zero."""
+    """After the final death, everything downstream is exactly zero."""
 
     #: Within the example beneficiary's education window (which opens well after this).
     FORCED_DEATH_MONTH_INDEX = 100
@@ -3835,8 +3833,8 @@ class TestFinishedPathIsInert:
 
 
 class TestAliveInvariantAndEstateNan:
-    """Requirements 9 and 10 (success criteria): ``alive`` tracks ``death_month_index``
-    exactly, and ``estate_after_tax`` is NaN until, and only until, the second death.
+    """``alive`` tracks ``death_month_index`` exactly, and ``estate_after_tax`` is NaN
+    until, and only until, the second death.
     """
 
     N_PATHS = 64
@@ -3925,7 +3923,9 @@ def _meet_rrif_lif_minimum(state):
 
 
 class TestAfterTaxNetWorthOnTheCouple:
-    """Requirement 15: the couple's first December close matches the #36 section 6 formula."""
+    """The couple's first December close records ``after_tax_net_worth`` as gross wealth
+    less each person's terminal-return tax net of ``remitted``, recomputed independently.
+    """
 
     def test_first_close_matches_the_formula(self, couple_scenario, couple_real_params):
         state = build_initial_state(couple_scenario, n_paths=2)

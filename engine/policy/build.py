@@ -13,7 +13,7 @@ loop over time, only two calls inside one.
 
 :func:`expand_grid` is not a Cartesian-product search over months or paths -- a search is
 tens to a hundred *policies*, evaluated with common random numbers, never a per-step choice
-(decision 18, ``docs/limitations.md`` L44). It is the one place a :class:`Scenario` gets
+(``docs/limitations.md`` L44). It is the one place a :class:`Scenario` gets
 built twice: once as written, to find the grid, and once again, expanded, so that every
 schema validator -- the weight sum, the CPP/OAS election checks, the grid resolution check
 itself -- runs again on what the optimizer will actually evaluate.

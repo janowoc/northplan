@@ -1152,7 +1152,7 @@ cases:
 
 @pytest.mark.usefixtures("synthetic_params_root")
 def test_real_params_case_reaches_annual_amount_at_zero_inflation(tmp_path: Path) -> None:
-    """The success criterion: a synthetic case reaches the real-terms view and passes.
+    """A synthetic case reaches the real-terms view and passes.
 
     ``cases/`` and ``params/`` are kept as separate subdirectories of
     ``tmp_path`` — ``discover_cases`` walks its own directory recursively and
@@ -1510,7 +1510,7 @@ cases:
 
 @pytest.mark.usefixtures("synthetic_params_root")
 def test_real_params_year_case_reaches_annual_amount_at_zero_inflation(tmp_path: Path) -> None:
-    """The success criterion: a synthetic case reaches the whole-year real-terms view and passes."""
+    """A synthetic case reaches the whole-year real-terms view and passes."""
     cases_dir = tmp_path / "cases"
     cases_dir.mkdir()
     _write(
@@ -2135,7 +2135,7 @@ def test_resolve_params_rejects_an_unknown_file() -> None:
 
 
 def test_load_year_cached_returns_the_same_paramyear_object() -> None:
-    """The caching added for issue #3's finding 12: no correctness change.
+    """``_load_year_cached``: no correctness change.
 
     ``ParamYear`` is deeply immutable, so returning the identical object on a
     second call for the same year is safe and is exactly what the cache is
@@ -2317,17 +2317,17 @@ def test_lookup_output_missing_dataclass_field_raises() -> None:
 def test_lookup_output_rejects_a_result_with_no_declared_fields() -> None:
     """Neither a mapping nor a dataclass/NamedTuple: nothing to address by name.
 
-    This is the finding-7 regression: without this restriction, ``getattr``
-    would resolve ``imag``/``real``/``ndim``/``size`` on an ordinary float or
-    numpy scalar and let a named-output case pass against a bare number
-    forever, vacuously.
+    Without this restriction, ``getattr`` would resolve
+    ``imag``/``real``/``ndim``/``size`` on an ordinary float or numpy scalar
+    and let a named-output case pass against a bare number forever,
+    vacuously.
     """
     with pytest.raises(GoldenCaseError, match="mapping, dataclass, or NamedTuple"):
         _lookup_output(_dummy_case(), 3.0, "imag")
 
 
 def test_named_output_against_a_bare_float_result_is_rejected(tmp_path: Path) -> None:
-    """End-to-end version of the finding-7 regression, through run_case."""
+    """The same rejection end to end, through run_case."""
     _write(
         tmp_path,
         "synthetic.yaml",

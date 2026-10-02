@@ -363,7 +363,7 @@ class TestEveryInScopeFieldIsClassified:
 
 class TestTheGuardBites:
     def test_an_unclassified_field_on_a_new_class_is_reported(self) -> None:
-        """The success criterion: adding a field fails this test until it is classified.
+        """Adding a field fails this test until it is classified.
 
         A synthetic frozen dataclass with one in-scope scalar field, run through the same
         collector the real test uses, against the real ``TABLE`` — which does not, and cannot,

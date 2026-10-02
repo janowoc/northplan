@@ -62,9 +62,9 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_the_committed_example_loads() -> None:
     """``load_scenario("scenarios/example.yaml")`` returns a ``Scenario``.
 
-    The first success criterion of issue 10, and the reason the file is
-    committed: it is the single-person fixture every later issue builds a
-    state, a run, and a search from, when it does not need a second person.
+    The reason the file is committed: it is the single-person fixture every
+    later issue builds a state, a run, and a search from, when it does not
+    need a second person.
     """
     scenario = load_scenario(EXAMPLE)
 

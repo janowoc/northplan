@@ -224,7 +224,7 @@ class TestBuildAgainstTheExample:
         )
 
     def test_the_two_years_of_net_income_are_restated_and_not_crossed(self, scenario) -> None:
-        """The example's two figures (92000, 88000) differ on purpose (brief-49 s8): a
+        """The example's two figures (92000, 88000) differ on purpose: a
         test that only checked one field could pass with the two swapped in build.py.
         Each is restated from the middle of its own year: half a year for 2025, a year
         and a half for 2024 (L5).
@@ -919,7 +919,7 @@ class TestDrawDeaths:
     def test_each_person_s_death_month_index_comes_from_their_own_row(
         self, two_person_scenario, mortality: ParamSet
     ) -> None:
-        """The alignment brief-51 asked for: person ``i`` gets ``draws.mortality[i]``.
+        """Person ``i`` gets ``draws.mortality[i]``.
 
         ``scenarios/example.yaml`` has one person, so every other test in this class
         would pass an implementation that wrote ``draws.mortality[0]`` for every

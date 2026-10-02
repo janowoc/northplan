@@ -146,7 +146,7 @@ def test_spousal_rollover_jurisdiction_unchanged_when_mask_is_all_false() -> Non
 
 def test_spousal_rollover_raises_on_cross_jurisdiction() -> None:
     # SYNTHETIC second code ("zz"): unreachable in v1 (only "ab" has a parameter file),
-    # built by hand on a synthetic pair of states, per the brief -- no params needed.
+    # built by hand on a synthetic pair of states -- no params needed.
     mask = np.array([True])
     deceased = _multi_lira([10_000.0], jurisdiction="ab")
     survivor = _multi_lira([5_000.0], jurisdiction="zz")

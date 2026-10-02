@@ -546,7 +546,7 @@ to the survivor's account of the same kind, tax-deferred; a LIF stays locked
 in. The survivor's own RRIF/LIF **minimum** for the year of death is
 unchanged, already fixed in January from their own opening balance; the
 survivor's LIF **maximum** for the year, by contrast, carries the deceased's
-unused annual maximum forward on top of their own (decision Q8). The
+unused annual maximum forward on top of their own. The
 deceased's unmet RRIF/LIF minimum for the year of death is not forced out —
 in reality it is paid, or continues to a successor annuitant, direction
 optimistic and small. The TFSA passes to the survivor as successor holder;

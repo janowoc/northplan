@@ -208,7 +208,7 @@ def test_spousal_rollover_jurisdiction_rule_and_guard() -> None:
     _, new_survivor = lif.spousal_rollover(deceased, empty_survivor, mask)
     assert new_survivor.jurisdiction == "ab"
 
-    # SYNTHETIC second code ("zz"): unreachable in v1, built by hand, per the brief.
+    # SYNTHETIC second code ("zz"): unreachable in v1, built by hand.
     zz_survivor = _multi([5_000.0], "zz", [0.0], [400.0], [0.0], 2010)
     with pytest.raises(ValueError, match=r"ab.*zz|zz.*ab"):
         lif.spousal_rollover(deceased, zz_survivor, mask)

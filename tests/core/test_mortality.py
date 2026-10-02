@@ -45,9 +45,8 @@ SYNTHETIC_Q_F = 0.3
 #: Deliberately different from SYNTHETIC_Q_F, for the same reason the real
 #: template's two-repdigit convention makes ``f`` and ``m`` visibly different
 #: values: a table that used the same number for both sexes could not catch
-#: code that read the wrong one, and it very nearly didn't (see item 1 of
-#: round two's review). Not chosen for any distributional property of its
-#: own — nothing here runs a geometric-distribution test against it.
+#: code that read the wrong one. Not chosen for any distributional property
+#: of its own — nothing here runs a geometric-distribution test against it.
 SYNTHETIC_Q_M = 0.6
 
 #: Terminal age for the synthetic table. Chosen relative to SYNTHETIC_Q_F so
@@ -69,8 +68,7 @@ def _write_synthetic_table(
     ``f`` and ``m`` are flat at two different constants, not the same one:
     the real template's two-repdigit convention exists to catch a sex
     mix-up, and a synthetic fixture that gave both sexes the same table would
-    have exactly the blind spot that convention exists to close — which this
-    fixture once did (round two, item 1).
+    have exactly the blind spot that convention exists to close.
     """
     year_dir = root / str(START_YEAR)
     year_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +146,7 @@ class TestSurvivalCurveShape:
 
 
 class TestSexIsRespected:
-    """Would have caught round two's item 1: ``sex`` hardcoded to ``"f"``.
+    """Would catch ``sex`` hardcoded to ``"f"``.
 
     With ``f`` and ``m`` on different constants, a curve built for ``sex="m"``
     that actually read the ``f`` row would produce ``curve_f``'s numbers
@@ -177,7 +175,7 @@ class TestSexIsRespected:
 
 
 class TestBirthMonthIsRespected:
-    """Would have caught round two's item 2: ``year - birth_year`` in place of
+    """Would catch ``year - birth_year`` in place of
     ``age_in_years``, which agrees with the real arithmetic only when
     ``birth_month == 1`` — the one value every other test in this file uses.
     """
@@ -215,7 +213,7 @@ class TestDeathMonthIndexMatchesTheCurve:
     result is at most ``len(curve) - 1`` no matter what the curve contains.
     Its second assertion, ``curve[-1] == 0.0``, duplicates
     ``TestSurvivalCurveShape.test_final_entry_is_exactly_zero`` outright.
-    Neither line can fail against a broken inversion (round two, item 5).
+    Neither line can fail against a broken inversion.
 
     This instead checks, at each of several indexes including one deep in the
     tail, that the empirical fraction of draws with ``death_month_index > i``
@@ -252,8 +250,8 @@ class TestDeathMonthIndexMatchesTheCurve:
             p = float(curve[index])
             empirical = float(np.count_nonzero(deaths > index)) / self.N_DRAWS
             # Binomial standard error of a sample proportion; tolerance is
-            # TOLERANCE_IN_SE multiples of it, the same derivation item 4's
-            # geometric-mean tolerance uses.
+            # TOLERANCE_IN_SE multiples of it, the same derivation
+            # TestGeometricDistribution's mean tolerance uses.
             standard_error = (p * (1 - p) / self.N_DRAWS) ** 0.5
             tolerance = self.TOLERANCE_IN_SE * standard_error
             assert empirical == pytest.approx(p, abs=tolerance), (
@@ -290,10 +288,10 @@ class TestGeometricDistribution:
     ``1 / h``, where ``h`` is the monthly hazard. ``h`` and ``expected_mean``
     are written out arithmetically from ``SYNTHETIC_Q_F`` below, independently
     of :func:`monthly_hazard` — calling that function here would make both
-    sides of the comparison move together under the same bug (round two, item
-    4: mutating ``monthly_hazard`` to ``q_annual / MONTHS_PER_YEAR`` left this
-    test passing on its own, because ``expected_mean`` was computed with the
-    very function ``survival_curve`` is built from).
+    sides of the comparison move together under the same bug (mutating
+    ``monthly_hazard`` to ``q_annual / MONTHS_PER_YEAR`` once left this test
+    passing on its own, because ``expected_mean`` was computed with the very
+    function ``survival_curve`` is built from).
 
     With ``N_DRAWS`` draws from a fixed-seed generator the standard error of
     the sample mean is about ``(1 / h) / sqrt(N_DRAWS)``; the tolerance below

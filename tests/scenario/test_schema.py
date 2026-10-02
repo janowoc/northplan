@@ -923,7 +923,7 @@ def test_absent_prior_year_net_income_names_the_person_by_id(tmp_path: Path) -> 
 
 def test_absent_net_income_two_years_prior_names_the_person_by_id(tmp_path: Path) -> None:
     """Mirrors :func:`test_absent_prior_year_net_income_names_the_person_by_id` for the
-    sibling field; the two keys share one before-validator (brief-49 s4(b))."""
+    sibling field; the two keys share one before-validator."""
     with pytest.raises(InvalidScenarioError) as excinfo:
         load_mutated(tmp_path, (deletes("household.persons.0.net_income_two_years_prior"),))
 
@@ -934,7 +934,7 @@ def test_absent_net_income_two_years_prior_names_the_person_by_id(tmp_path: Path
 
 
 def test_absent_both_net_income_fields_names_both_in_one_message(tmp_path: Path) -> None:
-    """One before-validator covers both keys (brief-49 s4(b)) precisely so a scenario
+    """One before-validator covers both keys precisely so a scenario
     missing both gets one message naming both, not just the first pydantic would report."""
     with pytest.raises(InvalidScenarioError) as excinfo:
         load_mutated(

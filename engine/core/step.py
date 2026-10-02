@@ -420,7 +420,7 @@ def _phase3_inflows(
     any inherited survivor streams, at this month's amount -- phase 4 withholds on these
     directly rather than calling ``db_pension_monthly``/``survivor_pension_monthly`` again.
 
-    CPP survivor (Q7, L19, L40) and the DB survivor share (Q6, L40, L59) are computed here,
+    CPP survivor (L19, L40) and the DB survivor share (L40, L59) are computed here,
     stateless, from the other person's own amount this month: for a two-person household, for
     each person ``i`` with the other person ``j``, ``receiving = persons[i].alive &
     ~persons[j].alive``. The CPP survivor increment reads ``persons[j].cpp.in_pay_monthly`` when
@@ -970,7 +970,7 @@ def _phase8_transfers(
         else:
             i = transfer.person_index
             person = persons[i]
-            # D-B(i): a contribution intended for a dead person never reaches their
+            # A contribution intended for a dead person never reaches their
             # account. Validation still accepts the transfer; the effective amount is 0.
             requested = np.where(person.alive, np.minimum(transfer.amount, available), 0.0)
             if transfer.to_kind == "rrsp":
@@ -1019,7 +1019,7 @@ def _phase8_transfers(
             cash = cash_mod.pay(cash, penalty)
             subscriber_index = resp_state.subscriber_index
             subscriber = persons[subscriber_index]
-            # D-B(ii): credited to the subscriber where alive, otherwise to the living
+            # ``accumulated`` is credited to the subscriber where alive, otherwise to the living
             # spouse (successor subscriber). On a household of one, or where neither is
             # alive, the path is already finished and the plan already zeroed, so
             # ``accumulated`` is 0 either way. The special tax is withheld from the same
@@ -1213,7 +1213,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
        ``spending_achieved_ytd``. ``balance_owing`` is untouched: it is still owed until the
        filing month.
 
-    At month index zero items 1-4 erode, restore and grant nothing (#33 item 5): the scenario's
+    At month index zero items 1-4 erode, restore and grant nothing: the scenario's
     figures are already post-grant. Item 3's zeroing past the conversion age is the one
     exception: it runs at month index zero too. Items 5 and 6 still run.
 

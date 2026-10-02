@@ -199,7 +199,7 @@ def spousal_rollover(
     jurisdiction rule and its guard.
 
     The survivor's ``annual_maximum`` is increased by the deceased's unused
-    maximum for the year (**decision Q8**, ``docs/limitations.md`` L41):
+    maximum for the year (``docs/limitations.md`` L41):
     ``clip(deceased.annual_maximum - deceased.withdrawn_ytd, 0, None)``, applied
     only where ``mask`` is true. An infinite deceased maximum carries over as
     infinite. A deceased holding no LIF (``annual_maximum`` zero) adds nothing.

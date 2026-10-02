@@ -8,13 +8,13 @@ against the real 2026 ``resp`` file at zero inflation, and hand-computed
 tests against ``SYNTHETIC``, an obviously fake parameter file with round,
 wrong numbers chosen so every expected value can be checked by hand.
 
-The cross-year annual-cap test (issue #18's success criterion 5) is a
-structural test: it has to run against the real file, since the point is
-that the shipped annual grant room, annual grant maximum, and enhanced-tier
-eligible-contribution window are each small enough, relative to a year of
-aggressive monthly contributions, to bind partway through the year. A
-synthetic fixture picked for easy arithmetic would not necessarily reproduce
-that; only the real numbers are guaranteed to.
+The cross-year annual-cap test is a structural test: it has to run against
+the real file, since the point is that the shipped annual grant room,
+annual grant maximum, and enhanced-tier eligible-contribution window are
+each small enough, relative to a year of aggressive monthly contributions,
+to bind partway through the year. A synthetic fixture picked for easy
+arithmetic would not necessarily reproduce that; only the real numbers are
+guaranteed to.
 """
 
 from __future__ import annotations
@@ -320,8 +320,7 @@ def test_synthetic_enhanced_grant_rate_is_a_cliff_table(synth) -> None:
     np.testing.assert_allclose(between, [0.2])
     np.testing.assert_allclose(above, [0.05])
 
-    # All four transitions named in the review: both edges, each exactly at
-    # the edge and one dollar above it.
+    # All four transitions: both edges, each exactly at the edge and one dollar above it.
     at_first_edge = resp.enhanced_grant_rate(np.array([30_000.0]), synth, JANUARY_YEAR_1)
     above_first_edge = resp.enhanced_grant_rate(np.array([30_001.0]), synth, JANUARY_YEAR_1)
     at_second_edge = resp.enhanced_grant_rate(np.array([60_000.0]), synth, JANUARY_YEAR_1)

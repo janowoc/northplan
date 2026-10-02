@@ -353,7 +353,7 @@ def test_an_indexed_amount_is_its_raw_value_times_its_schedules_factor(
 
 
 def test_zero_inflation_returns_the_published_amount(synthetic_root: Path) -> None:
-    """The success criterion in the issue: at zero inflation the view is a pass-through."""
+    """At zero inflation the view is a pass-through."""
     federal = real_year(load_year(2026, synthetic_root), 0).federal
     assert federal.amount("credits.basic_amount_annual", 0) == 1000
     assert federal.amount("credits.frozen_amount_annual", 600) == 2000

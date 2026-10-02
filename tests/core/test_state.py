@@ -564,8 +564,7 @@ class TestDeathConsistency:
 
     ``alive == (death_month_index > month_index)`` is NOT checked here — see
     the comment in ``PersonState.__post_init__`` for why that half needs a
-    ``month_index`` this class does not carry, and a decision that belongs
-    to issue 19.
+    ``month_index`` that ``PersonState`` does not carry.
     """
 
     def test_not_alive_with_the_sentinel_still_set_is_rejected(self) -> None:
