@@ -41,6 +41,10 @@ class SimulationResult:
         years: Calendar years simulated, ``(n_years,)``.
         net_worth: Real household net worth at each 31 December,
             ``(n_years, n_paths)``.
+        after_tax_net_worth: Real household after-tax net worth at each 31 December,
+            ``(n_years, n_paths)`` -- ``YearRecord.after_tax_net_worth``, the liquidation
+            value as if every person died that day with no spousal rollover; ``0`` on a
+            path already finished.
         spending_achieved: Real after-tax spending achieved over each year, summed
             from the twelve months, ``(n_years, n_paths)``.
         tax_assessed: Real household tax *assessed* on each year's income,
@@ -61,13 +65,11 @@ class SimulationResult:
             ``initial_state.year + death_month_index // 12``, from the opening
             state's already-drawn ``death_month_index`` (#22 does any further
             division by person).
-        gis_band_person_years: Sum, over every recorded year and every person, of
-            ``YearRecord.gis_band``, ``(n_paths,)`` int64 -- a count of person-years
-            in the GIS band, for #22 to turn into a rate.
-        living_person_years: Sum, over every recorded year ``y`` and every person,
-            of whether that person was alive at ``y``'s December close (
-            ``death_month_index > (y - start_year) * 12 + 11``, compared only, never
-            subtracted from), ``(n_paths,)`` int64.
+        gis_band_count: Persons in the GIS band at each December close, the sum over
+            persons of ``YearRecord.gis_band``, ``(n_years, n_paths)`` int64.
+        living_count: Persons alive at each year ``y``'s December close
+            (``death_month_index > (y - start_year) * 12 + 11``, compared only, never
+            subtracted from), ``(n_years, n_paths)`` int64.
         seed: The seed of the draws used, for reproducibility.
         trace: The full monthly record for a single traced path — one
             :class:`~engine.core.context.MonthRecord` per month simulated, every
@@ -77,15 +79,33 @@ class SimulationResult:
 
     years: NDArray[np.int64]
     net_worth: NDArray[np.float64]
+    after_tax_net_worth: NDArray[np.float64]
     spending_achieved: NDArray[np.float64]
     tax_assessed: NDArray[np.float64]
     depleted: NDArray[np.bool_]
     estate_after_tax: NDArray[np.float64]
     death_year: NDArray[np.int64]
-    gis_band_person_years: NDArray[np.int64]
-    living_person_years: NDArray[np.int64]
+    gis_band_count: NDArray[np.int64]
+    living_count: NDArray[np.int64]
     seed: int
     trace: tuple[MonthRecord, ...] = ()
+
+    @property
+    def gis_band_person_years(self) -> NDArray[np.int64]:
+        """``gis_band_count`` summed over years, ``(n_paths,)`` int64.
+
+        A count of person-years in the GIS band, for #22 to turn into a rate.
+        Read-only: computed from ``gis_band_count`` on each access.
+        """
+        return self.gis_band_count.sum(axis=0, dtype=np.int64)
+
+    @property
+    def living_person_years(self) -> NDArray[np.int64]:
+        """``living_count`` summed over years, ``(n_paths,)`` int64.
+
+        Read-only: computed from ``living_count`` on each access.
+        """
+        return self.living_count.sum(axis=0, dtype=np.int64)
 
 
 def run(
@@ -196,6 +216,7 @@ def run(
     state = initial_state
     years: list[int] = []
     net_worth: list[NDArray[np.float64]] = []
+    after_tax_net_worth: list[NDArray[np.float64]] = []
     spending_achieved: list[NDArray[np.float64]] = []
     tax_assessed: list[NDArray[np.float64]] = []
     depleted: list[NDArray[np.bool_]] = []
@@ -215,6 +236,7 @@ def run(
             year_record = state.history[-1]
             years.append(year_record.year)
             net_worth.append(year_record.net_worth)
+            after_tax_net_worth.append(year_record.after_tax_net_worth)
             spending_achieved.append(year_record.spending)
             tax_assessed.append(year_record.tax_assessed)
             depleted.append(year_record.depleted)
@@ -228,15 +250,21 @@ def run(
     if years:
         years_arr = np.array(years, dtype=np.int64)
         net_worth_arr = np.stack(net_worth).astype(np.float64)
+        after_tax_net_worth_arr = np.stack(after_tax_net_worth).astype(np.float64)
         spending_achieved_arr = np.stack(spending_achieved).astype(np.float64)
         tax_assessed_arr = np.stack(tax_assessed).astype(np.float64)
         depleted_arr = np.stack(depleted).astype(np.bool_)
+        gis_band_count_arr = np.stack(
+            [np.stack(year_bands).astype(np.int64).sum(axis=0) for year_bands in gis_band]
+        )
     else:
         years_arr = np.zeros((0,), dtype=np.int64)
         net_worth_arr = np.zeros((0, n_paths), dtype=np.float64)
+        after_tax_net_worth_arr = np.zeros((0, n_paths), dtype=np.float64)
         spending_achieved_arr = np.zeros((0, n_paths), dtype=np.float64)
         tax_assessed_arr = np.zeros((0, n_paths), dtype=np.float64)
         depleted_arr = np.zeros((0, n_paths), dtype=np.bool_)
+        gis_band_count_arr = np.zeros((0, n_paths), dtype=np.int64)
 
     start_year = initial_state.year
     death_year = np.stack(
@@ -247,27 +275,23 @@ def run(
         axis=0,
     ).astype(np.int64)
 
-    gis_band_person_years = np.zeros(n_paths, dtype=np.int64)
-    for year_bands in gis_band:
-        for band in year_bands:
-            gis_band_person_years = gis_band_person_years + band.astype(np.int64)
-
     december_indices = (years_arr - start_year) * 12 + 11
-    living_person_years = np.zeros(n_paths, dtype=np.int64)
+    living_count_arr = np.zeros((len(years_arr), n_paths), dtype=np.int64)
     for person in initial_state.persons:
         alive_at_close = person.death_month_index[None, :] > december_indices[:, None]
-        living_person_years = living_person_years + alive_at_close.sum(axis=0).astype(np.int64)
+        living_count_arr = living_count_arr + alive_at_close.astype(np.int64)
 
     return SimulationResult(
         years=years_arr,
         net_worth=net_worth_arr,
+        after_tax_net_worth=after_tax_net_worth_arr,
         spending_achieved=spending_achieved_arr,
         tax_assessed=tax_assessed_arr,
         depleted=depleted_arr,
         estate_after_tax=state.estate_after_tax,
         death_year=death_year,
-        gis_band_person_years=gis_band_person_years,
-        living_person_years=living_person_years,
+        gis_band_count=gis_band_count_arr,
+        living_count=living_count_arr,
         seed=draws.seed,
         trace=tuple(trace),
     )

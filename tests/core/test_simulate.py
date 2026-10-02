@@ -22,7 +22,7 @@ from engine.core.indexation import real_year
 from engine.core.state import updated
 from engine.mc.market import DEFAULT_KIND, MarketInputs
 from engine.mc.returns import RandomDraws
-from engine.mc.simulate import run
+from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import load_year
 from engine.scenario import INVESTABLE_KINDS, load_scenario
 
@@ -386,3 +386,303 @@ class TestPersonYearCounts:
         np.testing.assert_array_equal(result.years, [state.year])
         assert len(result.trace) == 12  # stops at its own December close
         assert int(result.living_person_years[0]) == 0
+
+
+# =============================================================================
+# #66: the per-year after-tax net worth, GIS count and living count
+# =============================================================================
+
+
+@pytest.fixture
+def step_spy(monkeypatch):
+    """Record what ``run``'s loop got back from each step, full width.
+
+    ``spy["state"]`` is the last state returned, whose ``history`` holds every
+    ``YearRecord`` the run closed; ``spy["closes"]`` is every ``MonthRecord`` whose
+    ``year_record`` is set, in order.
+    """
+    from engine.core import step as step_module
+
+    spy = {"state": None, "closes": []}
+
+    def recording_step(*args, **kwargs):
+        state, record = step_module.advance_month_traced(*args, **kwargs)
+        spy["state"] = state
+        if record.year_record is not None:
+            spy["closes"].append(record)
+        return state, record
+
+    monkeypatch.setattr("engine.mc.simulate.advance_month_traced", recording_step)
+    return spy
+
+
+def _expected_per_year(spy):
+    history = spy["state"].history
+    after_tax_net_worth = np.stack([year_record.after_tax_net_worth for year_record in history])
+    gis_band_count = np.stack(
+        [sum(band.astype(np.int64) for band in year_record.gis_band) for year_record in history]
+    )
+    living_count = np.stack(
+        [sum(alive.astype(np.int64) for alive in record.alive) for record in spy["closes"]]
+    )
+    return history, after_tax_net_worth, gis_band_count, living_count
+
+
+def _run_seeded(scenario, market, mortality, real_params, order, n_paths):
+    draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+    state = build_initial_state(scenario, n_paths=n_paths)
+    state = draw_deaths(state, draws, mortality)
+    return state, run(state, DoNothingPolicy(state.elections, order), draws, market, real_params)
+
+
+class TestPerYearFigures:
+    """#66: ``after_tax_net_worth``, ``gis_band_count`` and ``living_count`` hold one row per
+    December close, each taken from that close's ``YearRecord``; the two totals sum them.
+    """
+
+    def test_example_rows_match_each_closes_year_record(
+        self, scenario, market, mortality, real_params, withdrawal_order, step_spy
+    ):
+        n_paths = 3
+        _state, result = _run_seeded(
+            scenario, market, mortality, real_params, withdrawal_order, n_paths
+        )
+        history, after_tax_net_worth, gis_band_count, living_count = _expected_per_year(step_spy)
+
+        n_years = len(result.years)
+        assert [year_record.year for year_record in history] == result.years.tolist()
+        assert result.after_tax_net_worth.shape == (n_years, n_paths)
+        assert result.after_tax_net_worth.dtype == np.float64
+        assert result.gis_band_count.shape == (n_years, n_paths)
+        assert result.gis_band_count.dtype == np.int64
+        assert result.living_count.shape == (n_years, n_paths)
+        assert result.living_count.dtype == np.int64
+
+        assert np.any(result.after_tax_net_worth != result.net_worth)  # guard
+        assert living_count.min() == 0 and living_count.max() == 1  # guard
+        np.testing.assert_array_equal(result.after_tax_net_worth, after_tax_net_worth)
+        np.testing.assert_array_equal(result.gis_band_count, gis_band_count)
+        np.testing.assert_array_equal(result.living_count, living_count)
+
+    def test_couple_rows_match_each_closes_year_record(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+        step_spy,
+    ):
+        _state, result = _run_seeded(
+            couple_scenario,
+            couple_market,
+            couple_mortality,
+            couple_real_params,
+            couple_withdrawal_order,
+            64,
+        )
+        history, after_tax_net_worth, gis_band_count, living_count = _expected_per_year(step_spy)
+
+        assert [year_record.year for year_record in history] == result.years.tolist()
+        assert any(np.any(year_record.gis_band[1]) for year_record in history)  # guard
+        assert set(np.unique(living_count)) == {0, 1, 2}  # guard
+        np.testing.assert_array_equal(result.after_tax_net_worth, after_tax_net_worth)
+        np.testing.assert_array_equal(result.gis_band_count, gis_band_count)
+        np.testing.assert_array_equal(result.living_count, living_count)
+
+    def test_the_totals_sum_the_per_year_counts(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+        step_spy,
+    ):
+        n_paths = 64
+        state, result = _run_seeded(
+            couple_scenario,
+            couple_market,
+            couple_mortality,
+            couple_real_params,
+            couple_withdrawal_order,
+            n_paths,
+        )
+
+        expected_gis_band_person_years = np.zeros(n_paths, dtype=np.int64)
+        for year_record in step_spy["state"].history:
+            for band in year_record.gis_band:
+                expected_gis_band_person_years += band.astype(np.int64)
+        expected_living_person_years = np.zeros(n_paths, dtype=np.int64)
+        for person in state.persons:
+            for year in result.years:
+                december_index = (int(year) - state.year) * 12 + 11
+                expected_living_person_years += (person.death_month_index > december_index).astype(
+                    np.int64
+                )
+
+        assert expected_gis_band_person_years.sum() > 0  # guard
+        assert result.gis_band_person_years.dtype == np.int64
+        assert result.living_person_years.dtype == np.int64
+        np.testing.assert_array_equal(result.gis_band_person_years, expected_gis_band_person_years)
+        np.testing.assert_array_equal(result.living_person_years, expected_living_person_years)
+        np.testing.assert_array_equal(
+            result.gis_band_person_years, result.gis_band_count.sum(axis=0)
+        )
+        np.testing.assert_array_equal(result.living_person_years, result.living_count.sum(axis=0))
+
+    def test_a_december_final_death_is_not_living_at_that_close(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        n_paths = 1
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+        person = updated(state.persons[0], death_month_index=np.full(n_paths, 11, dtype=np.int64))
+        state = updated(state, persons=(person,))
+
+        result = run(
+            state, DoNothingPolicy(state.elections, withdrawal_order), draws, market, real_params
+        )
+
+        np.testing.assert_array_equal(result.years, [state.year])  # guard
+        np.testing.assert_array_equal(result.living_count, [[0]])
+
+    def test_a_run_with_no_december_close_has_zero_row_arrays(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        n_paths = 2
+        n_months = 5
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+        person = updated(state.persons[0], death_month_index=np.full(n_paths, 2, dtype=np.int64))
+        state = updated(state, persons=(person,))
+        short_draws = RandomDraws(
+            seed=draws.seed,
+            real_returns=draws.real_returns[:n_months],
+            mortality=draws.mortality,
+            n_months=n_months,
+            n_paths=n_paths,
+        )
+
+        result = run(
+            state,
+            DoNothingPolicy(state.elections, withdrawal_order),
+            short_draws,
+            market,
+            real_params,
+        )
+
+        assert result.years.shape == (0,)
+        assert result.years.dtype == np.int64
+        for name, dtype in [
+            ("net_worth", np.float64),
+            ("after_tax_net_worth", np.float64),
+            ("spending_achieved", np.float64),
+            ("tax_assessed", np.float64),
+            ("depleted", np.bool_),
+            ("gis_band_count", np.int64),
+            ("living_count", np.int64),
+        ]:
+            array = getattr(result, name)
+            assert array.shape == (0, n_paths), name
+            assert array.dtype == dtype, name
+        for name in ("gis_band_person_years", "living_person_years"):
+            total = getattr(result, name)
+            assert total.dtype == np.int64, name
+            np.testing.assert_array_equal(total, np.zeros(n_paths, dtype=np.int64))
+
+    def test_the_totals_count_the_last_close_when_the_draws_end_first(
+        self, scenario, market, mortality, real_params, withdrawal_order
+    ):
+        """The draws end before the December after the final death, so the run's last
+        close still has a person alive and ``living_person_years`` must count that row.
+        """
+        n_paths = 2
+        n_months = 32
+        draws = build_draws(scenario, market, n_paths=n_paths, mortality=mortality)
+        state = build_initial_state(scenario, n_paths=n_paths)
+        state = draw_deaths(state, draws, mortality)
+        person = updated(state.persons[0], death_month_index=np.array([14, 30], dtype=np.int64))
+        state = updated(state, persons=(person,))
+        short_draws = RandomDraws(
+            seed=draws.seed,
+            real_returns=draws.real_returns[:n_months],
+            mortality=draws.mortality,
+            n_months=n_months,
+            n_paths=n_paths,
+        )
+
+        result = run(
+            state,
+            DoNothingPolicy(state.elections, withdrawal_order),
+            short_draws,
+            market,
+            real_params,
+        )
+
+        np.testing.assert_array_equal(result.years, [state.year, state.year + 1])  # guard
+        assert result.living_count[-1].sum() > 0  # guard
+        np.testing.assert_array_equal(result.living_count, [[1, 1], [0, 1]])
+        np.testing.assert_array_equal(result.living_person_years, [1, 2])
+        np.testing.assert_array_equal(result.living_person_years, result.living_count.sum(axis=0))
+
+    def test_the_totals_are_read_only_properties(self):
+        field_names = {field.name for field in dataclasses.fields(SimulationResult)}
+
+        for name in ("gis_band_person_years", "living_person_years"):
+            attribute = getattr(SimulationResult, name)
+            assert isinstance(attribute, property), name
+            assert attribute.fset is None, name
+            assert name not in field_names, name
+
+    def test_gis_band_count_sums_every_persons_band(
+        self,
+        couple_scenario,
+        couple_market,
+        couple_mortality,
+        couple_real_params,
+        couple_withdrawal_order,
+        monkeypatch,
+    ):
+        """Synthetic bands, not the engine's: each close's ``gis_band`` is replaced before
+        ``run`` reads it, so the count must add both persons (no committed scenario puts
+        person ``a`` in the band). Its bands are non-zero in every row, the last included,
+        so it also checks the ``gis_band_person_years`` total.
+        """
+        from engine.core import step as step_module
+
+        n_paths = 4
+        first_person = np.array([True, True, False, False])
+        second_person = np.array([True, False, True, False])
+
+        def synthetic_bands(*args, **kwargs):
+            state, record = step_module.advance_month_traced(*args, **kwargs)
+            if record.year_record is not None:
+                flip = state.history[-1].year % 2 == 1
+                bands = (first_person ^ flip, second_person)
+                year_record = updated(state.history[-1], gis_band=bands)
+                state = updated(state, history=(*state.history[:-1], year_record))
+            return state, record
+
+        monkeypatch.setattr("engine.mc.simulate.advance_month_traced", synthetic_bands)
+        _state, result = _run_seeded(
+            couple_scenario,
+            couple_market,
+            couple_mortality,
+            couple_real_params,
+            couple_withdrawal_order,
+            n_paths,
+        )
+
+        assert len(result.years) >= 2  # guard: both parities of the flip
+        expected = np.stack(
+            [
+                (first_person ^ (int(year) % 2 == 1)).astype(np.int64)
+                + second_person.astype(np.int64)
+                for year in result.years
+            ]
+        )
+        np.testing.assert_array_equal(result.gis_band_count, expected)
+        np.testing.assert_array_equal(result.gis_band_person_years, expected.sum(axis=0))
