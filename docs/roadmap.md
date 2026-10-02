@@ -95,6 +95,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 72 | Golden harness: a reachable, tested empty cases/, and no review labels | agent | — | the README says how to reach the empty state; a test collects zero golden items from it; no review label remains |
 | 73 | Test fixtures state scenarios the load checks refuse | agent | 65 | every scenario a test builds passes the load checks or names why not; a guard enforces it |
 | 74 | Comments and test docstrings cite review labels a reader cannot see | agent | — | no review label remains in `engine/` or `tests/`; each `Requirement N` names its issue or is gone |
+| 75 | A CPP tier-2 test does not assert its total stays below the second ceiling | agent | — | the test fails when its total reaches `tier2_ceiling`; every comment premise in the CPP tier tests is asserted |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -397,6 +398,11 @@ review labels from earlier work (`D-A`, `R5`, `round 3`) that a reader of the
 repo has no way to look up; two more are in `engine/core/step.py` and two in
 `tests/core/test_step.py`. 72 did the same for `tests/golden/`. It sits right
 after 66 as a small cleanup between pieces of work; nothing depends on it.
+
+75 came out of the final review of 74. One CPP tier test in
+`tests/benefits/test_employment.py` says its total lands in tier 2 but asserts
+only that it passes the first ceiling. The gap predates 74 and lies outside it.
+It sits right after 74 as a small cleanup; nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
