@@ -226,7 +226,15 @@ for a death year's own net capital loss. Lives in `engine/tax/federal.py`,
 income at any age, RRIF and LIF income from the year the transferor is 65 at
 year end, up to the statutory share, elected once at the December close to
 minimise combined household tax including OAS repayments. Not modelled: CPP
-pension sharing, spousal RRSPs.
+pension sharing, spousal RRSPs. In reality an annuity payment under an RRSP,
+or a payment out of a RRIF (a LIF included), received as a consequence of a
+spouse's death is qualified pension income (ITA 118(7)), eligible below 65 for
+both the credit and the split; we count only DB pension income as qualified,
+so an under-65 survivor's RRIF/LIF withdrawals from a plan inherited from the
+deceased earn no pension credit in any year before the survivor is 65 at year
+end and cannot be split in the year of the death, and an under-65
+transferee's credit counts the split of the transferor's DB pension only.
+Direction: conservative.
 
 **L51. Pension split search resolution.** In reality the transferred amount is
 any amount up to the statutory share, and the tax-minimising choice is a point
@@ -554,30 +562,42 @@ taxable holdings pass at cost (no deemed disposition on the rollover
 itself). DB pensions pay the survivor share excluding any bridge — L59
 covers a pension not yet in pay at the member's death. CPP pays the
 survivor pension per L19, recomputed each month against the survivor's own
-CPP. OAS stops; pension splitting stops. A contribution intended for a dead
-person is capped at zero rather than reaching their account. An RESP
-wind-up's accumulated income is credited to the living spouse when the
+CPP. OAS stops. Pension splitting stops after the year of the first death; in
+that year the maximum split is pro-rated by the months married (ITA 60.03(1);
+T1032 line 18), unless the second death falls in the same year, when every
+person is assessed alone (L42). In reality the age-65 tests on a person who
+died in the year use their age at death (T1032); we use their age on 31
+December. The two differ only for a death in the year of the 65th birthday,
+before the birthday, where RRIF/LIF income then counts as eligible pension
+income one year early and a receiving spouse's pension credit escapes the
+under-65 cap (L15). Direction: optimistic, small. A contribution intended
+for a dead person is capped at zero rather than reaching their account. An
+RESP wind-up's accumulated income is credited to the living spouse when the
 subscriber has died, rather than to the subscriber. Lives in
-`engine/core/step.py::resolve_deaths`, `_phase8_transfers`, and the six
-rollover functions in `engine/accounts/{rrsp,rrif,lira,lif,tfsa,taxable}.py`.
+`engine/core/step.py::resolve_deaths`, `_phase8_transfers`,
+`engine/tax/combined.py::household_assessment`, and the six rollover
+functions in `engine/accounts/{rrsp,rrif,lira,lif,tfsa,taxable}.py`.
 
 **L42. Second death.** The terminal return brings the full registered balance
 (RRSP, RRIF, LIRA, LIF) and the deemed capital gain on taxable holdings into
 income with that year's income, taxed as a single person — every person is
 assessed alone on the terminal return, never split, even in a household of
-two. The whole registered balance enters as RRIF/LIF income, RRSP included,
-so an RRSP balance counts toward the eligible pension income amount; the
-error from this is at most one pension credit. A death taking effect in
-January is taxed that year on an empty ledger, as if it had happened on 1
-January. The estate is what remains after that tax and any balance owing; it
-then leaves the household entirely — every balance is zeroed, and every
-later row reads zero. The terminal tax is not part of
+two. In reality, where both die in the same year, the two final returns may
+still split; we split nothing that year. Direction: conservative. The whole
+registered balance enters as RRIF/LIF income, RRSP and LIRA included, so an
+RRSP or LIRA balance counts toward the eligible pension income amount for a
+person 65 or older at year end. Direction: optimistic, by at most the federal
+and provincial pension credits on each return that carries such a balance. A
+death taking effect in January is taxed that year on an empty ledger, as if it
+had happened on 1 January. The estate is what remains after that tax and any
+balance owing; it then leaves the household entirely — every balance is
+zeroed, and every later row reads zero. The terminal tax is not part of
 `engine.mc.simulate.SimulationResult.tax_assessed`, which holds December
 assessments only. The after-tax net worth reported for a living household
 (`YearRecord.after_tax_net_worth`) uses the same arithmetic, hypothetically,
-as if both persons died on 31 December with no rollover. Not modelled:
-probate (a flat fee in Alberta), charitable bequests, graduated-rate
-estates. Lives in `engine/core/step.py::resolve_deaths` and `close_year`.
+as if both persons died on 31 December with no rollover. Not modelled: probate
+(a flat fee in Alberta), charitable bequests, graduated-rate estates. Lives in
+`engine/core/step.py::resolve_deaths` and `close_year`.
 
 **L59. DB pension, death before it starts.** In reality a pre-retirement
 death usually pays the spouse a commuted-value lump sum; we pay the survivor

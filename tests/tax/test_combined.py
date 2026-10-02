@@ -92,11 +92,15 @@ def _person(
     birth_month: int = 1,
     alive: np.ndarray | None = None,
     income: IncomeLedger | None = None,
+    death_month_index: np.ndarray | None = None,
 ) -> PersonState:
     alive_arr = alive if alive is not None else _bools(True, n)
     # Anyone not alive needs a real death_month_index: DEATH_NOT_DRAWN paired
-    # with alive=False is a contradiction PersonState rejects.
-    death_month_index = np.where(alive_arr, DEATH_NOT_DRAWN, 0).astype(np.int64)
+    # with alive=False is a contradiction PersonState rejects. The default puts
+    # the death in January 2026; a caller passing death_month_index passes a
+    # matching alive.
+    if death_month_index is None:
+        death_month_index = np.where(alive_arr, DEATH_NOT_DRAWN, 0).astype(np.int64)
     return PersonState(
         person_id=person_id,
         sex="f",
@@ -188,6 +192,15 @@ def params():
 
 
 JANUARY = 0
+
+
+def _died_in(n: int, month_index: int) -> dict[str, np.ndarray]:
+    """``_person`` keywords for a death taking effect in ``month_index`` on every path,
+    at or before the December 2026 close."""
+    return {
+        "alive": _bools(False, n),
+        "death_month_index": np.full(n, month_index, dtype=np.int64),
+    }
 
 
 # =============================================================================
@@ -365,11 +378,11 @@ def test_person_assessment_default_died_in_year_matches_omitting_it(params) -> N
 
 def test_household_assessment_passes_died_in_year_only_for_the_dying_person(params) -> None:
     n = 1
-    income_a = _ledger(n, rrif_lif_withdrawals=60_000.0, capital_gains=-6_000.0)
-    income_b = _ledger(n, rrif_lif_withdrawals=60_000.0, capital_gains=-6_000.0)
-    # person_a not alive: household_assessment's own split search then forces every
-    # transfer to zero (both_alive is False), so this exercises died_in_year routing
-    # with no split confound.
+    income_a = _ledger(n, interest=60_000.0, capital_gains=-6_000.0)
+    income_b = _ledger(n, interest=60_000.0, capital_gains=-6_000.0)
+    # person_a dies in January 2026, inside the tax year, so the split stays available;
+    # neither person has eligible pension income, so every candidate transfers zero and
+    # this exercises died_in_year routing with no split confound.
     person_a = _person("a", n, income=income_a, alive=_bools(False, n))
     person_b = _person("b", n, income=income_b)
     household = _household((person_a, person_b), year=2026, n=n)
@@ -384,6 +397,7 @@ def test_household_assessment_passes_died_in_year_only_for_the_dying_person(para
     expected_b = person_assessment(
         income_b, age, zero, zero, "ab", params, JANUARY, died_in_year=False
     )
+    assert assessments[0].transfer_out[0] == 0.0 and assessments[1].transfer_out[0] == 0.0
     np.testing.assert_allclose(assessments[0].total, expected_a.total)
     np.testing.assert_allclose(assessments[1].total, expected_b.total)
     # Guard: died_in_year actually changed something between the two persons.
@@ -556,9 +570,9 @@ def _pension_split_grid(
     the same construction ``test_household_assessment_elects_as_the_grid_does_with_no_aip``
     builds inline.
 
-    Assumes both persons are alive on every path and share one age at the end
-    of the year; household_assessment's both_alive mask and per-person ages are
-    not reproduced.
+    Assumes both persons are alive all year on every path and share one age of
+    65 or more at the end of the year; household_assessment's pro-rating by months
+    alive, its under-65 credit cap and per-person ages are not reproduced.
     """
     epi0 = federal.eligible_pension_income(income0, age, params.federal)
     epi1 = federal.eligible_pension_income(income1, age, params.federal)
@@ -1089,13 +1103,16 @@ def test_household_assessment_transfers_are_each_others_mirror(params) -> None:
     assert np.any(a0.transfer_out != 0.0), "the split must actually be non-zero here"
 
 
-def test_mixed_alive_paths_only_split_where_both_are_alive(params) -> None:
+def test_mixed_paths_do_not_split_where_a_death_predates_the_year(params) -> None:
     n = 3
     alive1 = np.array([True, False, True], dtype=np.bool_)
+    death1 = np.array([DEATH_NOT_DRAWN, JANUARY - 1, DEATH_NOT_DRAWN], dtype=np.int64)
     income0 = _ledger(n, db_pension=60_000.0)
     income1 = _ledger(n)
     person0 = _person("a", n, birth_year=1950, income=income0)
-    person1 = _person("b", n, birth_year=1950, income=income1, alive=alive1)
+    person1 = _person(
+        "b", n, birth_year=1950, income=income1, alive=alive1, death_month_index=death1
+    )
     household = _household((person0, person1), year=2026, n=n)
 
     a0, a1 = household_assessment(household, params)
@@ -1105,8 +1122,9 @@ def test_mixed_alive_paths_only_split_where_both_are_alive(params) -> None:
     unsplit0 = person_assessment(income0, age, zero, zero, "ab", params, JANUARY)
     unsplit1 = person_assessment(income1, age, zero, zero, "ab", params, JANUARY)
 
-    # Path 1 (index 1): person1 not alive, so the election must be forced to
-    # zero and the assessment must match the unsplit one exactly.
+    # Path 1 (index 1): person1 died in December 2025, before the tax year, so the
+    # election must be forced to zero and the assessment must match the unsplit one
+    # exactly.
     assert a0.total[1] == pytest.approx(unsplit0.total[1])
     assert a1.total[1] == pytest.approx(unsplit1.total[1])
 
@@ -1494,7 +1512,8 @@ def test_household_assessment_january_index_derivation_over_year_month_pairs(
 # =============================================================================
 #
 # eligible_pension_income - transfer_out + transfer_in in person_assessment
-# carries the transferred amount's share of the pension income amount credit.
+# (transfer_in_credit_base in place of transfer_in, where given) carries the
+# transferred amount's share of the pension income amount credit.
 # The credit is capped at credits.pension_income_amount_annual — small next
 # to the bracket effect household-level splitting tests above measure — so
 # each test below isolates it by holding net income (and hence every other
@@ -1592,6 +1611,390 @@ def test_transferor_loses_credit_in_step_with_remaining_eligible_pension_income(
         more_transferred.federal - less_transferred.federal,
         valuation_rate * (remaining_less - remaining_more),
     )
+
+
+# =============================================================================
+# Pension splitting in the year of a death (#67)
+# =============================================================================
+#
+# A 60,000 DB pension on one side and no income on the other: moving pension
+# income across lowers household tax all the way to an even split, so the
+# election sits on the largest candidate and transfer_out reads back the
+# maximum split the year allows.
+
+
+def _db_couple(
+    n: int,
+    *,
+    transferor: int = 0,
+    death0: int | None = None,
+    death1: int | None = None,
+) -> HouseholdState:
+    """Two persons aged 76 at the end of 2026, ``transferor`` with a 60,000 DB pension and
+    the other with no income; ``death0``/``death1`` is that person's death month index on
+    every path, ``None`` for alive past the December close."""
+    incomes = [_ledger(n), _ledger(n)]
+    incomes[transferor] = _ledger(n, db_pension=60_000.0)
+    persons = tuple(
+        _person(
+            person_id,
+            n,
+            birth_year=1950,
+            income=income,
+            **({} if death is None else _died_in(n, death)),
+        )
+        for person_id, income, death in zip(("a", "b"), incomes, (death0, death1), strict=True)
+    )
+    return _household(persons, year=2026, n=n)
+
+
+def test_split_in_the_transferors_death_year_reaches_the_full_share(params) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+
+    a0, a1 = household_assessment(_db_couple(1, death0=JANUARY + 4), params)
+
+    np.testing.assert_allclose(a0.transfer_out, maximum_share * 60_000.0, rtol=1e-12)
+    np.testing.assert_array_equal(a1.transfer_in, a0.transfer_out)
+
+
+@pytest.mark.parametrize(
+    ("death_offset", "months"),
+    [(4, 5), (0, 1), (11, 12)],
+    ids=["dies-in-may", "dies-in-january", "dies-in-december"],
+)
+def test_split_in_the_transferees_death_year_is_pro_rated_to_their_months(
+    params, death_offset: int, months: int
+) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+
+    a0, _ = household_assessment(_db_couple(1, death1=JANUARY + death_offset), params)
+
+    np.testing.assert_allclose(a0.transfer_out, maximum_share * months / 12 * 60_000.0, rtol=1e-12)
+
+
+def test_split_from_the_second_person_is_pro_rated_to_the_first_persons_months(
+    params,
+) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+
+    a0, a1 = household_assessment(_db_couple(1, transferor=1, death0=JANUARY + 4), params)
+
+    np.testing.assert_allclose(a1.transfer_out, maximum_share * 5 / 12 * 60_000.0, rtol=1e-12)
+    np.testing.assert_array_equal(a0.transfer_in, a1.transfer_out)
+
+
+def test_split_when_both_died_in_the_year_is_pro_rated_to_the_shorter_life(params) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+
+    # The transferor lived five months of the year, the transferee three.
+    a0, _ = household_assessment(_db_couple(1, death0=JANUARY + 4, death1=JANUARY + 2), params)
+
+    np.testing.assert_allclose(a0.transfer_out, maximum_share * 3 / 5 * 60_000.0, rtol=1e-12)
+
+
+def test_no_split_where_the_transferee_died_in_an_earlier_year(params) -> None:
+    a0, a1 = household_assessment(_db_couple(1, death1=JANUARY - 1), params)
+
+    for assessment in (a0, a1):
+        assert assessment.transfer_in[0] == 0.0 and assessment.transfer_out[0] == 0.0
+
+
+def test_no_split_where_the_transferor_died_in_an_earlier_year(params) -> None:
+    # A synthetic ledger: someone who died before the year has no income in it. The
+    # DB pension is there only so that a split, were one allowed, would be elected.
+    a0, a1 = household_assessment(_db_couple(1, death0=JANUARY - 1), params)
+
+    for assessment in (a0, a1):
+        assert assessment.transfer_in[0] == 0.0 and assessment.transfer_out[0] == 0.0
+
+
+def test_death_year_pro_rating_is_per_path(params) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    n = 4
+    # Person b on each path: alive, dies in May, dies in January, died in December 2025.
+    death1 = np.array([DEATH_NOT_DRAWN, JANUARY + 4, JANUARY, JANUARY - 1], dtype=np.int64)
+    person0 = _person("a", n, birth_year=1950, income=_ledger(n, db_pension=60_000.0))
+    person1 = _person(
+        "b",
+        n,
+        birth_year=1950,
+        income=_ledger(n),
+        alive=death1 > JANUARY + 11,
+        death_month_index=death1,
+    )
+
+    a0, _ = household_assessment(_household((person0, person1), year=2026, n=n), params)
+
+    np.testing.assert_allclose(
+        a0.transfer_out,
+        maximum_share * np.array([12.0, 5.0, 1.0, 0.0]) / 12 * 60_000.0,
+        rtol=1e-12,
+    )
+
+
+def test_both_alive_aged_65_and_over_elects_as_the_grid_does_over_a_corpus(params) -> None:
+    """Both alive all year and both 65 or over, every field equals the best candidate of
+    :func:`_pension_split_grid`, the search ``household_assessment`` ran before #67, over a
+    seeded corpus of ledgers."""
+    n = 200
+    rng = np.random.default_rng(67)
+    columns = (
+        ("db_pension", 40_000.0),
+        ("rrif_lif_withdrawals", 60_000.0),
+        ("employment", 80_000.0),
+        ("cpp", 16_000.0),
+        ("oas", 9_000.0),
+        ("interest", 20_000.0),
+    )
+
+    def _corpus_ledger() -> IncomeLedger:
+        return _ledger(
+            n,
+            **{
+                name: np.where(rng.random(n) < 0.4, 0.0, np.round(rng.uniform(0.0, top, n), 2))
+                for name, top in columns
+            },
+        )
+
+    income0 = _corpus_ledger()
+    income1 = _corpus_ledger()
+    person0 = _person("a", n, birth_year=1950, income=income0)
+    person1 = _person("b", n, birth_year=1950, income=income1)
+
+    a0, a1 = household_assessment(_household((person0, person1), year=2026, n=n), params)
+
+    candidates0, candidates1 = _pension_split_grid(
+        income0, income1, age_at_end_of_year(1950, 1, 2026), params
+    )
+    totals = np.stack(
+        [
+            (c0.federal + c0.provincial + c0.oas_repayment)
+            + (c1.federal + c1.provincial + c1.oas_repayment)
+            for c0, c1 in zip(candidates0, candidates1, strict=True)
+        ],
+        axis=0,
+    )
+    best = np.argmin(totals, axis=0)
+    idx = np.arange(n)
+    for field in dataclasses.fields(Assessment):
+        for got, candidates in ((a0, candidates0), (a1, candidates1)):
+            expected = np.stack([getattr(c, field.name) for c in candidates], axis=0)[best, idx]
+            np.testing.assert_array_equal(getattr(got, field.name), expected)
+    # Guard: the corpus elects splits in both directions.
+    assert np.any(a0.transfer_out > 0.0) and np.any(a1.transfer_out > 0.0)
+
+
+# =============================================================================
+# The under-65 transferee's pension credit (#67)
+# =============================================================================
+#
+# ITA 118(7): a transferee under 65 at year end counts toward the pension
+# credit only the split of qualified pension income -- here, the DB pension.
+# The transferor, aged 76, has a 120,000 RRIF withdrawal plus a DB pension; the
+# transferee has 20,000 of employment income, so they pay tax a credit can
+# reduce. Each test reads the elected transfer back, checks the transferee's
+# assessment against person_assessment at that transfer with the credit base
+# the rule gives, and guards that the alternative base would differ.
+
+
+def _credit_couple(
+    n: int,
+    *,
+    transferee_birth_year: int,
+    db_pension: float,
+    transferor: int = 0,
+    transferee_death: int | None = None,
+) -> HouseholdState:
+    """``transferor`` aged 76 with a 120,000 RRIF withdrawal and ``db_pension``; the other
+    person born in ``transferee_birth_year`` with 20,000 of employment income, dying in
+    ``transferee_death`` (a month index) or alive past the December close if ``None``."""
+    transferee = 1 - transferor
+    persons = [
+        _person(
+            "a",
+            n,
+            birth_year=1950,
+            income=_ledger(n, rrif_lif_withdrawals=120_000.0, db_pension=db_pension),
+        ),
+        _person(
+            "b",
+            n,
+            birth_year=transferee_birth_year,
+            income=_ledger(n, employment=20_000.0),
+            **({} if transferee_death is None else _died_in(n, transferee_death)),
+        ),
+    ]
+    if transferor == 1:
+        persons.reverse()
+    assert persons[transferee].birth_year == transferee_birth_year
+    return _household(tuple(persons), year=2026, n=n)
+
+
+def _transferee_at(
+    household: HouseholdState,
+    received: Assessment,
+    index: int,
+    params: RealParamYear,
+    credit_base: np.ndarray,
+    *,
+    died_in_year: bool = False,
+) -> Assessment:
+    """``person_assessment`` for ``household.persons[index]`` at the transfer ``received``
+    records, with the pension credit counting ``credit_base`` of it."""
+    person = household.persons[index]
+    zero = np.zeros(household.n_paths, dtype=np.float64)
+    return person_assessment(
+        person.income,
+        age_at_end_of_year(person.birth_year, person.birth_month, household.year),
+        received.transfer_in,
+        zero,
+        household.province,
+        params,
+        JANUARY,
+        died_in_year=died_in_year,
+        transfer_in_credit_base=credit_base,
+    )
+
+
+@pytest.mark.parametrize("transferor", [0, 1], ids=["first-to-second", "second-to-first"])
+@pytest.mark.parametrize("transferee_birth_year", [1966, 1962], ids=["aged-60", "aged-64"])
+def test_under_65_transferee_gains_no_credit_from_a_split_of_rrif_income(
+    params, transferor: int, transferee_birth_year: int
+) -> None:
+    household = _credit_couple(
+        1, transferee_birth_year=transferee_birth_year, db_pension=0.0, transferor=transferor
+    )
+    transferee = 1 - transferor
+
+    received = household_assessment(household, params)[transferee]
+
+    assert received.transfer_in[0] > 0.0  # guard: a split was elected
+    expected = _transferee_at(household, received, transferee, params, np.zeros(1))
+    np.testing.assert_allclose(received.federal, expected.federal, rtol=1e-12)
+    np.testing.assert_allclose(received.provincial, expected.provincial, rtol=1e-12)
+    whole = _transferee_at(household, received, transferee, params, received.transfer_in)
+    assert whole.federal[0] < received.federal[0]  # guard: the credit was worth having
+
+
+@pytest.mark.parametrize("transferor", [0, 1], ids=["first-to-second", "second-to-first"])
+def test_under_65_transferees_credit_base_is_capped_at_the_share_of_the_db_pension(
+    params, transferor: int
+) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    db_pension = 3_000.0
+    household = _credit_couple(
+        1, transferee_birth_year=1966, db_pension=db_pension, transferor=transferor
+    )
+    transferee = 1 - transferor
+
+    received = household_assessment(household, params)[transferee]
+
+    cap = maximum_share * db_pension
+    assert received.transfer_in[0] > cap  # guard: the cap binds
+    expected = _transferee_at(household, received, transferee, params, np.full(1, cap))
+    np.testing.assert_allclose(received.federal, expected.federal, rtol=1e-12)
+    np.testing.assert_allclose(received.provincial, expected.provincial, rtol=1e-12)
+    whole = _transferee_at(household, received, transferee, params, received.transfer_in)
+    assert whole.federal[0] < received.federal[0]  # guard: the cap is below the credit's own
+
+
+@pytest.mark.parametrize("transferor", [0, 1], ids=["first-to-second", "second-to-first"])
+def test_under_65_transferees_cap_is_pro_rated_in_the_year_of_their_death(
+    params, transferor: int
+) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    db_pension = 3_000.0
+    household = _credit_couple(
+        1,
+        transferee_birth_year=1966,
+        db_pension=db_pension,
+        transferor=transferor,
+        transferee_death=JANUARY + 4,
+    )
+    transferee = 1 - transferor
+
+    received = household_assessment(household, params)[transferee]
+
+    cap = maximum_share * (5 / 12 * db_pension)
+    assert received.transfer_in[0] > cap  # guard: the cap binds
+    expected = _transferee_at(
+        household, received, transferee, params, np.full(1, cap), died_in_year=True
+    )
+    np.testing.assert_allclose(received.federal, expected.federal, rtol=1e-12)
+    np.testing.assert_allclose(received.provincial, expected.provincial, rtol=1e-12)
+    unscaled = _transferee_at(
+        household,
+        received,
+        transferee,
+        params,
+        np.full(1, maximum_share * db_pension),
+        died_in_year=True,
+    )
+    assert unscaled.federal[0] < received.federal[0]  # guard: the scaling changes the credit
+
+
+@pytest.mark.parametrize("transferor", [0, 1], ids=["first-to-second", "second-to-first"])
+def test_transferee_aged_65_at_year_end_counts_the_whole_split(params, transferor: int) -> None:
+    min_age = params.federal.number("eligible_pension_income.rrif_minimum_age_years")
+    household = _credit_couple(1, transferee_birth_year=1961, db_pension=0.0, transferor=transferor)
+    assert age_at_end_of_year(1961, 1, 2026) == min_age  # guard: exactly at the age
+    transferee = 1 - transferor
+
+    received = household_assessment(household, params)[transferee]
+
+    assert received.transfer_in[0] > 0.0  # guard: a split was elected
+    expected = _transferee_at(household, received, transferee, params, received.transfer_in)
+    np.testing.assert_allclose(received.federal, expected.federal, rtol=1e-12)
+    np.testing.assert_allclose(received.provincial, expected.provincial, rtol=1e-12)
+    none = _transferee_at(household, received, transferee, params, np.zeros(1))
+    assert received.federal[0] < none.federal[0]  # guard: the credit was worth having
+
+
+def test_person_assessment_credit_base_none_is_the_whole_transfer_in(params) -> None:
+    n = 2
+    income = _ledger(n, employment=40_000.0)
+    transfer_in = np.array([0.0, 10_000.0])
+
+    omitted = person_assessment(income, 60, transfer_in, 0.0, "ab", params, JANUARY)
+    passed_none = person_assessment(
+        income, 60, transfer_in, 0.0, "ab", params, JANUARY, transfer_in_credit_base=None
+    )
+    explicit = person_assessment(
+        income, 60, transfer_in, 0.0, "ab", params, JANUARY, transfer_in_credit_base=transfer_in
+    )
+
+    for field in dataclasses.fields(Assessment):
+        np.testing.assert_array_equal(
+            getattr(passed_none, field.name), getattr(omitted, field.name)
+        )
+        np.testing.assert_array_equal(getattr(explicit, field.name), getattr(omitted, field.name))
+
+
+def test_person_assessment_credit_base_changes_only_the_pension_credit(params) -> None:
+    pension_amount = params.federal.annual_amount("credits.pension_income_amount_annual", JANUARY)
+    valuation_rate = params.federal.number("credits.valuation_rate")
+    n = 1
+    transfer_in = 10_000.0
+    assert transfer_in > pension_amount  # the credit is capped, not proportional
+    income = _ledger(n, employment=40_000.0)
+
+    whole = person_assessment(income, 60, transfer_in, 0.0, "ab", params, JANUARY)
+    none = person_assessment(
+        income, 60, transfer_in, 0.0, "ab", params, JANUARY, transfer_in_credit_base=0.0
+    )
+
+    for name in (
+        "net_income",
+        "net_income_after_repayment",
+        "taxable_income",
+        "oas_repayment",
+        "aip_penalty",
+        "transfer_in",
+        "transfer_out",
+    ):
+        np.testing.assert_array_equal(getattr(none, name), getattr(whole, name))
+    np.testing.assert_allclose(none.federal - whole.federal, valuation_rate * pension_amount)
+    assert np.all(none.provincial > whole.provincial)
 
 
 # =============================================================================

@@ -1374,8 +1374,9 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
        sweep of the newly converted balance is needed.
     3. Assess the year in one joint step, on this year's brackets
        (``engine.tax.combined.household_assessment``). This is one assessment per person, the
-       dead included: that function already gates only the pension split on ``alive``, so
-       nothing here filters persons out of the assessment.
+       dead included: that function gates only the pension split, on whether either
+       person's death took effect before January of the year, so nothing here filters
+       persons out of the assessment.
     4. Assessment less ``remitted`` is **assigned** to ``balance_owing`` (not added to it,
        which is already zero per item 1): negative is a refund, settled in next year's filing
        month.

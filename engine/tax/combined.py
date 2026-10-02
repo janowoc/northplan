@@ -24,6 +24,7 @@ from numpy.typing import ArrayLike, NDArray
 from engine.accounts import resp
 from engine.core.indexation import RealParamSet, RealParamYear
 from engine.core.state import Assessment, HouseholdState, IncomeLedger
+from engine.core.timeline import MONTHS_PER_YEAR
 from engine.core.timeline import age_at_end_of_year as _age_at_end_of_year
 from engine.tax import federal, provincial
 
@@ -74,6 +75,7 @@ def person_assessment(
     january_month_index: int,
     *,
     died_in_year: ArrayLike = False,
+    transfer_in_credit_base: ArrayLike | None = None,
 ) -> Assessment:
     """One person's federal and provincial assessment, including the OAS repayment and AIP tax.
 
@@ -86,9 +88,10 @@ def person_assessment(
     23600 -- only the brackets see it. ``oas_received`` is not an argument: it is always
     ``ledger.oas``. The eligible pension income transferred carries its share of the
     pension income credit eligibility with it, which is what ``eligible_pension_income -
-    transfer_out + transfer_in`` does below. The AIP special tax (line 41800) is computed
-    from ``ledger.resp_accumulated_income`` and is additional tax only; the payment itself
-    is already in net income.
+    transfer_out + transfer_in_credit_base`` does below; net income still counts the whole
+    ``transfer_in``. The AIP special tax (line 41800) is computed from
+    ``ledger.resp_accumulated_income`` and is additional tax only; the payment itself is
+    already in net income.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -103,6 +106,9 @@ def person_assessment(
         died_in_year: Whether this is this person's year of death,
             ``(n_paths,)`` or scalar bool; default ``False`` reproduces
             every call site that omits it.
+        transfer_in_credit_base: The part of ``transfer_in`` the pension
+            income credit counts (ITA 118(7)), same shape; ``None`` means
+            all of ``transfer_in``.
 
     Returns:
         This person's :class:`Assessment` at the given transfer.
@@ -110,10 +116,11 @@ def person_assessment(
     fed = params.federal
     prov = params.province(province)
     net = federal.net_income(ledger, fed, transfer_in, transfer_out)
+    credit_base = transfer_in if transfer_in_credit_base is None else transfer_in_credit_base
     epi = (
         federal.eligible_pension_income(ledger, age_at_end_of_year, fed)
         - np.asarray(transfer_out, dtype=np.float64)
-        + np.asarray(transfer_in, dtype=np.float64)
+        + np.asarray(credit_base, dtype=np.float64)
     )
     repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
     penalty = resp.aip_penalty(ledger.resp_accumulated_income, params.resp)
@@ -206,6 +213,16 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
     from params/, plus the maximum itself (L51); it does not search every real
     fraction. A household of one skips the search and elects zero.
 
+    The split is available unless either person's death took effect before
+    January of the year, so in the year of the first death too (L41). With ``m``
+    a person's months of the year up to and including the month of death (a
+    January death counts 1), the maximum transfer from ``x`` to ``y`` is the
+    share times ``min(m_x, m_y) / m_x`` times ``x``'s eligible pension income
+    (ITA 60.03(1); T1032 line 18). A transferee under the age
+    ``eligible_pension_income.rrif_minimum_age_years`` at year end counts toward
+    the pension credit no more than that maximum taken on ``x``'s DB pension
+    alone (ITA 118(7)).
+
     Args:
         state: Household state at the December close.
         params: Every parameter file for the tax year, in real dollars.
@@ -269,20 +286,49 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
 
     fractions: list[float] = [*magnitudes, *(-m for m in magnitudes[1:])]
 
-    both_alive = person0.alive & person1.alive
+    # Months of the tax year up to and including the month of death (a January death
+    # counts 1): clip(death_month_index - january + 1, 0, 12), the minimum taken first
+    # so engine.core.state.DEATH_NOT_DRAWN never enters the subtraction.
+    december_month_index = january_month_index + MONTHS_PER_YEAR - 1
+    months0, months1 = (
+        np.clip(
+            np.minimum(person.death_month_index, december_month_index) - january_month_index + 1,
+            0,
+            MONTHS_PER_YEAR,
+        )
+        for person in (person0, person1)
+    )
+    # min(m_x, m_y) / m_x, zero where either death took effect before January;
+    # np.maximum only guards a zero m_x, whose numerator is zero too.
+    shared = np.minimum(months0, months1).astype(np.float64)
+    scale0 = shared / np.maximum(months0, 1)
+    scale1 = shared / np.maximum(months1, 1)
+    min_age = fed.number("eligible_pension_income.rrif_minimum_age_years")
     zeros = np.zeros(state.n_paths, dtype=np.float64)
 
     assessments0: list[Assessment] = []
     assessments1: list[Assessment] = []
     for fraction in fractions:
         if fraction >= 0:
-            transfer = np.where(both_alive, fraction * epi0, 0.0)
+            transfer = fraction * (scale0 * epi0)
             t_in0, t_out0 = zeros, transfer
             t_in1, t_out1 = transfer, zeros
+            base0 = zeros
+            base1 = (
+                np.minimum(transfer, maximum_share * (scale0 * person0.income.db_pension))
+                if age1 < min_age
+                else transfer
+            )
         else:
-            transfer = np.where(both_alive, -fraction * epi1, 0.0)
+            transfer = -fraction * (scale1 * epi1)
             t_in0, t_out0 = transfer, zeros
             t_in1, t_out1 = zeros, transfer
+            base0 = (
+                np.minimum(transfer, maximum_share * (scale1 * person1.income.db_pension))
+                if age0 < min_age
+                else transfer
+            )
+            base1 = zeros
         assessments0.append(
             person_assessment(
                 person0.income,
@@ -293,6 +339,7 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
                 params,
                 january_month_index,
                 died_in_year=died_in_year[0],
+                transfer_in_credit_base=base0,
             )
         )
         assessments1.append(
@@ -305,6 +352,7 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
                 params,
                 january_month_index,
                 died_in_year=died_in_year[1],
+                transfer_in_credit_base=base1,
             )
         )
 

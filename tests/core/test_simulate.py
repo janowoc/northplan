@@ -316,7 +316,7 @@ class TestPersonYearCounts:
         couple_real_params,
         couple_withdrawal_order,
     ):
-        n_paths = 64
+        n_paths = 256
         draws = build_draws(
             couple_scenario, couple_market, n_paths=n_paths, mortality=couple_mortality
         )
@@ -480,7 +480,7 @@ class TestPerYearFigures:
             couple_mortality,
             couple_real_params,
             couple_withdrawal_order,
-            64,
+            256,
         )
         history, after_tax_net_worth, gis_band_count, living_count = _expected_per_year(step_spy)
 
@@ -500,7 +500,7 @@ class TestPerYearFigures:
         couple_withdrawal_order,
         step_spy,
     ):
-        n_paths = 64
+        n_paths = 256
         state, result = _run_seeded(
             couple_scenario,
             couple_market,
