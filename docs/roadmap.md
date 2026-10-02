@@ -96,6 +96,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 73 | Test fixtures state scenarios the load checks refuse | agent | 65 | every scenario a test builds passes the load checks or names why not; a guard enforces it |
 | 74 | Comments and test docstrings cite review labels a reader cannot see | agent | — | no review label remains in `engine/` or `tests/`; each `Requirement N` names its issue or is gone |
 | 75 | A CPP tier-2 test does not assert its total stays below the second ceiling | agent | — | the test fails when its total reaches `tier2_ceiling`; every comment premise in the CPP tier tests is asserted |
+| 76 | An under-65 survivor's income from a deceased spouse's plan is qualified pension income | agent | 67 | an under-65 survivor's inherited RRIF income earns the pension credit; L15's sentence goes |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -403,6 +404,13 @@ after 66 as a small cleanup between pieces of work; nothing depends on it.
 `tests/benefits/test_employment.py` says its total lands in tier 2 but asserts
 only that it passes the first ceiling. The gap predates 74 and lies outside it.
 It sits right after 74 as a small cleanup; nothing depends on it.
+
+76 came out of the review of 67. The engine counts only the DB pension as
+qualified pension income, so an under-65 survivor's income from a deceased
+spouse's RRIF earns no pension credit, which ITA s.118(7) allows. 67 recorded
+this in L15; 76 models it. No committed scenario has a survivor under 65. It
+sits after 68 and before 22, so the tax rules are complete before the search
+starts scoring; nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
