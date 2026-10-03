@@ -44,6 +44,7 @@ from engine.core.state import (
     updated,
 )
 from engine.core.step import (
+    _deemed_single_assessments,
     advance_month,
     advance_month_traced,
     close_year,
@@ -2786,8 +2787,8 @@ class TestYearRecordFields:
         for person in closed.persons:
             deemed = updated(
                 person.income,
-                rrif_lif_withdrawals=(
-                    person.income.rrif_lif_withdrawals
+                deemed_registered_income=(
+                    person.income.deemed_registered_income
                     + person.rrsp.balance
                     + person.rrif.balance
                     + person.lira.balance
@@ -2980,8 +2981,8 @@ def _recompute_terminal_total(persons, year, january_month_index, province, real
     for person in persons:
         deemed = updated(
             person.income,
-            rrif_lif_withdrawals=(
-                person.income.rrif_lif_withdrawals
+            deemed_registered_income=(
+                person.income.deemed_registered_income
                 + person.rrsp.balance
                 + person.rrif.balance
                 + person.lira.balance
@@ -3805,7 +3806,7 @@ class TestSecondDeathTerminalReturn:
 
         deemed = updated(
             person.income,
-            rrif_lif_withdrawals=(
+            deemed_registered_income=(
                 person.rrsp.balance + person.rrif.balance + person.lira.balance + person.lif.balance
             ),
             capital_gains=taxable.deemed_disposition(person.taxable),
@@ -3864,8 +3865,8 @@ class TestTerminalReturnCapitalLoss:
         # -- the deduction is really reaching the terminal assessment.
         deemed = updated(
             person.income,
-            rrif_lif_withdrawals=(
-                person.income.rrif_lif_withdrawals
+            deemed_registered_income=(
+                person.income.deemed_registered_income
                 + person.rrsp.balance
                 + person.rrif.balance
                 + person.lira.balance
@@ -3913,8 +3914,8 @@ class TestTerminalReturnCapitalLoss:
         age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, closed.year)
         deemed = updated(
             person.income,
-            rrif_lif_withdrawals=(
-                person.income.rrif_lif_withdrawals
+            deemed_registered_income=(
+                person.income.deemed_registered_income
                 + person.rrsp.balance
                 + person.rrif.balance
                 + person.lira.balance
@@ -4228,8 +4229,8 @@ class TestAfterTaxNetWorthOnTheCouple:
         for person in closed.persons:
             deemed = updated(
                 person.income,
-                rrif_lif_withdrawals=(
-                    person.income.rrif_lif_withdrawals
+                deemed_registered_income=(
+                    person.income.deemed_registered_income
                     + person.rrsp.balance
                     + person.rrif.balance
                     + person.lira.balance
@@ -4893,7 +4894,7 @@ class TestJanuaryFinalDeathAtRunLevel:
         )
         deemed = updated(
             zero_ledger,
-            rrif_lif_withdrawals=(
+            deemed_registered_income=(
                 december_balances.rrsp
                 + december_balances.rrif
                 + december_balances.lira
@@ -5122,8 +5123,11 @@ class TestInheritedWithdrawalsInTheLedger:
         resolve_deaths(state, couple_real_params)
 
         assert len(seen) == 2  # guard: both terminal returns were assessed
-        for ledger in seen:
-            assert np.all(ledger.rrif_lif_withdrawals > 777.0)  # guard: balances were deemed
+        for person, ledger in zip(state.persons, seen, strict=True):
+            assert np.all(ledger.deemed_registered_income > 0.0)  # guard: balances were deemed
+            np.testing.assert_array_equal(
+                ledger.rrif_lif_withdrawals, person.income.rrif_lif_withdrawals
+            )
             np.testing.assert_array_equal(ledger.inherited_rrif_lif_withdrawals, 777.0)
 
 
@@ -5246,3 +5250,271 @@ class TestInheritedFractionAtTheStatutoryConversion:
         )
         assert np.all(b.rrif.inherited_fraction < 0.5)  # the conversion diluted it
         assert np.all(b.lif.inherited_fraction < 0.4)
+
+
+def _deemed_corpus_persons(scenario, age: int, n: int = 6):
+    """The scenario's persons, each ``age`` at the end of the start year, every one of the
+    four registered balances positive and distinct on every path, and a live ledger
+    spanning no pension income, a little, and a lot."""
+    state = build_initial_state(scenario, n_paths=n)
+    persons = []
+    for k, person in enumerate(state.persons):
+        scale = 1.0 + k
+        persons.append(
+            updated(
+                person,
+                birth_year=state.year - age,
+                birth_month=1,
+                rrsp=updated(person.rrsp, balance=scale * np.linspace(11_000.0, 61_000.0, n)),
+                rrif=updated(person.rrif, balance=scale * np.linspace(13_000.0, 83_000.0, n)),
+                lira=updated(
+                    person.lira,
+                    balance=scale * np.linspace(17_000.0, 27_000.0, n),
+                    jurisdiction="ab",
+                ),
+                lif=updated(person.lif, balance=scale * np.linspace(19_000.0, 54_000.0, n)),
+                income=updated(
+                    person.income,
+                    rrif_lif_withdrawals=np.array([0.0, 0.0, 1_000.0, 1_000.0, 50_000.0, 50_000.0]),
+                    db_pension=np.array([0.0, 1_500.0, 0.0, 1_500.0, 0.0, 1_500.0]),
+                ),
+            )
+        )
+    return state, tuple(persons)
+
+
+def _assess_with_balances_in(
+    field, persons, year, january_month_index, province, real_params, died
+):
+    """Each person assessed alone on this year's ledger plus the four registered balances
+    added to ``field`` and the taxable holding's deemed gain -- the terminal-return
+    arithmetic with the balances routed through a chosen ledger component."""
+    out = []
+    for person in persons:
+        n = person.alive.shape[0]
+        ledger = updated(
+            person.income,
+            **{
+                field: getattr(person.income, field)
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance
+            },
+            capital_gains=person.income.capital_gains + taxable.deemed_disposition(person.taxable),
+        )
+        age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
+        out.append(
+            person_assessment(
+                ledger,
+                age_end,
+                np.zeros(n),
+                np.zeros(n),
+                province,
+                real_params,
+                january_month_index,
+                died_in_year=died,
+            )
+        )
+    return tuple(out)
+
+
+class TestDeemedRegisteredIncome:
+    """The terminal return brings every registered balance into net income as an amount
+    deemed received at death, never as pension income (L42): ``deemed_registered_income``
+    carries it, for the final death and for ``after_tax_net_worth`` alike.
+    """
+
+    def test_the_final_death_ledger_carries_every_balance_as_deemed_income(
+        self, couple_opening_state, couple_real_params, monkeypatch
+    ):
+        from engine.core import step as step_module
+
+        n = couple_opening_state.n_paths
+        persons = tuple(
+            updated(
+                p,
+                death_month_index=np.zeros(n, dtype=np.int64),
+                rrsp=updated(p.rrsp, balance=np.full(n, 11_000.0)),
+                rrif=updated(p.rrif, balance=np.full(n, 13_000.0)),
+                lira=updated(p.lira, balance=np.full(n, 17_000.0), jurisdiction="ab"),
+                lif=updated(p.lif, balance=np.full(n, 19_000.0)),
+                income=updated(p.income, rrif_lif_withdrawals=np.full(n, 5_000.0)),
+            )
+            for p in couple_opening_state.persons
+        )
+        state = updated(couple_opening_state, persons=persons)
+        seen = []
+
+        def _recording(ledger, *args, **kwargs):
+            seen.append(ledger)
+            return person_assessment(ledger, *args, **kwargs)
+
+        monkeypatch.setattr(step_module, "person_assessment", _recording)
+
+        resolve_deaths(state, couple_real_params)
+
+        assert len(seen) == 2  # guard: both terminal returns were assessed
+        for ledger in seen:
+            np.testing.assert_array_equal(
+                ledger.deemed_registered_income, 11_000.0 + 13_000.0 + 17_000.0 + 19_000.0
+            )
+            np.testing.assert_array_equal(ledger.rrif_lif_withdrawals, 5_000.0)
+            np.testing.assert_array_equal(ledger.rrsp_withdrawals, 0.0)
+
+    def test_the_after_tax_net_worth_ledger_carries_every_balance_as_deemed_income(
+        self, couple_scenario, couple_real_params, monkeypatch
+    ):
+        from engine.core import step as step_module
+
+        n = 2
+        state = build_initial_state(couple_scenario, n_paths=n)
+        # Both persons under the conversion age, so close_year converts nothing.
+        state = updated(
+            state,
+            persons=tuple(updated(p, birth_year=state.year - 66) for p in state.persons),
+        )
+        opened = open_year(state, couple_real_params)
+        opened = _meet_rrif_lif_minimum(opened)
+        opened = updated(
+            opened,
+            persons=tuple(
+                updated(
+                    p,
+                    rrsp=updated(p.rrsp, balance=np.full(n, 11_000.0)),
+                    lira=updated(p.lira, balance=np.full(n, 17_000.0), jurisdiction="ab"),
+                )
+                for p in opened.persons
+            ),
+        )
+        seen = []
+
+        def _recording(ledger, *args, **kwargs):
+            seen.append(ledger)
+            return person_assessment(ledger, *args, **kwargs)
+
+        monkeypatch.setattr(step_module, "person_assessment", _recording)
+
+        closed = close_year(opened, couple_real_params)
+
+        assert len(seen) == 2  # guard: both hypothetical returns were assessed
+        for person, ledger in zip(closed.persons, seen, strict=True):
+            for balance in (person.rrsp, person.rrif, person.lira, person.lif):
+                assert np.all(balance.balance > 0.0)  # guard: every balance is deemed
+            assert np.all(person.income.rrif_lif_withdrawals > 0.0)  # guard: a live payment
+            np.testing.assert_array_equal(
+                ledger.deemed_registered_income,
+                person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance,
+            )
+            np.testing.assert_array_equal(
+                ledger.rrif_lif_withdrawals, person.income.rrif_lif_withdrawals
+            )
+
+    @pytest.mark.parametrize("offset", [-1, 0, 1, 15])
+    @pytest.mark.parametrize("died", [True, False])
+    def test_the_terminal_return_assesses_the_balances_as_non_pension_income(
+        self, couple_scenario, couple_real_params, offset, died
+    ):
+        min_age = couple_real_params.federal.number(
+            "eligible_pension_income.rrif_minimum_age_years"
+        )
+        age = int(min_age) + offset
+        state, persons = _deemed_corpus_persons(couple_scenario, age)
+        for person in persons:
+            assert (
+                timeline.age_at_end_of_year(person.birth_year, person.birth_month, state.year)
+                == age
+            )
+
+        actual = _deemed_single_assessments(
+            persons, state.year, 0, state.province, couple_real_params, (died, died)
+        )
+        # The oracle: the same balances as an RRSP lump sum, which counts in total
+        # income and never in eligible pension income.
+        expected = _assess_with_balances_in(
+            "rrsp_withdrawals", persons, state.year, 0, state.province, couple_real_params, died
+        )
+
+        for got, want in zip(actual, expected, strict=True):
+            for field in dataclasses.fields(Assessment):
+                np.testing.assert_allclose(
+                    getattr(got, field.name), getattr(want, field.name), rtol=1e-12, atol=1e-6
+                )
+
+    def test_the_balances_are_added_to_the_live_deemed_income(
+        self, couple_scenario, couple_real_params, monkeypatch
+    ):
+        from engine.core import step as step_module
+
+        state, persons = _deemed_corpus_persons(couple_scenario, 70)
+        # The live field is zero in a run; a synthetic value shows it is added to.
+        persons = tuple(
+            updated(p, income=updated(p.income, deemed_registered_income=np.full(6, 500.0)))
+            for p in persons
+        )
+        seen = []
+
+        def _recording(ledger, *args, **kwargs):
+            seen.append(ledger)
+            return person_assessment(ledger, *args, **kwargs)
+
+        monkeypatch.setattr(step_module, "person_assessment", _recording)
+
+        _deemed_single_assessments(
+            persons, state.year, 0, state.province, couple_real_params, (True, True)
+        )
+
+        assert len(seen) == 2  # guard: both returns were assessed
+        for person, ledger in zip(persons, seen, strict=True):
+            for account in (person.rrsp, person.rrif, person.lira, person.lif):
+                assert np.all(account.balance > 0.0)  # guard: every term of the sum counts
+            np.testing.assert_array_equal(
+                ledger.deemed_registered_income,
+                500.0
+                + person.rrsp.balance
+                + person.rrif.balance
+                + person.lira.balance
+                + person.lif.balance,
+            )
+
+    @pytest.mark.parametrize("offset", [-1, 0, 1])
+    def test_the_deemed_balances_earn_no_pension_credit(
+        self, couple_scenario, couple_real_params, offset
+    ):
+        min_age = couple_real_params.federal.number(
+            "eligible_pension_income.rrif_minimum_age_years"
+        )
+        age = int(min_age) + offset
+        state, persons = _deemed_corpus_persons(couple_scenario, age)
+        federal_amount = couple_real_params.federal.annual_amount(
+            "credits.pension_income_amount_annual", 0
+        )
+        provincial_amount = couple_real_params.province(state.province).annual_amount(
+            "credits.pension_income_amount_annual", 0
+        )
+
+        actual = _deemed_single_assessments(
+            persons, state.year, 0, state.province, couple_real_params, (True, True)
+        )
+        as_pension_income = _assess_with_balances_in(
+            "rrif_lif_withdrawals", persons, state.year, 0, state.province, couple_real_params, True
+        )
+
+        for person, got, old in zip(persons, actual, as_pension_income, strict=True):
+            if offset < 0:
+                np.testing.assert_allclose(got.total, old.total, rtol=1e-12, atol=1e-6)
+                continue
+            live = federal.eligible_pension_income(person.income, age, couple_real_params.federal)
+            below_the_amount = live < federal_amount
+            above_both_amounts = live >= max(federal_amount, provincial_amount)
+            # Guard: no path in between. It can bite only in a parameter year whose
+            # provincial amount exceeds the federal one.
+            assert np.all(below_the_amount | above_both_amounts)
+            assert np.any(below_the_amount) and np.any(above_both_amounts)  # guard: both reached
+            assert np.all(got.total[below_the_amount] > old.total[below_the_amount] + 1.0)
+            np.testing.assert_allclose(
+                got.total[above_both_amounts], old.total[above_both_amounts], rtol=1e-12, atol=1e-6
+            )

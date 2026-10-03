@@ -79,6 +79,7 @@ def total_income(
         + ledger.db_pension
         + ledger.rrsp_withdrawals
         + ledger.rrif_lif_withdrawals
+        + ledger.deemed_registered_income
         + ledger.interest
         + ledger.eligible_dividends * (1 + gross_up_rate)
         + np.maximum(ledger.capital_gains, 0.0) * inclusion_rate
@@ -355,7 +356,7 @@ def eligible_pension_income(
     Always :func:`qualified_pension_income`; every RRIF/LIF withdrawal from
     the year the recipient turns
     ``eligible_pension_income.rrif_minimum_age_years`` by year end. Never
-    CPP, OAS, or RRSP withdrawals.
+    CPP, OAS, RRSP withdrawals, or ``ledger.deemed_registered_income``.
 
     Args:
         ledger: This person's income components, accumulated over the year.

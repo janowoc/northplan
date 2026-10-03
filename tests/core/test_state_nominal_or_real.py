@@ -177,6 +177,11 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         Basis.REAL,
         "Current-year flows, zeroed each January; assessed against a real-dollar tax table.",
     ),
+    ("IncomeLedger", "deemed_registered_income"): (
+        Basis.REAL,
+        "Written only in the terminal-return ledger, from the real registered balances; "
+        "zero in the live ledger, which is zeroed each January.",
+    ),
     ("IncomeLedger", "interest"): (
         Basis.REAL,
         "Current-year flows, zeroed each January; assessed against a real-dollar tax table.",

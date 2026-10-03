@@ -1041,3 +1041,11 @@ def test_every_rrif_and_lif_opens_with_no_inherited_share() -> None:
         np.testing.assert_array_equal(person.rrif.inherited_fraction, 0.0)
         np.testing.assert_array_equal(person.lif.inherited_fraction, 0.0)
         np.testing.assert_array_equal(person.income.inherited_rrif_lif_withdrawals, 0.0)
+
+
+def test_every_ledger_opens_with_no_deemed_registered_income() -> None:
+    state = build_initial_state(load_scenario(COUPLE), n_paths=2)
+
+    for person in state.persons:
+        assert np.all(person.rrif.balance > 0.0)  # guard: a balance a terminal return deems
+        np.testing.assert_array_equal(person.income.deemed_registered_income, 0.0)

@@ -595,10 +595,11 @@ income with that year's income, taxed as a single person — every person is
 assessed alone on the terminal return, never split, even in a household of
 two. In reality, where both die in the same year, the two final returns may
 still split; we split nothing that year. Direction: conservative. The whole
-registered balance enters as RRIF/LIF income, RRSP and LIRA included, so an
-RRSP or LIRA balance counts toward the eligible pension income amount for a
-person 65 or older at year end. Direction: optimistic, by at most the federal
-and provincial pension credits on each return that carries such a balance. A
+registered balance enters net income as an amount deemed received at death,
+never as pension income, so no part of it earns the pension income amount at
+any age. This matches the law: CRA reports the deemed RRIF amount (T4RIF box
+18) on line 13000 and excludes the deemed RRSP amount (T4RSP box 34) from the
+pension income amount; a LIF is a RRIF and a LIRA an RRSP for this purpose. A
 death taking effect in January is taxed that year on an empty ledger, as if it
 had happened on 1 January. The estate is what remains after that tax and any
 balance owing, floored at zero: in reality the heirs owe nothing beyond the

@@ -380,6 +380,11 @@ class IncomeLedger:
         inherited_rrif_lif_withdrawals: The part of ``rrif_lif_withdrawals`` paid out of a
             balance rolled over from a deceased spouse (``RrifState.inherited_fraction``),
             counted inside ``rrif_lif_withdrawals``, never in addition to it.
+        deemed_registered_income: The whole RRSP, RRIF, LIRA and LIF balance deemed
+            received at death (ITA 146(8.8), 146.3(6)): counted in total income, never in
+            eligible or qualified pension income. Written only in the deemed ledger of
+            ``engine.core.step._deemed_single_assessments`` (the terminal return and
+            ``after_tax_net_worth``); zero in the live ledger.
         eligible_dividends: Eligible dividends from taxable holdings, before gross-up.
         capital_gains: Net capital gains from taxable holdings, realized on disposition or
             distributed by the holding without a sale, before the inclusion rate. Signed:
@@ -398,6 +403,7 @@ class IncomeLedger:
     rrsp_withdrawals: NDArray[np.float64]
     rrif_lif_withdrawals: NDArray[np.float64]
     inherited_rrif_lif_withdrawals: NDArray[np.float64]
+    deemed_registered_income: NDArray[np.float64]
     interest: NDArray[np.float64]
     eligible_dividends: NDArray[np.float64]
     capital_gains: NDArray[np.float64]

@@ -142,7 +142,7 @@ def _pension(*, bridge: float = 0.0, bridge_end_month_index: int | None = None) 
 
 
 def _income_ledger() -> IncomeLedger:
-    return IncomeLedger(*(_zeros() for _ in range(16)))
+    return IncomeLedger(*(_zeros() for _ in range(17)))
 
 
 def _person(

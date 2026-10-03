@@ -413,12 +413,12 @@ this in L15; 76 models it. No committed scenario has a survivor under 65. It
 sits after 68 and before 22, so the tax rules are complete before the search
 starts scoring; nothing depends on it.
 
-77 came out of the review of 76. The terminal return adds every registered
-balance to RRIF/LIF income, so at 65 and over a deemed RRIF or LIF balance
-counts toward the pension credit. Whether it should turns on ITA 146.3(6) and
-118(7); L42 already records the RRSP and LIRA part. It sits right after 76, so
-the pension-income rules are settled before 22 starts scoring; nothing depends
-on it.
+77 came out of the review of 76. When it was filed, the terminal return added
+every registered balance to RRIF/LIF income, so at 65 and over a deemed RRIF or
+LIF balance counted toward the pension credit, and L42 recorded only the RRSP
+and LIRA part. Whether it should count turns on ITA 146.3(6) and 118(7). It
+sits right after 76, so the pension-income rules are settled before 22 starts
+scoring; nothing depends on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for

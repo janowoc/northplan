@@ -698,6 +698,7 @@ def _empty_income_ledger(n_paths: int) -> IncomeLedger:
         rrsp_withdrawals=_zeros(n_paths),
         rrif_lif_withdrawals=_zeros(n_paths),
         inherited_rrif_lif_withdrawals=_zeros(n_paths),
+        deemed_registered_income=_zeros(n_paths),
         interest=_zeros(n_paths),
         eligible_dividends=_zeros(n_paths),
         capital_gains=_zeros(n_paths),

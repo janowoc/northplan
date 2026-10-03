@@ -58,6 +58,7 @@ LEDGER_FIELDS = (
     "rrsp_withdrawals",
     "rrif_lif_withdrawals",
     "inherited_rrif_lif_withdrawals",
+    "deemed_registered_income",
     "interest",
     "eligible_dividends",
     "capital_gains",

@@ -235,6 +235,7 @@ _STATE_EXEMPT = frozenset(
         ("persons", "income", "db_pension"),
         ("persons", "income", "rrsp_withdrawals"),
         ("persons", "income", "rrif_lif_withdrawals"),
+        ("persons", "income", "deemed_registered_income"),
         ("persons", "income", "interest"),
         ("persons", "income", "eligible_dividends"),
         ("persons", "income", "capital_gains"),

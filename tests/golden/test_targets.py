@@ -357,6 +357,7 @@ def test_golden_case_names_the_target_and_matches_direct_person_assessment(
         rrsp_withdrawals=np.zeros(n),
         rrif_lif_withdrawals=np.array([5_000.0]),
         inherited_rrif_lif_withdrawals=np.zeros(n),
+        deemed_registered_income=np.zeros(n),
         interest=np.zeros(n),
         eligible_dividends=np.zeros(n),
         capital_gains=np.zeros(n),

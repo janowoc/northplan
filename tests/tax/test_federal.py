@@ -37,6 +37,7 @@ def _ledger(n_paths: int = 1, **overrides: object) -> IncomeLedger:
         "rrsp_withdrawals": zeros,
         "rrif_lif_withdrawals": zeros,
         "inherited_rrif_lif_withdrawals": zeros,
+        "deemed_registered_income": zeros,
         "interest": zeros,
         "eligible_dividends": zeros,
         "capital_gains": zeros,
@@ -530,3 +531,40 @@ def test_eligible_pension_income_counts_only_the_inherited_part_under_the_age(
     result = federal.eligible_pension_income(ledger, min_age + offset, fed)
 
     np.testing.assert_array_equal(result, [expected])
+
+
+# =============================================================================
+# Deemed registered income (#77)
+# =============================================================================
+# Income amounts below are synthetic.
+
+
+def test_total_income_counts_the_deemed_registered_income(synth) -> None:
+    ledger = _ledger(deemed_registered_income=2_500.0)
+
+    np.testing.assert_array_equal(federal.total_income(ledger, synth, 0.0, 0.0), [2_500.0])
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 15], ids=["one-year-under", "at-the-age", "well-over"])
+def test_eligible_pension_income_never_counts_the_deemed_registered_income(
+    fed, offset: int
+) -> None:
+    min_age = fed.number("eligible_pension_income.rrif_minimum_age_years")
+    age = min_age + offset
+    without = _ledger(
+        db_pension=1_000.0, rrif_lif_withdrawals=3_000.0, inherited_rrif_lif_withdrawals=500.0
+    )
+    with_deemed = _ledger(
+        db_pension=1_000.0,
+        rrif_lif_withdrawals=3_000.0,
+        inherited_rrif_lif_withdrawals=500.0,
+        deemed_registered_income=90_000.0,
+    )
+
+    np.testing.assert_array_equal(
+        federal.eligible_pension_income(with_deemed, age, fed),
+        federal.eligible_pension_income(without, age, fed),
+    )
+    np.testing.assert_array_equal(
+        federal.qualified_pension_income(with_deemed), federal.qualified_pension_income(without)
+    )

@@ -1331,6 +1331,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
             rrsp_withdrawals=zeros,
             rrif_lif_withdrawals=zeros,
             inherited_rrif_lif_withdrawals=zeros,
+            deemed_registered_income=zeros,
             interest=zeros,
             eligible_dividends=zeros,
             capital_gains=zeros,
@@ -1632,8 +1633,8 @@ def _deemed_single_assessments(
     (``after_tax_net_worth``).
 
     Builds a deemed ledger per person: this year's ledger, plus the whole RRSP, RRIF,
-    LIRA and LIF balance as RRIF/LIF income (RRSP included -- L42), plus the deemed
-    capital gain on the taxable holding
+    LIRA and LIF balance as ``deemed_registered_income`` (income, never pension income --
+    L42), plus the deemed capital gain on the taxable holding
     (``engine.accounts.taxable.deemed_disposition``). Assesses each alone, with no
     pension split, via ``engine.tax.combined.person_assessment``.
 
@@ -1654,8 +1655,8 @@ def _deemed_single_assessments(
     for person, this_died_in_year in zip(persons, died_in_year, strict=True):
         deemed = updated(
             person.income,
-            rrif_lif_withdrawals=(
-                person.income.rrif_lif_withdrawals
+            deemed_registered_income=(
+                person.income.deemed_registered_income
                 + person.rrsp.balance
                 + person.rrif.balance
                 + person.lira.balance
