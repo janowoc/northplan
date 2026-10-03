@@ -97,6 +97,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 74 | Comments and test docstrings cite review labels a reader cannot see | agent | — | no review label remains in `engine/` or `tests/`; each `Requirement N` names its issue or is gone |
 | 75 | A CPP tier-2 test does not assert its total stays below the second ceiling | agent | — | the test fails when its total reaches `tier2_ceiling`; every comment premise in the CPP tier tests is asserted |
 | 76 | An under-65 survivor's income from a deceased spouse's plan is qualified pension income | agent | 67 | an under-65 survivor's inherited RRIF income earns the pension credit; L15's sentence goes |
+| 77 | A deemed RRIF or LIF balance on the terminal return counts as eligible pension income | agent | 76 | the terminal return's deemed RRIF/LIF balance is eligible pension income only as the law says; L42 states both parts |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -411,6 +412,13 @@ spouse's RRIF earns no pension credit, which ITA s.118(7) allows. 67 recorded
 this in L15; 76 models it. No committed scenario has a survivor under 65. It
 sits after 68 and before 22, so the tax rules are complete before the search
 starts scoring; nothing depends on it.
+
+77 came out of the review of 76. The terminal return adds every registered
+balance to RRIF/LIF income, so at 65 and over a deemed RRIF or LIF balance
+counts toward the pension credit. Whether it should turns on ITA 146.3(6) and
+118(7); L42 already records the RRSP and LIRA part. It sits right after 76, so
+the pension-income rules are settled before 22 starts scoring; nothing depends
+on it.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
