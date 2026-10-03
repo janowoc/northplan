@@ -204,7 +204,9 @@ def spousal_rollover(
     only where ``mask`` is true. An infinite deceased maximum carries over as
     infinite. A deceased holding no LIF (``annual_maximum`` zero) adds nothing.
     The deceased's own ``annual_maximum`` is left unchanged. Paths outside
-    ``mask`` are untouched on both sides.
+    ``mask`` are untouched on both sides. The survivor's ``inherited_fraction``
+    is updated exactly as ``engine.accounts.rrif.spousal_rollover`` updates a
+    RRIF's.
 
     Args:
         deceased: The deceased person's opening LIF state.
@@ -247,6 +249,10 @@ def spousal_rollover(
         mask_arr, np.clip(deceased.annual_maximum - deceased.withdrawn_ytd, 0, None), 0.0
     )
 
+    inherited_fraction = base.inherited_fraction_after_inflow(
+        survivor.inherited_fraction, survivor.balance, moved, moved
+    )
+
     new_deceased = updated(deceased, balance=np.where(mask_arr, 0.0, deceased.balance))
     new_survivor = updated(
         survivor,
@@ -254,6 +260,7 @@ def spousal_rollover(
         jurisdiction=jurisdiction,
         opened_year=opened_year,
         annual_maximum=survivor.annual_maximum + maximum_carried,
+        inherited_fraction=inherited_fraction,
     )
     return new_deceased, new_survivor
 

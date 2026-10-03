@@ -77,6 +77,7 @@ def _rrif(*, balance: float = 0.0, opened_year: int | None = None) -> RrifState:
         annual_minimum=_zeros(),
         withdrawn_ytd=_zeros(),
         opened_year=opened_year,
+        inherited_fraction=_zeros(),
     )
 
 
@@ -94,6 +95,7 @@ def _lif(
         annual_maximum=_zeros(),
         withdrawn_ytd=_zeros(),
         opened_year=opened_year,
+        inherited_fraction=_zeros(),
     )
 
 
@@ -140,7 +142,7 @@ def _pension(*, bridge: float = 0.0, bridge_end_month_index: int | None = None) 
 
 
 def _income_ledger() -> IncomeLedger:
-    return IncomeLedger(*(_zeros() for _ in range(15)))
+    return IncomeLedger(*(_zeros() for _ in range(16)))
 
 
 def _person(

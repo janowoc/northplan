@@ -593,6 +593,8 @@ def _build_person(
             # scenario, and start_year would wrongly exempt this year's
             # minimum. See engine.core.state.RrifState.opened_year.
             opened_year=None if accounts.rrif.balance == 0.0 else start_year - 1,
+            # A balance inherited before the start is not knowable from a scenario (L15).
+            inherited_fraction=_zeros(n_paths),
         ),
         lira=LiraState(
             balance=_broadcast(lira.balance, n_paths),
@@ -609,6 +611,7 @@ def _build_person(
             # scenario, and start_year would wrongly exempt this year's
             # minimum. See engine.core.state.LifState.opened_year.
             opened_year=None if lif.balance == 0.0 else start_year - 1,
+            inherited_fraction=_zeros(n_paths),
         ),
         tfsa=TfsaState(
             balance=_broadcast(accounts.tfsa.balance, n_paths),
@@ -694,6 +697,7 @@ def _empty_income_ledger(n_paths: int) -> IncomeLedger:
         db_pension=_zeros(n_paths),
         rrsp_withdrawals=_zeros(n_paths),
         rrif_lif_withdrawals=_zeros(n_paths),
+        inherited_rrif_lif_withdrawals=_zeros(n_paths),
         interest=_zeros(n_paths),
         eligible_dividends=_zeros(n_paths),
         capital_gains=_zeros(n_paths),

@@ -57,6 +57,7 @@ LEDGER_FIELDS = (
     "db_pension",
     "rrsp_withdrawals",
     "rrif_lif_withdrawals",
+    "inherited_rrif_lif_withdrawals",
     "interest",
     "eligible_dividends",
     "capital_gains",
@@ -117,6 +118,7 @@ def _person(
             annual_minimum=_zeros(n),
             withdrawn_ytd=_zeros(n),
             opened_year=None,
+            inherited_fraction=_zeros(n),
         ),
         lira=LiraState(balance=_zeros(n), jurisdiction=""),
         lif=LifState(
@@ -126,6 +128,7 @@ def _person(
             annual_maximum=_zeros(n),
             withdrawn_ytd=_zeros(n),
             opened_year=None,
+            inherited_fraction=_zeros(n),
         ),
         tfsa=TfsaState(balance=_zeros(n), room=_zeros(n), withdrawn_this_year=_zeros(n)),
         taxable=TaxableState(balance=_zeros(n), acb=_zeros(n)),
@@ -1804,17 +1807,24 @@ def _credit_couple(
     db_pension: float,
     transferor: int = 0,
     transferee_death: int | None = None,
+    inherited: float = 0.0,
 ) -> HouseholdState:
-    """``transferor`` aged 76 with a 120,000 RRIF withdrawal and ``db_pension``; the other
-    person born in ``transferee_birth_year`` with 20,000 of employment income, dying in
-    ``transferee_death`` (a month index) or alive past the December close if ``None``."""
+    """``transferor`` aged 76 with a 120,000 RRIF withdrawal, ``inherited`` of it from a
+    deceased spouse's plan, and ``db_pension``; the other person born in
+    ``transferee_birth_year`` with 20,000 of employment income, dying in ``transferee_death``
+    (a month index) or alive past the December close if ``None``."""
     transferee = 1 - transferor
     persons = [
         _person(
             "a",
             n,
             birth_year=1950,
-            income=_ledger(n, rrif_lif_withdrawals=120_000.0, db_pension=db_pension),
+            income=_ledger(
+                n,
+                rrif_lif_withdrawals=120_000.0,
+                db_pension=db_pension,
+                inherited_rrif_lif_withdrawals=inherited,
+            ),
         ),
         _person(
             "b",
@@ -2224,3 +2234,128 @@ def test_oas_repayment_returns_float64_scalar_and_array(params) -> None:
     )
     assert scalar.dtype == np.float64 and scalar.shape == ()
     assert array.dtype == np.float64 and array.shape == (2,)
+
+
+# =============================================================================
+# Inherited RRIF/LIF income is qualified pension income (#76)
+# =============================================================================
+# Income amounts below are synthetic. The oracle throughout is the same income held
+# as a DB pension, which the engine already treats as qualified at every age.
+
+
+@pytest.mark.parametrize("inherited", [10_000.0, 4_000.0], ids=["all-inherited", "part"])
+def test_under_65_inherited_withdrawals_are_assessed_like_a_db_pension(
+    params, inherited: float
+) -> None:
+    n = 1
+    withdrawals = 10_000.0
+    as_rrif = _ledger(
+        n,
+        employment=30_000.0,
+        rrif_lif_withdrawals=withdrawals,
+        inherited_rrif_lif_withdrawals=inherited,
+    )
+    as_db = _ledger(
+        n,
+        employment=30_000.0,
+        db_pension=inherited,
+        rrif_lif_withdrawals=withdrawals - inherited,
+    )
+
+    got = person_assessment(as_rrif, 60, 0.0, 0.0, "ab", params, JANUARY)
+    want = person_assessment(as_db, 60, 0.0, 0.0, "ab", params, JANUARY)
+
+    for field in dataclasses.fields(Assessment):
+        np.testing.assert_array_equal(getattr(got, field.name), getattr(want, field.name))
+    own = person_assessment(
+        _ledger(n, employment=30_000.0, rrif_lif_withdrawals=withdrawals),
+        60,
+        0.0,
+        0.0,
+        "ab",
+        params,
+        JANUARY,
+    )
+    assert got.federal[0] < own.federal[0]  # guard: the credit was worth having
+
+
+def _survivor_couple(n: int, *, survivor: int, ledger: IncomeLedger) -> HouseholdState:
+    """Both born 1966 (60 at the end of 2026); ``survivor`` holds ``ledger`` and the other
+    died in May with no income."""
+    persons = [
+        _person("a", n, birth_year=1966, income=ledger),
+        _person("b", n, birth_year=1966, income=_ledger(n), **_died_in(n, JANUARY + 4)),
+    ]
+    if survivor == 1:
+        persons.reverse()
+    return _household(tuple(persons), year=2026, n=n)
+
+
+@pytest.mark.parametrize("survivor", [0, 1], ids=["first-survives", "second-survives"])
+def test_under_65_survivor_splits_inherited_withdrawals_onto_the_deceaseds_return(
+    params, survivor: int
+) -> None:
+    n = 1
+    inherited = _survivor_couple(
+        n,
+        survivor=survivor,
+        ledger=_ledger(n, rrif_lif_withdrawals=60_000.0, inherited_rrif_lif_withdrawals=60_000.0),
+    )
+    as_db = _survivor_couple(n, survivor=survivor, ledger=_ledger(n, db_pension=60_000.0))
+
+    got = household_assessment(inherited, params)
+    want = household_assessment(as_db, params)
+
+    assert got[survivor].transfer_out[0] > 0.0  # guard: a split was elected
+    for g, w in zip(got, want, strict=True):
+        for field in dataclasses.fields(Assessment):
+            np.testing.assert_array_equal(getattr(g, field.name), getattr(w, field.name))
+
+
+@pytest.mark.parametrize("survivor", [0, 1], ids=["first-survives", "second-survives"])
+def test_under_65_survivor_splits_none_of_their_own_withdrawals(params, survivor: int) -> None:
+    n = 1
+    household = _survivor_couple(
+        n, survivor=survivor, ledger=_ledger(n, rrif_lif_withdrawals=60_000.0)
+    )
+
+    got = household_assessment(household, params)
+
+    np.testing.assert_array_equal(got[survivor].transfer_out, [0.0])
+
+
+@pytest.mark.parametrize("transferor", [0, 1], ids=["first-to-second", "second-to-first"])
+def test_under_65_transferees_cap_counts_the_transferors_inherited_withdrawals(
+    params, transferor: int
+) -> None:
+    maximum_share = params.federal.number("pension_splitting.maximum_transfer_share")
+    db_pension = 1_000.0
+    inherited = 2_000.0
+    household = _credit_couple(
+        1,
+        transferee_birth_year=1966,
+        db_pension=db_pension,
+        transferor=transferor,
+        transferee_death=JANUARY + 4,
+        inherited=inherited,
+    )
+    transferee = 1 - transferor
+
+    received = household_assessment(household, params)[transferee]
+
+    cap = maximum_share * (5 / 12 * (db_pension + inherited))
+    assert received.transfer_in[0] > cap  # guard: the cap binds
+    expected = _transferee_at(
+        household, received, transferee, params, np.full(1, cap), died_in_year=True
+    )
+    np.testing.assert_allclose(received.federal, expected.federal, rtol=1e-12)
+    np.testing.assert_allclose(received.provincial, expected.provincial, rtol=1e-12)
+    db_only = _transferee_at(
+        household,
+        received,
+        transferee,
+        params,
+        np.full(1, maximum_share * (5 / 12 * db_pension)),
+        died_in_year=True,
+    )
+    assert received.federal[0] < db_only.federal[0]  # guard: the inherited part counts

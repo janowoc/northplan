@@ -36,6 +36,7 @@ def _ledger(n_paths: int = 1, **overrides: object) -> IncomeLedger:
         "db_pension": zeros,
         "rrsp_withdrawals": zeros,
         "rrif_lif_withdrawals": zeros,
+        "inherited_rrif_lif_withdrawals": zeros,
         "interest": zeros,
         "eligible_dividends": zeros,
         "capital_gains": zeros,
@@ -497,3 +498,35 @@ def test_synthetic_total_income_hand_computed(synth) -> None:
     # total = 1600 + 1500 + 500 + 100 = 3700
     result = federal.total_income(ledger, synth, 0.0, 0.0)
     np.testing.assert_allclose(result, [3700.0])
+
+
+# =============================================================================
+# Qualified pension income (#76)
+# =============================================================================
+# Income amounts below are synthetic.
+
+
+def test_qualified_pension_income_is_the_db_pension_plus_the_inherited_withdrawals() -> None:
+    ledger = _ledger(
+        db_pension=1_000.0, rrif_lif_withdrawals=10_000.0, inherited_rrif_lif_withdrawals=4_000.0
+    )
+
+    np.testing.assert_array_equal(federal.qualified_pension_income(ledger), [5_000.0])
+
+
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [(-1, 5_000.0), (0, 11_000.0)],
+    ids=["one-year-under", "at-the-age"],
+)
+def test_eligible_pension_income_counts_only_the_inherited_part_under_the_age(
+    fed, offset: int, expected: float
+) -> None:
+    min_age = fed.number("eligible_pension_income.rrif_minimum_age_years")
+    ledger = _ledger(
+        db_pension=1_000.0, rrif_lif_withdrawals=10_000.0, inherited_rrif_lif_withdrawals=4_000.0
+    )
+
+    result = federal.eligible_pension_income(ledger, min_age + offset, fed)
+
+    np.testing.assert_array_equal(result, [expected])

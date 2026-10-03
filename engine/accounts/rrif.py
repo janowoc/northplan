@@ -202,6 +202,8 @@ def receive_conversion(state: RrifState, amount: ArrayLike, year: int) -> RrifSt
     open and its minimum schedule already running. Per L26, the first minimum
     then applies from the next January, which falls out of
     :func:`minimum_withdrawal` returning zero when ``opened_year == year``.
+    The converted amount is the person's own, so it dilutes
+    ``inherited_fraction`` (:func:`engine.accounts.base.inherited_fraction_after_inflow`).
 
     Args:
         state: Opening RRIF state, before receiving the conversion.
@@ -213,7 +215,15 @@ def receive_conversion(state: RrifState, amount: ArrayLike, year: int) -> RrifSt
     """
     amount_arr = np.asarray(amount, dtype=np.float64)
     opened_year = state.opened_year if state.opened_year is not None else year
-    return updated(state, balance=state.balance + amount_arr, opened_year=opened_year)
+    inherited_fraction = base.inherited_fraction_after_inflow(
+        state.inherited_fraction, state.balance, amount_arr, 0.0
+    )
+    return updated(
+        state,
+        balance=state.balance + amount_arr,
+        opened_year=opened_year,
+        inherited_fraction=inherited_fraction,
+    )
 
 
 def spousal_rollover(
@@ -238,6 +248,12 @@ def spousal_rollover(
     ``RrifState.opened_year`` is a single value for the whole state, not
     per-path, matching every other consumer of the field.
 
+    The moved balance is inherited, so the survivor's ``inherited_fraction``
+    becomes ``(f * B + moved) / (B + moved)`` where something moved
+    (:func:`engine.accounts.base.inherited_fraction_after_inflow`); the
+    rollover stands for a successor-annuitant designation (L41). The
+    deceased's ``inherited_fraction`` is left unchanged.
+
     Args:
         deceased: The deceased person's opening RRIF state.
         survivor: The surviving spouse's opening RRIF state.
@@ -255,7 +271,15 @@ def spousal_rollover(
     opened_year = survivor.opened_year
     if opened_year is None and bool(np.any(moved > 0)):
         opened_year = deceased.opened_year
-    new_survivor = updated(survivor, balance=survivor.balance + moved, opened_year=opened_year)
+    inherited_fraction = base.inherited_fraction_after_inflow(
+        survivor.inherited_fraction, survivor.balance, moved, moved
+    )
+    new_survivor = updated(
+        survivor,
+        balance=survivor.balance + moved,
+        opened_year=opened_year,
+        inherited_fraction=inherited_fraction,
+    )
     return new_deceased, new_survivor
 
 

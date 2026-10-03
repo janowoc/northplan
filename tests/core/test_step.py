@@ -5005,3 +5005,244 @@ class TestMonthRecordCarriesPersonsBeneficiariesAndYearRecord:
         )
 
         assert record.year_record is None
+
+
+# =============================================================================
+# Inherited RRIF/LIF withdrawals in the ledger (#76)
+# =============================================================================
+# Fractions below are synthetic.
+
+
+def _with_inherited_fractions(state, fractions):
+    """``state`` with ``persons[i]``'s RRIF and LIF ``inherited_fraction`` set to
+    ``fractions[i] = (rrif, lif)`` on every path."""
+    persons = []
+    for person, (f_rrif, f_lif) in zip(state.persons, fractions, strict=True):
+        persons.append(
+            updated(
+                person,
+                rrif=updated(person.rrif, inherited_fraction=np.full(state.n_paths, f_rrif)),
+                lif=updated(person.lif, inherited_fraction=np.full(state.n_paths, f_lif)),
+            )
+        )
+    return updated(state, persons=tuple(persons))
+
+
+def _assert_inherited_is_attributed(state, fractions) -> None:
+    for person, (f_rrif, f_lif) in zip(state.persons, fractions, strict=True):
+        assert np.all(person.rrif.withdrawn_ytd > 0.0)  # guard: the RRIF term is exercised
+        assert np.all(person.lif.withdrawn_ytd > 0.0)  # guard: the LIF term is exercised
+        np.testing.assert_allclose(
+            person.income.inherited_rrif_lif_withdrawals,
+            person.rrif.withdrawn_ytd * f_rrif + person.lif.withdrawn_ytd * f_lif,
+            rtol=1e-12,
+        )
+
+
+class TestInheritedWithdrawalsInTheLedger:
+    """Every RRIF/LIF withdrawal site adds ``gross * inherited_fraction`` to the ledger."""
+
+    FRACTIONS = ((0.3, 0.6), (0.25, 0.5))
+
+    def test_forced_withdrawals_over_a_year(
+        self, couple_opening_state, couple_draws, couple_market, couple_real_params
+    ):
+        state = _with_inherited_fractions(couple_opening_state, self.FRACTIONS)
+        policy = DoNothingPolicy(state.elections, ("rrif", "lif", "taxable", "tfsa"))
+        for month in range(12):
+            state = advance_month(
+                state, couple_draws.real_returns[month], policy, couple_market, couple_real_params
+            )
+
+        # guard: all of 2026 ran, December's forced minimum included, and the next
+        # January's open_year has not yet reset the year's figures.
+        assert (state.year, state.month) == (2027, 1)
+        _assert_inherited_is_attributed(state, self.FRACTIONS)
+
+    def test_policy_withdrawals(
+        self, couple_opening_state, couple_draws, couple_market, couple_real_params
+    ):
+        state = _with_inherited_fractions(couple_opening_state, self.FRACTIONS)
+        n = state.n_paths
+        script = {
+            0: tuple(
+                Transfer(person_index=i, from_kind=kind, to_kind="cash", amount=np.full(n, 500.0))
+                for i in (0, 1)
+                for kind in ("rrif", "lif")
+            )
+        }
+        policy = ScriptedPolicy(state.elections, ("rrif", "lif", "taxable", "tfsa"), script)
+
+        state = advance_month(
+            state, couple_draws.real_returns[0], policy, couple_market, couple_real_params
+        )
+
+        _assert_inherited_is_attributed(state, self.FRACTIONS)
+
+    def test_open_year_zeroes_the_inherited_withdrawals(
+        self, couple_opening_state, couple_real_params
+    ):
+        n = couple_opening_state.n_paths
+        persons = tuple(
+            updated(
+                p,
+                income=updated(p.income, inherited_rrif_lif_withdrawals=np.full(n, 777.0)),
+            )
+            for p in couple_opening_state.persons
+        )
+
+        opened = open_year(updated(couple_opening_state, persons=persons), couple_real_params)
+
+        for person in opened.persons:
+            np.testing.assert_array_equal(person.income.inherited_rrif_lif_withdrawals, 0.0)
+
+    def test_the_terminal_return_adds_no_deemed_balance_to_the_inherited_withdrawals(
+        self, couple_opening_state, couple_real_params, monkeypatch
+    ):
+        from engine.core import step as step_module
+
+        n = couple_opening_state.n_paths
+        persons = tuple(
+            updated(
+                p,
+                death_month_index=np.zeros(n, dtype=np.int64),
+                income=updated(p.income, inherited_rrif_lif_withdrawals=np.full(n, 777.0)),
+            )
+            for p in couple_opening_state.persons
+        )
+        state = updated(couple_opening_state, persons=persons)
+        seen = []
+
+        def _recording(ledger, *args, **kwargs):
+            seen.append(ledger)
+            return person_assessment(ledger, *args, **kwargs)
+
+        monkeypatch.setattr(step_module, "person_assessment", _recording)
+
+        resolve_deaths(state, couple_real_params)
+
+        assert len(seen) == 2  # guard: both terminal returns were assessed
+        for ledger in seen:
+            assert np.all(ledger.rrif_lif_withdrawals > 777.0)  # guard: balances were deemed
+            np.testing.assert_array_equal(ledger.inherited_rrif_lif_withdrawals, 777.0)
+
+
+class TestInheritedFractionAtTheFirstDeath:
+    """The survivor's RRIF and LIF carry the rolled-over share of their balance."""
+
+    DEATH_MONTH_INDEX = 15
+    MARCH_MONTH_INDEX = 14
+
+    def test_rollover_sets_the_survivors_inherited_fraction(
+        self, couple_opening_state, couple_draws, couple_market, couple_real_params
+    ):
+        state = _force_death(couple_opening_state, 0, self.DEATH_MONTH_INDEX)
+        recorder = RecordingPolicy(
+            DoNothingPolicy(state.elections, ("rrif", "lif", "taxable", "tfsa"))
+        )
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        march = result.trace[self.MARCH_MONTH_INDEX]
+        april = result.trace[self.DEATH_MONTH_INDEX]
+        survivor = recorder.calls[self.DEATH_MONTH_INDEX][0].persons[1]
+        for kind in ("rrif", "lif"):
+            moved = getattr(april.context.rolled_out[0], kind)
+            own = getattr(march.balances_close[1], kind)
+            assert np.all(moved > 0.0) and np.all(own > 0.0)  # guard: a true blend
+            np.testing.assert_allclose(
+                getattr(survivor, kind).inherited_fraction[0], moved / (own + moved), rtol=1e-12
+            )
+
+    def test_the_survivors_ledger_carries_inherited_withdrawals_by_december(
+        self, couple_opening_state, couple_draws, couple_market, couple_real_params
+    ):
+        state = _force_death(couple_opening_state, 0, self.DEATH_MONTH_INDEX)
+        recorder = RecordingPolicy(
+            DoNothingPolicy(state.elections, ("rrif", "lif", "taxable", "tfsa"))
+        )
+        run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        # November and December 2027: the policy sees the state after that month's forced
+        # withdrawals.
+        november = recorder.calls[22][0].persons[1]
+        december = recorder.calls[23][0]
+        assert (december.year, december.month) == (2027, 12)
+        survivor = december.persons[1]
+        # guard: nothing is drawn up to November's policy call, so no draw of the year
+        # predates the April rollover; every draw carries the fractions it set
+        assert np.all(november.rrif.withdrawn_ytd == 0.0)
+        assert np.all(november.lif.withdrawn_ytd == 0.0)
+        # guard: each term of the identity is drawn on, at a fraction strictly between
+        # zero and one, so a dropped term or a wholly inherited draw cannot pass
+        for account in (survivor.rrif, survivor.lif):
+            assert np.all(account.withdrawn_ytd > 0.0)
+            assert np.all((account.inherited_fraction > 0.0) & (account.inherited_fraction < 1.0))
+        assert np.all(survivor.income.inherited_rrif_lif_withdrawals > 0.0)
+        np.testing.assert_allclose(
+            survivor.income.inherited_rrif_lif_withdrawals,
+            survivor.rrif.inherited_fraction * survivor.rrif.withdrawn_ytd
+            + survivor.lif.inherited_fraction * survivor.lif.withdrawn_ytd,
+            rtol=1e-12,
+        )
+
+
+class TestInheritedFractionAtTheStatutoryConversion:
+    """December's forced withdrawals are attributed at the fraction they were drawn under;
+    the close's RRSP and LIRA conversions dilute it afterwards."""
+
+    def test_withdrawals_use_the_fraction_before_the_conversions(
+        self, scenario, draws, market, real_params
+    ):
+        person = scenario.household.persons[0]
+        rrif_age = int(real_params.rrif.number("conversion_age_years"))
+        lira_age = int(real_params.jurisdiction("ab").number("lif.conversion_deadline_age_years"))
+        assert rrif_age == lira_age  # guard: both conversions fall in the same close
+        year = person.birth_year + rrif_age
+        n = draws.n_paths
+        state = build_initial_state(scenario, n_paths=n)
+        state = updated(
+            state,
+            year=year,
+            month=12,
+            month_index=12 * (year - scenario.start_year) + 11,
+            spending_monthly=select_spending_level(state.spending_schedule, year),
+        )
+        a = state.persons[0]
+        assert np.all(a.rrsp.balance > 0.0) and np.all(a.lira.balance > 0.0)  # guard
+        # Synthetic RRIF and LIF, each with a December minimum still to draw.
+        a = updated(
+            a,
+            rrif=updated(
+                a.rrif,
+                balance=np.full(n, 100_000.0),
+                annual_minimum=np.full(n, 5_000.0),
+                opened_year=year - 1,
+                inherited_fraction=np.full(n, 0.5),
+            ),
+            lif=updated(
+                a.lif,
+                balance=np.full(n, 50_000.0),
+                jurisdiction="ab",
+                annual_minimum=np.full(n, 2_000.0),
+                annual_maximum=np.full(n, np.inf),
+                opened_year=year - 1,
+                inherited_fraction=np.full(n, 0.4),
+            ),
+        )
+        state = updated(state, persons=(a,))
+        policy = DoNothingPolicy(state.elections, ("taxable", "rrif", "rrsp", "lif", "tfsa"))
+
+        closed = advance_month(state, draws.real_returns[0], policy, market, real_params)
+
+        b = closed.persons[0]
+        assert np.all(b.rrsp.balance == 0.0)  # guard: the RRSP conversion fired
+        assert np.all(b.lira.balance == 0.0)  # guard: the LIRA conversion fired
+        assert np.all(b.rrif.withdrawn_ytd > 0.0)  # guard: December drew the RRIF minimum
+        assert np.all(b.lif.withdrawn_ytd > 0.0)  # guard: and the LIF minimum
+        np.testing.assert_allclose(
+            b.income.inherited_rrif_lif_withdrawals,
+            0.5 * b.rrif.withdrawn_ytd + 0.4 * b.lif.withdrawn_ytd,
+            rtol=1e-12,
+        )
+        assert np.all(b.rrif.inherited_fraction < 0.5)  # the conversion diluted it
+        assert np.all(b.lif.inherited_fraction < 0.4)

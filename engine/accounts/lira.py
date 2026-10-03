@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from engine.accounts import base
 from engine.core.indexation import RealParamSet
 from engine.core.state import LifState, LiraState, updated
 
@@ -61,7 +62,9 @@ def convert_to_lif(lira: LiraState, lif: LifState, year: int) -> tuple[LiraState
     Returns:
         ``(new_lira, new_lif)``. ``new_lif.jurisdiction`` is the LIF's own if
         it was already set, the LIRA's otherwise. ``new_lif.opened_year`` is
-        set to ``year`` when it was ``None``, otherwise left alone.
+        set to ``year`` when it was ``None``, otherwise left alone. The LIRA
+        balance counts as the person's own, so it dilutes
+        ``new_lif.inherited_fraction`` (L15).
 
     Raises:
         ValueError: If both accounts name a jurisdiction and they differ — two
@@ -80,6 +83,9 @@ def convert_to_lif(lira: LiraState, lif: LifState, year: int) -> tuple[LiraState
         balance=lif.balance + lira.balance,
         jurisdiction=jurisdiction,
         opened_year=opened_year,
+        inherited_fraction=base.inherited_fraction_after_inflow(
+            lif.inherited_fraction, lif.balance, lira.balance, 0.0
+        ),
     )
     new_lira = updated(lira, balance=np.zeros_like(lira.balance))
     return new_lira, new_lif

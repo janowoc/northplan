@@ -23,12 +23,15 @@ from engine.params.loader import load_year
 JANUARY = 0
 
 
-def _state(balance=0.0, annual_minimum=0.0, withdrawn_ytd=0.0, opened_year=2025) -> RrifState:
+def _state(
+    balance=0.0, annual_minimum=0.0, withdrawn_ytd=0.0, opened_year=2025, inherited_fraction=0.0
+) -> RrifState:
     return RrifState(
         balance=np.array([balance], dtype=np.float64),
         annual_minimum=np.array([annual_minimum], dtype=np.float64),
         withdrawn_ytd=np.array([withdrawn_ytd], dtype=np.float64),
         opened_year=opened_year,
+        inherited_fraction=np.array([inherited_fraction], dtype=np.float64),
     )
 
 
@@ -231,12 +234,19 @@ def test_there_is_no_erode_nominal() -> None:
 # =============================================================================
 
 
-def _multi(balance, annual_minimum, withdrawn_ytd, opened_year) -> RrifState:
+def _multi(
+    balance, annual_minimum, withdrawn_ytd, opened_year, inherited_fraction=None
+) -> RrifState:
     return RrifState(
         balance=np.array(balance, dtype=np.float64),
         annual_minimum=np.array(annual_minimum, dtype=np.float64),
         withdrawn_ytd=np.array(withdrawn_ytd, dtype=np.float64),
         opened_year=opened_year,
+        inherited_fraction=(
+            np.zeros(len(balance))
+            if inherited_fraction is None
+            else np.array(inherited_fraction, dtype=np.float64)
+        ),
     )
 
 
@@ -292,3 +302,56 @@ def test_spousal_rollover_opened_year_unchanged_when_mask_is_all_false() -> None
     assert new_survivor.opened_year is None
     np.testing.assert_allclose(new_deceased.balance, [10_000.0])
     np.testing.assert_allclose(new_survivor.balance, [0.0])
+
+
+# =============================================================================
+# inherited_fraction (#76)
+# =============================================================================
+# Balances and fractions below are synthetic.
+
+
+def test_spousal_rollover_sets_the_survivors_inherited_fraction() -> None:
+    deceased = _multi([100.0, 100.0], [0.0, 0.0], [0.0, 0.0], 2020)
+    survivor = _multi([300.0, 3.0], [0.0, 0.0], [0.0, 0.0], 2021, inherited_fraction=[0.0, 0.1])
+    mask = np.array([True, False])
+
+    _, new_survivor = rrif.spousal_rollover(deceased, survivor, mask)
+
+    np.testing.assert_allclose(new_survivor.inherited_fraction[0], 100.0 / 400.0, rtol=1e-15)
+    assert new_survivor.inherited_fraction[1] == 0.1  # outside the mask, bit for bit
+
+
+def test_spousal_rollover_into_an_empty_rrif_makes_it_wholly_inherited() -> None:
+    deceased = _multi([250.0], [0.0], [0.0], 2020)
+    survivor = _multi([0.0], [0.0], [0.0], None)
+
+    _, new_survivor = rrif.spousal_rollover(deceased, survivor, np.array([True]))
+
+    np.testing.assert_array_equal(new_survivor.inherited_fraction, [1.0])
+
+
+def test_spousal_rollover_leaves_the_deceaseds_inherited_fraction_unchanged() -> None:
+    deceased = _multi([250.0], [0.0], [0.0], 2020, inherited_fraction=[0.3])
+    survivor = _multi([100.0], [0.0], [0.0], 2021)
+
+    new_deceased, _ = rrif.spousal_rollover(deceased, survivor, np.array([True]))
+
+    np.testing.assert_array_equal(new_deceased.inherited_fraction, [0.3])
+
+
+def test_receive_conversion_dilutes_the_inherited_fraction() -> None:
+    state = _multi([300.0, 3.0], [0.0, 0.0], [0.0, 0.0], 2021, inherited_fraction=[0.5, 0.1])
+
+    new_state = rrif.receive_conversion(state, np.array([100.0, 0.0]), 2026)
+
+    np.testing.assert_allclose(new_state.inherited_fraction[0], 0.5 * 300.0 / 400.0, rtol=1e-15)
+    assert new_state.inherited_fraction[1] == 0.1  # nothing converted, bit for bit
+
+
+def test_withdraw_leaves_the_inherited_fraction_unchanged() -> None:
+    state = _state(balance=1_000.0, opened_year=2020, inherited_fraction=0.4)
+
+    new_state, result, _ = rrif.withdraw(state, np.array([300.0]), np.array([0.0]))
+
+    assert result.gross[0] == 300.0  # guard: something was withdrawn
+    np.testing.assert_array_equal(new_state.inherited_fraction, [0.4])

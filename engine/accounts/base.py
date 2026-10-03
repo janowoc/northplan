@@ -92,6 +92,47 @@ def withdraw(balance: ArrayLike, requested: ArrayLike) -> tuple[NDArray[np.float
     )
 
 
+def inherited_fraction_after_inflow(
+    fraction: ArrayLike,
+    balance: ArrayLike,
+    inflow: ArrayLike,
+    inherited_inflow: ArrayLike,
+) -> NDArray[np.float64]:
+    """The inherited share of a balance after money flows into it.
+
+    ``(fraction * balance + inherited_inflow) / (balance + inflow)`` where
+    ``inflow`` is positive, and ``fraction`` itself, bit for bit, where it is
+    zero. The arguments broadcast against one another, so any of them may be
+    a scalar.
+
+    Args:
+        fraction: The inherited share before the inflow, ``(n_paths,)``.
+        balance: The balance before the inflow, real dollars, ``(n_paths,)``.
+        inflow: The amount flowing in, real dollars, ``(n_paths,)``,
+            non-negative.
+        inherited_inflow: The part of ``inflow`` that is itself inherited:
+            all of it at a spousal rollover, none of it at a conversion.
+
+    Returns:
+        The inherited share after the inflow, ``(n_paths,)``.
+    """
+    fraction_arr = np.asarray(fraction, dtype=np.float64)
+    balance_arr = np.asarray(balance, dtype=np.float64)
+    inflow_arr = np.asarray(inflow, dtype=np.float64)
+    inherited_arr = np.asarray(inherited_inflow, dtype=np.float64)
+    total = balance_arr + inflow_arr
+    shape = np.broadcast_shapes(
+        fraction_arr.shape, balance_arr.shape, inflow_arr.shape, inherited_arr.shape
+    )
+    blended = np.divide(
+        fraction_arr * balance_arr + inherited_arr,
+        total,
+        out=np.zeros(shape, dtype=np.float64),
+        where=inflow_arr > 0,
+    )
+    return np.asarray(np.where(inflow_arr > 0, blended, fraction_arr), dtype=np.float64)
+
+
 def remaining_annual_allowance(
     annual_limit: ArrayLike,
     taken_ytd: ArrayLike,

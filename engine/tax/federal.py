@@ -3,16 +3,16 @@
 
 """Federal income tax.
 
-Defines four income figures — total income, net income (line 23400), taxable
-income (line 23600), and eligible pension income — and federal tax on an
-income figure, before and after non-refundable credits.
+Defines five income figures — total income, net income (line 23400), taxable
+income (line 23600), qualified pension income and eligible pension income —
+and federal tax on an income figure, before and after non-refundable credits.
 ``engine.tax.provincial`` defines none of its own and is handed a figure.
 
-Two shapes of entry point. ``total_income``, ``net_income`` and
-``eligible_pension_income`` build a figure from an
-``engine.core.state.IncomeLedger`` — one person's income components
-accumulated over the year — and a ``federal``
-``engine.core.indexation.RealParamSet``. ``taxable_income``, ``gross_tax``,
+Two shapes of entry point. ``total_income``, ``net_income``,
+``qualified_pension_income`` and ``eligible_pension_income`` build a figure
+from an ``engine.core.state.IncomeLedger`` — one person's income components
+accumulated over the year — and, all but ``qualified_pension_income``, a
+``federal`` ``engine.core.indexation.RealParamSet``. ``taxable_income``, ``gross_tax``,
 ``non_refundable_credits`` and ``net_tax`` take figures already computed and
 never see a ledger. Every income figure here is annual rather than monthly: a
 caller holding a monthly figure scales to a year first, and what it hands over
@@ -329,6 +329,22 @@ def net_tax(gross: ArrayLike, credits: ArrayLike) -> NDArray[np.float64]:
     return np.asarray(np.clip(net, 0, None), dtype=np.float64)
 
 
+def qualified_pension_income(ledger: IncomeLedger) -> NDArray[np.float64]:
+    """Qualified pension income (ITA 118(7)), at any age.
+
+    The DB pension, and the RRIF/LIF withdrawals paid out of a balance rolled
+    over from a deceased spouse (``ledger.inherited_rrif_lif_withdrawals``,
+    L15).
+
+    Args:
+        ledger: This person's income components, accumulated over the year.
+
+    Returns:
+        Qualified pension income, real dollars, non-negative.
+    """
+    return np.asarray(ledger.db_pension + ledger.inherited_rrif_lif_withdrawals, dtype=np.float64)
+
+
 def eligible_pension_income(
     ledger: IncomeLedger,
     age_at_end_of_year: ArrayLike,
@@ -336,9 +352,10 @@ def eligible_pension_income(
 ) -> NDArray[np.float64]:
     """Income eligible for the pension income amount and for splitting.
 
-    Always the DB pension; RRIF/LIF withdrawals only from the year the
-    recipient turns ``eligible_pension_income.rrif_minimum_age_years`` by
-    year end. Never CPP, OAS, or RRSP withdrawals.
+    Always :func:`qualified_pension_income`; every RRIF/LIF withdrawal from
+    the year the recipient turns
+    ``eligible_pension_income.rrif_minimum_age_years`` by year end. Never
+    CPP, OAS, or RRSP withdrawals.
 
     Args:
         ledger: This person's income components, accumulated over the year.
@@ -350,5 +367,7 @@ def eligible_pension_income(
     """
     min_age = params.number("eligible_pension_income.rrif_minimum_age_years")
     age_arr = np.asarray(age_at_end_of_year)
-    result = ledger.db_pension + np.where(age_arr >= min_age, ledger.rrif_lif_withdrawals, 0.0)
+    result = ledger.db_pension + np.where(
+        age_arr >= min_age, ledger.rrif_lif_withdrawals, ledger.inherited_rrif_lif_withdrawals
+    )
     return np.asarray(result, dtype=np.float64)

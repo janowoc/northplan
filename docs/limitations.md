@@ -226,15 +226,20 @@ for a death year's own net capital loss. Lives in `engine/tax/federal.py`,
 income at any age, RRIF and LIF income from the year the transferor is 65 at
 year end, up to the statutory share, elected once at the December close to
 minimise combined household tax including OAS repayments. Not modelled: CPP
-pension sharing, spousal RRSPs. In reality an annuity payment under an RRSP,
-or a payment out of a RRIF (a LIF included), received as a consequence of a
-spouse's death is qualified pension income (ITA 118(7)), eligible below 65 for
-both the credit and the split; we count only DB pension income as qualified,
-so an under-65 survivor's RRIF/LIF withdrawals from a plan inherited from the
-deceased earn no pension credit in any year before the survivor is 65 at year
-end and cannot be split in the year of the death, and an under-65
-transferee's credit counts the split of the transferor's DB pension only.
-Direction: conservative.
+pension sharing, spousal RRSPs. A payment out of a RRIF (a LIF included)
+received as a consequence of a spouse's death is qualified pension income
+(ITA 118(7)), eligible below 65 for both the credit and the split. We count
+as qualified the share of each RRIF/LIF withdrawal that the account's
+inherited fraction gives (L41), at any age. In reality a successor annuitant
+holds the inherited plan apart and may draw on it first; we attribute every
+withdrawal pro rata. Direction: conservative. An RRSP or LIRA rolled over at
+a death and converted later counts as the survivor's own. In reality its later
+payments come out of the survivor's own plan after an ITA 60(l) transfer,
+which as we read 118(7) are not received as a consequence of the death, so
+this matches the law; were they to qualify, the direction would be
+conservative. In reality a plan a successor annuitant already held at the
+scenario's start is still inherited; we count it as the survivor's own, since
+a scenario cannot state it. Direction: conservative.
 
 **L51. Pension split search resolution.** In reality the transferred amount is
 any amount up to the statutory share, and the tax-minimising choice is a point
@@ -551,7 +556,13 @@ age-related change. Lives in `engine/core/step.py`.
 
 **L41. First death.** Every registered account (RRSP, RRIF, LIRA, LIF) rolls
 to the survivor's account of the same kind, tax-deferred; a LIF stays locked
-in. The survivor's own RRIF/LIF **minimum** for the year of death is
+in. A RRIF or LIF rolls as if the survivor were named successor annuitant, so
+the inherited share of its payments is qualified pension income (L15). In
+reality the plan may instead be transferred to the survivor's own, whose later
+payments may not qualify. Direction: optimistic for such a household. A
+successor annuitant's plan also stays apart from the survivor's own; we merge
+the two and carry the inherited share of the balance (L15 gives the direction
+of that). The survivor's own RRIF/LIF **minimum** for the year of death is
 unchanged, already fixed in January from their own opening balance; the
 survivor's LIF **maximum** for the year, by contrast, carries the deceased's
 unused annual maximum forward on top of their own. The
@@ -654,7 +665,11 @@ after each month's decision, and any gain December's own draws realise after
 its fill -- lands on top of a fill already taken, so the year can end above
 the edge by that much; income that falls off during the year makes the early
 months under-fill, which December's fill, measured with nothing left to
-project, makes up. The contribution spill pours through `spill_order` person 0
+project, makes up. The pension-credit fill acts only from the year a person
+is `eligible_pension_income.rrif_minimum_age_years` at year end. In reality an
+under-65 survivor's withdrawals from a plan inherited from the deceased earn
+the credit too (L15); we never fill toward it below that age. Direction:
+conservative. The contribution spill pours through `spill_order` person 0
 before person 1, so an unlimited taxable spill concentrates investment income
 on person 0 rather than sharing it the way a real couple would; this is
 pessimistic on tax exactly where person 0 carries the higher marginal rate.

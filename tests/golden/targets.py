@@ -6,7 +6,7 @@
 A case's ``inputs`` mapping becomes keyword arguments to the target, and a
 plain mapping cannot express an argument that is itself a constructed engine
 type — here, ``engine.core.state.IncomeLedger``, a frozen dataclass of
-fifteen ``(n_paths,)`` arrays. A target here exists only to close that gap,
+sixteen ``(n_paths,)`` arrays. A target here exists only to close that gap,
 never to make a call site more convenient: add one only when a YAML mapping
 genuinely cannot express the target's real signature.
 
@@ -72,6 +72,7 @@ def person_assessment(
     db_pension: float = 0.0,
     rrsp_withdrawals: float = 0.0,
     rrif_lif_withdrawals: float = 0.0,
+    inherited_rrif_lif_withdrawals: float = 0.0,
     interest: float = 0.0,
     eligible_dividends: float = 0.0,
     capital_gains: float = 0.0,
@@ -84,7 +85,7 @@ def person_assessment(
 ) -> Assessment:
     """Build a one-path ``IncomeLedger`` and call ``engine.tax.combined.person_assessment``.
 
-    The signature exposes all fifteen ``IncomeLedger`` fields, in
+    The signature exposes all sixteen ``IncomeLedger`` fields, in
     ``IncomeLedger`` field order, so it matches the dataclass field for
     field. ``remitted`` is accepted but has no effect on the returned
     ``Assessment``, because ``engine.tax.combined.person_assessment`` never
@@ -97,7 +98,7 @@ def person_assessment(
             ``engine.tax.combined.person_assessment`` unchanged;
             ``age_at_end_of_year``, ``transfer_in``, and ``transfer_out`` go
             via :func:`_one_path`.
-        employment .. remitted: The fifteen ``IncomeLedger`` fields, each via
+        employment .. remitted: The sixteen ``IncomeLedger`` fields, each via
             :func:`_one_path`.
 
     Returns:
@@ -111,6 +112,7 @@ def person_assessment(
         db_pension=_one_path(db_pension),
         rrsp_withdrawals=_one_path(rrsp_withdrawals),
         rrif_lif_withdrawals=_one_path(rrif_lif_withdrawals),
+        inherited_rrif_lif_withdrawals=_one_path(inherited_rrif_lif_withdrawals),
         interest=_one_path(interest),
         eligible_dividends=_one_path(eligible_dividends),
         capital_gains=_one_path(capital_gains),

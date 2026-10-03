@@ -220,8 +220,8 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
     share times ``min(m_x, m_y) / m_x`` times ``x``'s eligible pension income
     (ITA 60.03(1); T1032 line 18). A transferee under the age
     ``eligible_pension_income.rrif_minimum_age_years`` at year end counts toward
-    the pension credit no more than that maximum taken on ``x``'s DB pension
-    alone (ITA 118(7)).
+    the pension credit no more than that maximum taken on ``x``'s qualified
+    pension income alone (ITA 118(7); ``federal.qualified_pension_income``).
 
     Args:
         state: Household state at the December close.
@@ -275,6 +275,8 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
     fed = params.federal
     epi0 = federal.eligible_pension_income(person0.income, age0, fed)
     epi1 = federal.eligible_pension_income(person1.income, age1, fed)
+    qpi0 = federal.qualified_pension_income(person0.income)
+    qpi1 = federal.qualified_pension_income(person1.income)
 
     maximum_share = fed.number("pension_splitting.maximum_transfer_share")
     magnitudes: list[float] = []
@@ -315,7 +317,7 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
             t_in1, t_out1 = transfer, zeros
             base0 = zeros
             base1 = (
-                np.minimum(transfer, maximum_share * (scale0 * person0.income.db_pension))
+                np.minimum(transfer, maximum_share * (scale0 * qpi0))
                 if age1 < min_age
                 else transfer
             )
@@ -324,7 +326,7 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
             t_in0, t_out0 = transfer, zeros
             t_in1, t_out1 = zeros, transfer
             base0 = (
-                np.minimum(transfer, maximum_share * (scale1 * person1.income.db_pension))
+                np.minimum(transfer, maximum_share * (scale1 * qpi1))
                 if age0 < min_age
                 else transfer
             )

@@ -104,7 +104,7 @@ as a YAML mapping, because it is a constructed engine type rather than a
 number, a string, or one of the three parameter-input kinds above.
 `engine.tax.combined.person_assessment` is the first example: its `ledger`
 argument is an `engine.core.state.IncomeLedger`, a frozen dataclass of
-fifteen arrays, which a case file has no way to build.
+sixteen arrays, which a case file has no way to build.
 
 A shim is pure construction and nothing else: it takes plain keyword
 arguments, builds the engine value the real target wants, and calls that

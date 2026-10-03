@@ -146,15 +146,19 @@ class RrifState:
         withdrawn_ytd: Withdrawn so far this year; reset in January.
         opened_year: The calendar year opened, or ``None`` if the opening balance is zero. If
             already open at scenario start, set to ``scenario.start_year - 1``, not the start year.
+        inherited_fraction: The share of ``balance`` rolled over from a deceased spouse's RRIF,
+            ``(n_paths,)``, in ``[0, 1]``. Changed only by an inflow; returns and withdrawals
+            treat every dollar of the balance alike (L15, L41).
     """
 
     balance: NDArray[np.float64]
     annual_minimum: NDArray[np.float64]
     withdrawn_ytd: NDArray[np.float64]
     opened_year: int | None
+    inherited_fraction: NDArray[np.float64]
 
     def __post_init__(self) -> None:
-        _freeze_fields(self, "balance", "annual_minimum", "withdrawn_ytd")
+        _freeze_fields(self, "balance", "annual_minimum", "withdrawn_ytd", "inherited_fraction")
         if self.opened_year is None and not np.all(self.balance == 0.0):
             raise ValueError(
                 "opened_year is None (nothing has been opened) but balance "
@@ -203,6 +207,8 @@ class LifState:
             January the same way.
         withdrawn_ytd: Amount withdrawn so far this year; fixed/reset in January.
         opened_year: Mirrors :attr:`RrifState.opened_year` exactly.
+        inherited_fraction: The share of ``balance`` rolled over from a deceased spouse's LIF;
+            mirrors :attr:`RrifState.inherited_fraction` exactly.
     """
 
     balance: NDArray[np.float64]
@@ -211,9 +217,17 @@ class LifState:
     annual_maximum: NDArray[np.float64]
     withdrawn_ytd: NDArray[np.float64]
     opened_year: int | None
+    inherited_fraction: NDArray[np.float64]
 
     def __post_init__(self) -> None:
-        _freeze_fields(self, "balance", "annual_minimum", "annual_maximum", "withdrawn_ytd")
+        _freeze_fields(
+            self,
+            "balance",
+            "annual_minimum",
+            "annual_maximum",
+            "withdrawn_ytd",
+            "inherited_fraction",
+        )
         if self.jurisdiction == "" and not np.all(self.balance == 0.0):
             raise ValueError(
                 "jurisdiction is '' (this LIF names no jurisdiction of its "
@@ -363,6 +377,9 @@ class IncomeLedger:
     Attributes:
         employment, cpp, db_pension, rrsp_withdrawals, rrif_lif_withdrawals, interest:
             Income by component and source.
+        inherited_rrif_lif_withdrawals: The part of ``rrif_lif_withdrawals`` paid out of a
+            balance rolled over from a deceased spouse (``RrifState.inherited_fraction``),
+            counted inside ``rrif_lif_withdrawals``, never in addition to it.
         eligible_dividends: Eligible dividends from taxable holdings, before gross-up.
         capital_gains: Net capital gains from taxable holdings, realized on disposition or
             distributed by the holding without a sale, before the inclusion rate. Signed:
@@ -380,6 +397,7 @@ class IncomeLedger:
     db_pension: NDArray[np.float64]
     rrsp_withdrawals: NDArray[np.float64]
     rrif_lif_withdrawals: NDArray[np.float64]
+    inherited_rrif_lif_withdrawals: NDArray[np.float64]
     interest: NDArray[np.float64]
     eligible_dividends: NDArray[np.float64]
     capital_gains: NDArray[np.float64]

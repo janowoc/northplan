@@ -1030,3 +1030,14 @@ class TestWithDeathMonths:
     def test_rejects_a_month_past_int64(self, drawn_two_person_state) -> None:
         with pytest.raises(ValueError, match="not below DEATH_NOT_DRAWN"):
             with_death_months(drawn_two_person_state, (2**63, None))
+
+
+def test_every_rrif_and_lif_opens_with_no_inherited_share() -> None:
+    state = build_initial_state(load_scenario(COUPLE), n_paths=2)
+
+    for person in state.persons:
+        assert np.all(person.rrif.balance > 0.0)  # guard: a balance to hold a share of
+        assert np.all(person.lif.balance > 0.0)  # guard: likewise
+        np.testing.assert_array_equal(person.rrif.inherited_fraction, 0.0)
+        np.testing.assert_array_equal(person.lif.inherited_fraction, 0.0)
+        np.testing.assert_array_equal(person.income.inherited_rrif_lif_withdrawals, 0.0)

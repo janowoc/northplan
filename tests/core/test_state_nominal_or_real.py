@@ -13,13 +13,14 @@ Scope of the table
 Every dataclass defined in :mod:`engine.core.state` — discovered from the module, not listed by
 hand — and, within each, every field whose resolved annotation is ``NDArray[np.float64]``,
 ``NDArray[np.float64] | None``, or ``tuple[NDArray[np.float64], ...]``. That is every dollar
-amount the module carries today, and nothing else: the integer and boolean arrays (``alive``,
-``death_month_index``, ``wound_up``, ``depleted``), and ``YearRecord.gis_band`` (a tuple of
-boolean arrays), are out of scope, and so are the plain ``float`` fields (``survivor_share``,
-``contributory_history``, ``rrif_conversion_fraction``, ``education_monthly_cost``,
-``spending_monthly``, ``spending_survivor_share``, ``monthly_level``) — fractions in some cases,
-scenario inputs rather than carried balances in the rest. The match is exact equality against the
-three spellings above, so a per-path dollar field typed any other way — the longhand
+amount the module carries today, plus the two per-path ``inherited_fraction`` shares, and nothing
+else: the integer and boolean arrays (``alive``, ``death_month_index``, ``wound_up``,
+``depleted``), and ``YearRecord.gis_band`` (a tuple of boolean arrays), are out of scope, and so
+are the plain ``float`` fields (``survivor_share``, ``contributory_history``,
+``rrif_conversion_fraction``, ``education_monthly_cost``, ``spending_monthly``,
+``spending_survivor_share``, ``monthly_level``) — fractions in some cases, scenario inputs rather
+than carried balances in the rest. The match is exact equality against the three spellings above,
+so a per-path dollar field typed any other way — the longhand
 ``np.ndarray[tuple[int, ...], np.dtype[np.float64]]``, a ``type`` alias, a three-way union, or
 anything else that is not one of those three exact objects — would slip past this rule; nothing
 here can catch that.
@@ -91,6 +92,10 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         Basis.REAL,
         "A within-year accumulator, zeroed each January.",
     ),
+    ("RrifState", "inherited_fraction"): (
+        Basis.REAL,
+        "A share of the balance, not a dollar amount; no price change moves it.",
+    ),
     ("LiraState", "balance"): (Basis.REAL, "Returns are real (L6)."),
     ("LifState", "balance"): (Basis.REAL, "Returns are real (L6)."),
     ("LifState", "annual_minimum"): (
@@ -104,6 +109,10 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
     ("LifState", "withdrawn_ytd"): (
         Basis.REAL,
         "A within-year accumulator, zeroed each January.",
+    ),
+    ("LifState", "inherited_fraction"): (
+        Basis.REAL,
+        "A share of the balance, not a dollar amount; no price change moves it.",
     ),
     ("TfsaState", "balance"): (Basis.REAL, "Returns are real (L6)."),
     ("TfsaState", "room"): (
@@ -161,6 +170,10 @@ TABLE: Final[dict[tuple[str, str], tuple[Basis, str]]] = {
         "Current-year flows, zeroed each January; assessed against a real-dollar tax table.",
     ),
     ("IncomeLedger", "rrif_lif_withdrawals"): (
+        Basis.REAL,
+        "Current-year flows, zeroed each January; assessed against a real-dollar tax table.",
+    ),
+    ("IncomeLedger", "inherited_rrif_lif_withdrawals"): (
         Basis.REAL,
         "Current-year flows, zeroed each January; assessed against a real-dollar tax table.",
     ),

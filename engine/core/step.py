@@ -749,6 +749,11 @@ def _phase6_forced_withdrawals(
             rrif_lif_withdrawals=(
                 person.income.rrif_lif_withdrawals + rrif_result.gross + lif_gross
             ),
+            inherited_rrif_lif_withdrawals=(
+                person.income.inherited_rrif_lif_withdrawals
+                + rrif_result.gross * person.rrif.inherited_fraction
+                + lif_gross * person.lif.inherited_fraction
+            ),
             remitted=person.income.remitted + withheld,
         )
         new_persons.append(updated(person, rrif=new_rrif, lif=new_lif, income=new_income))
@@ -790,6 +795,10 @@ def _withdraw_from_kind(
         new_income = updated(
             person.income,
             rrif_lif_withdrawals=person.income.rrif_lif_withdrawals + result.fully_taxable,
+            inherited_rrif_lif_withdrawals=(
+                person.income.inherited_rrif_lif_withdrawals
+                + result.fully_taxable * person.rrif.inherited_fraction
+            ),
         )
         return updated(person, rrif=new_rrif, income=new_income), result.gross, above_minimum
     if kind == "lif":
@@ -802,6 +811,10 @@ def _withdraw_from_kind(
         new_income = updated(
             person.income,
             rrif_lif_withdrawals=person.income.rrif_lif_withdrawals + result.fully_taxable,
+            inherited_rrif_lif_withdrawals=(
+                person.income.inherited_rrif_lif_withdrawals
+                + result.fully_taxable * person.lif.inherited_fraction
+            ),
         )
         return updated(person, lif=new_lif, income=new_income), result.gross, above_minimum
     if kind == "tfsa":
@@ -1317,6 +1330,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
             db_pension=zeros,
             rrsp_withdrawals=zeros,
             rrif_lif_withdrawals=zeros,
+            inherited_rrif_lif_withdrawals=zeros,
             interest=zeros,
             eligible_dividends=zeros,
             capital_gains=zeros,

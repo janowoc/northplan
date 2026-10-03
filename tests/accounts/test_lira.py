@@ -27,7 +27,7 @@ def _lira(balance=0.0, jurisdiction="ab") -> LiraState:
     return LiraState(balance=np.array([balance], dtype=np.float64), jurisdiction=jurisdiction)
 
 
-def _lif(balance=0.0, jurisdiction="", opened_year=None) -> LifState:
+def _lif(balance=0.0, jurisdiction="", opened_year=None, inherited_fraction=0.0) -> LifState:
     return LifState(
         balance=np.array([balance], dtype=np.float64),
         jurisdiction=jurisdiction,
@@ -35,6 +35,7 @@ def _lif(balance=0.0, jurisdiction="", opened_year=None) -> LifState:
         annual_maximum=np.array([0.0]),
         withdrawn_ytd=np.array([0.0]),
         opened_year=opened_year,
+        inherited_fraction=np.array([inherited_fraction], dtype=np.float64),
     )
 
 
@@ -164,3 +165,41 @@ def test_spousal_rollover_cross_jurisdiction_guard_is_silent_when_nothing_moves(
     new_deceased, new_survivor = lira.spousal_rollover(deceased, survivor, mask)
     np.testing.assert_allclose(new_deceased.balance, [10_000.0])
     np.testing.assert_allclose(new_survivor.balance, [5_000.0])
+
+
+# =============================================================================
+# inherited_fraction (#76)
+# =============================================================================
+# Balances and fractions below are synthetic.
+
+
+def test_convert_to_lif_dilutes_the_lifs_inherited_fraction() -> None:
+    _, new_lif = lira.convert_to_lif(
+        _lira(100.0), _lif(300.0, "ab", 2021, inherited_fraction=0.5), 2026
+    )
+
+    np.testing.assert_allclose(new_lif.inherited_fraction, [0.5 * 300.0 / 400.0], rtol=1e-15)
+
+
+def test_convert_to_lif_into_an_empty_lif_inherits_nothing() -> None:
+    _, new_lif = lira.convert_to_lif(_lira(100.0), _lif(), 2026)
+
+    np.testing.assert_array_equal(new_lif.inherited_fraction, [0.0])
+
+
+def test_convert_to_lif_leaves_a_path_with_no_lira_balance_unchanged() -> None:
+    lira_state = LiraState(balance=np.array([100.0, 0.0]), jurisdiction="ab")
+    lif_state = LifState(
+        balance=np.array([300.0, 3.0]),
+        jurisdiction="ab",
+        annual_minimum=np.zeros(2),
+        annual_maximum=np.zeros(2),
+        withdrawn_ytd=np.zeros(2),
+        opened_year=2021,
+        inherited_fraction=np.array([0.5, 0.1]),
+    )
+
+    _, new_lif = lira.convert_to_lif(lira_state, lif_state, 2026)
+
+    np.testing.assert_allclose(new_lif.inherited_fraction[0], 0.5 * 300.0 / 400.0, rtol=1e-15)
+    assert new_lif.inherited_fraction[1] == 0.1  # nothing converted, bit for bit
