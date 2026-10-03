@@ -324,7 +324,7 @@ class MonthRecord:
             bool -- see ``engine.core.step.resolve_deaths``.
         estate_after_tax: The state's ``estate_after_tax`` after phase 2,
             ``(n_paths,)`` -- ``NaN`` until the month of the second death, finite
-            from it on.
+            and never negative from it on.
         persons: The state's ``persons`` after phase 11 -- the same point
             ``balances_close`` reads -- references, not copies.
         beneficiaries: The state's ``beneficiaries`` at the same point, references, not

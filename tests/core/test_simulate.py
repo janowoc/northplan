@@ -21,6 +21,7 @@ from engine.core.build import (
 from engine.core.indexation import real_year
 from engine.core.state import updated
 from engine.mc.market import DEFAULT_KIND, MarketInputs
+from engine.mc.prepare import evaluate, prepare_run
 from engine.mc.returns import RandomDraws
 from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import load_year
@@ -687,3 +688,27 @@ class TestPerYearFigures:
         )
         np.testing.assert_array_equal(result.gis_band_count, expected)
         np.testing.assert_array_equal(result.gis_band_person_years, expected.sum(axis=0))
+
+
+class TestNoNegativeEstateOnTheExample:
+    """#68 on the example as written: 1,000 paths at the scenario's own seed, every policy
+    in its grid. Before the floor, each policy left some estates and some living
+    after-tax net worths below zero (an insolvent household dying before April).
+    """
+
+    def test_no_estate_or_after_tax_net_worth_is_negative(self, scenario):
+        assert scenario.seed == 42  # guard: the seed the measurement was taken at
+        prepared = prepare_run(scenario, n_paths=1_000)
+        assert len(prepared.scenario.policies) > 1  # guard: the whole grid is covered
+
+        for spec in prepared.scenario.policies:
+            result = evaluate(prepared, spec)
+
+            assert np.all(np.isfinite(result.estate_after_tax))
+            assert np.all(result.estate_after_tax >= 0.0)
+            assert np.all(result.after_tax_net_worth >= 0.0)
+            # Guards: some estate is exactly 0, and the after-tax net worth floor fires
+            # on a living household. The estate floor's own test is in test_step.py.
+            assert np.any(result.estate_after_tax == 0.0), spec.name
+            floored = (result.after_tax_net_worth == 0.0) & (result.living_count > 0)
+            assert np.any(floored), spec.name

@@ -43,8 +43,8 @@ class SimulationResult:
             ``(n_years, n_paths)``.
         after_tax_net_worth: Real household after-tax net worth at each 31 December,
             ``(n_years, n_paths)`` -- ``YearRecord.after_tax_net_worth``, the liquidation
-            value as if every person died that day with no spousal rollover; ``0`` on a
-            path already finished.
+            value as if every person died that day with no spousal rollover; never negative,
+            and ``0`` on a path already finished.
         spending_achieved: Real after-tax spending achieved over each year, summed
             from the twelve months, ``(n_years, n_paths)``.
         tax_assessed: Real household tax *assessed* on each year's income,
@@ -57,9 +57,9 @@ class SimulationResult:
             ``(n_years, n_paths)``. Monotone in year once true; detected in
             the month it happens, reported at the year that contains it.
         estate_after_tax: Real estate value after the terminal return, from the final
-            simulated state -- finite on every path, since ``run`` never returns
-            before every path's second death (see ``draws.n_months`` in :func:`run`),
-            ``(n_paths,)``.
+            simulated state -- never negative, and finite on every path, since ``run``
+            never returns before every path's second death (see ``draws.n_months`` in
+            :func:`run`), ``(n_paths,)``.
         death_year: Calendar year of each person's death, in
             ``initial_state.persons`` order, ``(n_persons, n_paths)`` int64 --
             ``initial_state.year + death_month_index // 12``, from the opening

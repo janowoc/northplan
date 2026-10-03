@@ -1402,10 +1402,11 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
        TFSA and taxable balances, less item 4's ``balance_owing`` (the RESP is excluded, L34) --
        ``after_tax_net_worth`` (the liquidation value as if every person died on 31 December
        with no rollover, via :func:`_deemed_single_assessments` with ``died_in_year=True`` for
-       everyone, L42), this year's ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over
-       every person's assessment, of ``total`` -- the AIP penalty and the OAS repayment
-       included, everyone included), item 3's ``assessments`` per person, ``net_income`` per
-       person, item 6's ``gis_band`` per person, and ``depleted``.
+       everyone, L42, floored at zero; ``net_worth`` is not floored), this year's
+       ``spending_achieved_ytd``, ``tax_assessed`` (the sum, over every person's assessment,
+       of ``total`` -- the AIP penalty and the OAS repayment included, everyone included),
+       item 3's ``assessments`` per person, ``net_income`` per person, item 6's ``gis_band``
+       per person, and ``depleted``.
 
     Args:
         state: State at the end of December, with twelve months accumulated.
@@ -1548,7 +1549,7 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
     hyp_total = np.zeros(state.n_paths, dtype=np.float64)
     for person, hyp in zip(final_persons, hyp_assessments, strict=True):
         hyp_total = hyp_total + (hyp.total - person.income.remitted)
-    after_tax_net_worth = (net_worth + balance_owing_total) - hyp_total
+    after_tax_net_worth = np.maximum((net_worth + balance_owing_total) - hyp_total, 0.0)
 
     year_record = YearRecord(
         year=state.year,
@@ -1708,9 +1709,9 @@ def resolve_deaths(
        person is assessed alone, via :func:`_deemed_single_assessments`, on this year's
        ledger plus their registered balances and taxable deemed gain (``died_in_year =
        death_month_index >= jan``). The household's terminal tax and its estate (gross
-       wealth, less that tax, less balance owing, plus remitted) are recorded into
-       ``estate_after_tax``/``terminal_assessment``/``cash_to_estate``; every balance, the
-       income ledger, and the beneficiaries' RESP buckets (L34) are then zeroed.
+       wealth, less that tax, less balance owing, plus remitted, floored at zero) are
+       recorded into ``estate_after_tax``/``terminal_assessment``/``cash_to_estate``; every
+       balance, the income ledger, and the beneficiaries' RESP buckets (L34) are then zeroed.
        ``depleted`` is left untouched. ``terminal_assessments`` carries each person's own
        :class:`~engine.core.state.Assessment` from that same computation, zero-valued (via
        :func:`_zero_assessment`) on every path that does not finish this month.
@@ -1834,7 +1835,7 @@ def resolve_deaths(
             balance_owing_total = balance_owing_total + p.balance_owing
             remitted_total = remitted_total + p.income.remitted
 
-        estate = gross - terminal_total - balance_owing_total + remitted_total
+        estate = np.maximum(gross - terminal_total - balance_owing_total + remitted_total, 0.0)
         estate_after_tax = np.where(finished_now, estate, state.estate_after_tax)
         terminal_assessment = np.where(finished_now, terminal_total, 0.0)
         cash_to_estate = np.where(finished_now, cash.balance, 0.0)

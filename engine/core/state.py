@@ -654,7 +654,14 @@ class YearRecord:
             31 December of this year, with no spousal rollover: this year's ledger plus every
             person's registered balances and the deemed gain on their taxable holding, each
             assessed alone (``engine.core.step._deemed_single_assessments``, with
-            ``died_in_year=True`` for everyone). Comes out ``0`` on a finished path.
+            ``died_in_year=True`` for everyone). Never negative: floored at zero (L42), while
+            ``net_worth`` is not. Before the floor it equals ``net_worth`` plus ``tax_assessed``
+            less the hypothetical returns' total tax. So the recorded value exceeds
+            ``net_worth`` by at least that difference wherever the hypothetical tax is the
+            smaller -- for instance where a deemed loss on the taxable holding nets against
+            the year's realized gains, or where the death-year capital loss deduction (L17)
+            applies -- and exceeds any negative ``net_worth``. Comes out ``0`` on a finished
+            path.
         tax_assessed: Tax assessed *for* this year at the December close, not paid
             in cash during it.
         assessments: Each person's full :class:`Assessment` at the elected split, in
@@ -712,8 +719,8 @@ class HouseholdState:
             (``docs/limitations.md`` L40) and never stored on this state.
         spending_achieved_ytd, depleted, estate_after_tax, history: What has
             actually been spent this year; whether out of money (monotonic);
-            estate value after tax (NaN until the second death); and the
-            year-by-year record, append-only.
+            estate value after tax (NaN until the second death, never negative from it
+            on); and the year-by-year record, append-only.
     """
 
     year: int

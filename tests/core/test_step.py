@@ -2759,9 +2759,10 @@ class TestGisBandForACouple:
 
 
 class TestYearRecordFields:
-    """after_tax_net_worth is strictly below net_worth (#36: the terminal-return
-    arithmetic, hypothetically, on a living household), and the per-person tuples are
-    sized to the household.
+    """after_tax_net_worth is the terminal-return arithmetic, hypothetically, on a living
+    household (#36). On the solvent example it sits below net_worth; on an insolvent close
+    it is floored at zero while net_worth is not (#68). The per-person tuples are sized to
+    the household.
     """
 
     def test_after_tax_net_worth_is_below_net_worth_and_tuples_match_persons(
@@ -2823,6 +2824,144 @@ class TestYearRecordFields:
         assert len(record.net_income) == len(closed.persons)
         assert len(record.gis_band) == len(closed.persons)
 
+    def test_an_insolvent_close_records_zero_after_tax_net_worth(self, scenario, real_params):
+        """Path 0 holds nothing and has $60,000 of unremitted RRIF income in its ledger, so
+        its hypothetical liquidation is negative and records exactly 0, while its
+        ``net_worth`` stays negative. Path 1 is the solvent example, unchanged.
+        """
+        n = 2
+        state = build_initial_state(scenario, n_paths=n)
+        opened = open_year(state, real_params)
+        person = opened.persons[0]
+        has_assets = np.array([0.0, 1.0])
+        person = updated(
+            person,
+            rrsp=updated(person.rrsp, balance=person.rrsp.balance * has_assets),
+            rrif=updated(person.rrif, balance=person.rrif.balance * has_assets),
+            lira=updated(person.lira, balance=person.lira.balance * has_assets),
+            lif=updated(person.lif, balance=person.lif.balance * has_assets),
+            tfsa=updated(person.tfsa, balance=person.tfsa.balance * has_assets),
+            taxable=updated(
+                person.taxable,
+                balance=person.taxable.balance * has_assets,
+                acb=person.taxable.acb * has_assets,
+            ),
+            income=updated(
+                person.income,
+                rrif_lif_withdrawals=np.array([60_000.0, 0.0]),
+                remitted=np.zeros(n),
+            ),
+        )
+        opened = updated(
+            opened,
+            persons=(person,),
+            cash=CashState(balance=opened.cash.balance * has_assets),
+        )
+
+        closed = close_year(opened, real_params)
+        record = closed.history[-1]
+
+        january_month_index = closed.month_index - (closed.month - 1)
+        hyp_total, _ = _recompute_terminal_total(
+            closed.persons, closed.year, january_month_index, closed.province, real_params
+        )
+        remitted = sum(p.income.remitted for p in closed.persons)
+        unfloored = _gross_wealth(closed) - (hyp_total - remitted)
+
+        # Guards: path 0's liquidation really is negative, path 1's positive.
+        assert unfloored[0] < 0.0
+        assert unfloored[1] > 0.0
+
+        assert record.after_tax_net_worth[0] == 0.0
+        np.testing.assert_allclose(record.after_tax_net_worth[1], unfloored[1])
+        # net_worth is not floored: path 0 owes this year's tax with nothing to pay it.
+        assert record.net_worth[0] < 0.0
+
+    def test_a_couple_close_is_floored_on_the_household_total(
+        self, couple_scenario, couple_real_params
+    ):
+        """The floor applies to the household's after-tax net worth, not to each person's
+        share: a holds nothing and has $60,000 of unremitted RRIF income; b holds only a
+        $3,000 TFSA. The household is insolvent, so the close records exactly 0, though
+        b's share alone is positive.
+        """
+        n = 1
+        state = build_initial_state(couple_scenario, n_paths=n)
+        opened = open_year(state, couple_real_params)
+        person_a, person_b = opened.persons
+        person_a = updated(
+            _holding_only_tfsa(person_a, 0.0),
+            income=updated(
+                person_a.income,
+                rrif_lif_withdrawals=np.full(n, 60_000.0),
+                remitted=np.zeros(n),
+            ),
+        )
+        person_b = _holding_only_tfsa(person_b, 3_000.0)
+        opened = updated(opened, persons=(person_a, person_b), cash=CashState(balance=np.zeros(n)))
+
+        closed = close_year(opened, couple_real_params)
+        record = closed.history[-1]
+
+        january_month_index = closed.month_index - (closed.month - 1)
+        _hyp_total, oracle = _recompute_terminal_total(
+            closed.persons, closed.year, january_month_index, closed.province, couple_real_params
+        )
+        shares = [
+            _gross_wealth(updated(closed, persons=(p,), cash=CashState(balance=np.zeros(n))))
+            - (a.total - p.income.remitted)
+            for p, a in zip(closed.persons, oracle, strict=True)
+        ]
+        unfloored = closed.cash.balance + shares[0] + shares[1]
+
+        # Guards: the household is insolvent, though b's share alone is positive.
+        assert unfloored[0] < 0.0
+        assert shares[1][0] > 0.0
+
+        assert record.after_tax_net_worth[0] == 0.0
+
+    def test_a_deemed_loss_against_realized_gains_lifts_it_above_net_worth(
+        self, scenario, real_params
+    ):
+        """The year realized a $200,000 gain and the taxable holding stands at a deemed loss
+        of $80,000. The hypothetical return nets the two, so its tax is below the year's own
+        and after_tax_net_worth exceeds net_worth by ``tax_assessed`` less that tax. The net
+        gain stays positive, so the death-year deduction (L17) plays no part.
+        """
+        n = 1
+        state = build_initial_state(scenario, n_paths=n)
+        opened = open_year(state, real_params)
+        person = _holding_only_tfsa(opened.persons[0], 0.0)
+        person = updated(
+            person,
+            taxable=updated(
+                person.taxable, balance=np.full(n, 50_000.0), acb=np.full(n, 130_000.0)
+            ),
+            income=updated(person.income, capital_gains=np.full(n, 200_000.0)),
+        )
+        opened = updated(opened, persons=(person,), cash=CashState(balance=np.full(n, 10_000.0)))
+
+        closed = close_year(opened, real_params)
+        record = closed.history[-1]
+
+        january_month_index = closed.month_index - (closed.month - 1)
+        hyp_total, _ = _recompute_terminal_total(
+            closed.persons, closed.year, january_month_index, closed.province, real_params
+        )
+
+        # Guards: the deemed loss is real, the net gain is still positive, and the
+        # hypothetical tax is positive -- so a loss dropped or counted twice would move
+        # it -- yet below the year's own.
+        deemed = taxable.deemed_disposition(closed.persons[0].taxable)
+        assert deemed[0] < 0.0
+        assert closed.persons[0].income.capital_gains[0] + deemed[0] > 0.0
+        assert 0.0 < hyp_total[0] < record.tax_assessed[0]
+
+        assert record.after_tax_net_worth[0] > record.net_worth[0]
+        np.testing.assert_allclose(
+            record.after_tax_net_worth - record.net_worth, record.tax_assessed - hyp_total
+        )
+
 
 # =============================================================================
 # #36: death, the terminal return, and the result object
@@ -2882,6 +3021,20 @@ def _gross_wealth(state):
             + person.taxable.balance
         )
     return gross
+
+
+def _holding_only_tfsa(person, tfsa_balance):
+    """``person`` with every account emptied except a TFSA of ``tfsa_balance``."""
+    zero = np.zeros_like(person.rrsp.balance)
+    return updated(
+        person,
+        rrsp=updated(person.rrsp, balance=zero),
+        rrif=updated(person.rrif, balance=zero),
+        lira=updated(person.lira, balance=zero),
+        lif=updated(person.lif, balance=zero),
+        tfsa=updated(person.tfsa, balance=np.full_like(zero, tfsa_balance)),
+        taxable=updated(person.taxable, balance=zero, acb=zero),
+    )
 
 
 class TestFirstDeathOnTheCouple:
@@ -3409,6 +3562,138 @@ class TestSecondDeathTerminalReturn:
         np.testing.assert_allclose(new_state.estate_after_tax, expected_estate)
         np.testing.assert_allclose(cash_to_estate, state.cash.balance)
         assert not np.any(new_state.depleted)
+
+    def test_an_estate_below_its_balance_owing_is_zero(self, scenario, real_params):
+        """An estate whose tax and balance owing exceed its assets is exactly zero; one
+        that does not is unchanged, including one kept positive only by ``remitted``.
+
+        The death falls in March: in a run a balance owing stands from a December close
+        until the filing month, and this start-year fixture sets one by hand. Path 0 has
+        no assets and a balance owing. Path 1 has the assets of
+        ``test_example_only_death``. Path 2 has no assets and no balance owing, and
+        remits more than its terminal tax, so the floor must apply after ``remitted``
+        is added back, not before.
+        """
+        n = 3
+        state = build_initial_state(scenario, n_paths=n)
+        state = updated(state, month=3, month_index=2)
+        person = state.persons[0]
+        has_assets = np.array([0.0, 1.0, 0.0])
+        person = updated(
+            person,
+            alive=np.ones(n, dtype=bool),
+            death_month_index=np.full(n, 2, dtype=np.int64),
+            rrsp=updated(person.rrsp, balance=person.rrsp.balance * has_assets),
+            rrif=updated(person.rrif, balance=person.rrif.balance * has_assets),
+            lira=updated(person.lira, balance=person.lira.balance * has_assets),
+            lif=updated(person.lif, balance=person.lif.balance * has_assets),
+            tfsa=updated(person.tfsa, balance=person.tfsa.balance * has_assets),
+            taxable=updated(
+                person.taxable,
+                balance=person.taxable.balance * has_assets,
+                acb=person.taxable.acb * has_assets,
+            ),
+            income=updated(
+                person.income,
+                rrif_lif_withdrawals=np.full(n, 60_000.0),
+                remitted=np.array([0.0, 500.0, 20_000.0]),
+            ),
+            balance_owing=np.array([2_000.0, 200.0, 0.0]),
+        )
+        state = updated(
+            state,
+            persons=(person,),
+            cash=CashState(balance=np.array([0.0, 4_000.0, 0.0])),
+        )
+
+        gross = _gross_wealth(state)
+        expected_total, _ = _recompute_terminal_total(
+            (person,), state.year, 0, state.province, real_params
+        )
+        unfloored = gross - expected_total - person.balance_owing + person.income.remitted
+
+        # Guards: path 0 is insolvent, path 1 is solvent, and path 2 is solvent only
+        # because of what it remitted.
+        assert gross[0] == 0.0 and gross[2] == 0.0
+        assert unfloored[0] < 0.0
+        assert unfloored[1] > 0.0
+        assert expected_total[2] > 0.0
+        assert gross[2] - expected_total[2] - person.balance_owing[2] < 0.0
+        assert unfloored[2] > 0.0
+
+        (
+            new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, real_params)
+
+        assert new_state.estate_after_tax[0] == 0.0
+        np.testing.assert_allclose(new_state.estate_after_tax[1:], unfloored[1:])
+        # The terminal tax itself is not floored, and nothing else moves.
+        np.testing.assert_allclose(terminal_assessment, expected_total)
+        np.testing.assert_allclose(cash_to_estate, state.cash.balance)
+
+    def test_a_couple_estate_is_floored_on_the_household_total(
+        self, couple_scenario, couple_real_params
+    ):
+        """The floor applies to the household's estate, not to each person's share. a died
+        in February with $60,000 of unremitted RRIF income and a balance owing, set by hand
+        as in the test above; b dies in March holding only a $3,000 TFSA. The household is
+        insolvent, so the estate is exactly 0, though b's share alone is positive.
+        """
+        n = 1
+        state = build_initial_state(couple_scenario, n_paths=n)
+        state = updated(state, month=3, month_index=2)
+        person_a, person_b = state.persons
+        person_a = updated(
+            _holding_only_tfsa(person_a, 0.0),
+            alive=np.zeros(n, dtype=bool),
+            death_month_index=np.full(n, 1, dtype=np.int64),
+            income=updated(
+                person_a.income,
+                rrif_lif_withdrawals=np.full(n, 60_000.0),
+                remitted=np.zeros(n),
+            ),
+            balance_owing=np.full(n, 2_000.0),
+        )
+        person_b = updated(
+            _holding_only_tfsa(person_b, 3_000.0),
+            alive=np.ones(n, dtype=bool),
+            death_month_index=np.full(n, 2, dtype=np.int64),
+        )
+        persons = (person_a, person_b)
+        state = updated(state, persons=persons, cash=CashState(balance=np.zeros(n)))
+
+        expected_total, oracle = _recompute_terminal_total(
+            persons, state.year, 0, state.province, couple_real_params
+        )
+        shares = [
+            _gross_wealth(updated(state, persons=(p,), cash=CashState(balance=np.zeros(n))))
+            - a.total
+            - p.balance_owing
+            + p.income.remitted
+            for p, a in zip(persons, oracle, strict=True)
+        ]
+        unfloored = state.cash.balance + shares[0] + shares[1]
+
+        # Guards: the household is insolvent, though b's share alone is positive.
+        assert unfloored[0] < 0.0
+        assert shares[1][0] > 0.0
+
+        (
+            new_state,
+            _rolled_out,
+            _rolled_acb,
+            terminal_assessment,
+            _cash_to_estate,
+            _terminal_assessments,
+        ) = resolve_deaths(state, couple_real_params)
+
+        assert new_state.estate_after_tax[0] == 0.0
+        np.testing.assert_allclose(terminal_assessment, expected_total)
 
     def test_simultaneous_death(self, couple_scenario, couple_real_params):
         n = 1

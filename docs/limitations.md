@@ -590,12 +590,15 @@ person 65 or older at year end. Direction: optimistic, by at most the federal
 and provincial pension credits on each return that carries such a balance. A
 death taking effect in January is taxed that year on an empty ledger, as if it
 had happened on 1 January. The estate is what remains after that tax and any
-balance owing; it then leaves the household entirely — every balance is
-zeroed, and every later row reads zero. The terminal tax is not part of
+balance owing, floored at zero: in reality the heirs owe nothing beyond the
+estate's assets; the shortfall is recorded nowhere. The estate then leaves the
+household entirely — every balance is zeroed, and every later row reads zero.
+The terminal tax is not part of
 `engine.mc.simulate.SimulationResult.tax_assessed`, which holds December
 assessments only. The after-tax net worth reported for a living household
 (`YearRecord.after_tax_net_worth`) uses the same arithmetic, hypothetically,
-as if both persons died on 31 December with no rollover. Not modelled: probate
+as if every person died on 31 December with no rollover, and is floored at
+zero the same way; `YearRecord.net_worth` is not floored. Not modelled: probate
 (a flat fee in Alberta), charitable bequests, graduated-rate estates. Lives in
 `engine/core/step.py::resolve_deaths` and `close_year`.
 
