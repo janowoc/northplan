@@ -713,6 +713,28 @@ REJECTIONS = [
         "risk_aversion",
         sets("risk_aversion", float("nan")),
     ),
+    # --- Estate utility shift -------------------------------------------------
+    rejected(
+        # Zero is refused: the case that tells gt=0.0 from ge=0.0.
+        "estate-utility-shift-zero",
+        "estate_utility_shift",
+        sets("estate_utility_shift", 0.0),
+    ),
+    rejected(
+        "estate-utility-shift-negative",
+        "estate_utility_shift",
+        sets("estate_utility_shift", -1.0),
+    ),
+    rejected(
+        "estate-utility-shift-infinite",
+        "estate_utility_shift",
+        sets("estate_utility_shift", float("inf")),
+    ),
+    rejected(
+        "estate-utility-shift-nan",
+        "estate_utility_shift",
+        sets("estate_utility_shift", float("nan")),
+    ),
 ]
 
 
@@ -1226,6 +1248,26 @@ def test_a_scenario_with_no_risk_aversion_loads_as_none(tmp_path: Path) -> None:
     scenario = load_mutated(tmp_path, (deletes("risk_aversion"),))
 
     assert scenario.risk_aversion is None
+
+
+# --- Estate utility shift -----------------------------------------------
+
+
+def test_the_example_carries_its_estate_utility_shift(tmp_path: Path) -> None:
+    """The expected value is read out of the file, not written here."""
+    expected = example_values()["estate_utility_shift"]
+    assert expected is not None
+
+    scenario = load_mutated(tmp_path, ())
+
+    assert scenario.estate_utility_shift == expected
+
+
+def test_a_scenario_with_no_estate_utility_shift_loads_as_none(tmp_path: Path) -> None:
+    """An absent preference must not acquire a numeric default."""
+    scenario = load_mutated(tmp_path, (deletes("estate_utility_shift"),))
+
+    assert scenario.estate_utility_shift is None
 
 
 # --- Attainability checked at load time, both entry points -----------------

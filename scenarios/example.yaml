@@ -39,6 +39,15 @@ seed: 42                    # common random numbers: the same draws for every po
 # to run rather than pick a preference for you.
 risk_aversion: 2.0
 
+# A second household PREFERENCE, read only by the certainty-equivalent
+# objective, together with risk_aversion: real dollars added to every path's
+# after-tax estate before the utility is taken, and subtracted from the
+# result. Without it an estate of zero is infinitely bad at a risk aversion of
+# 1 or more, and one such path decides the score. Smaller values let the worst
+# paths dominate; larger ones bring the score toward the mean. Optional and,
+# when given, above zero — omit it and that objective refuses to run.
+estate_utility_shift: 50000
+
 household:
   province: ab              # province of RESIDENCE, for income tax
 

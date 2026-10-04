@@ -1158,6 +1158,13 @@ class Scenario(_Base):
             Optional, and ``None`` is not a risk preference — an objective
             that needs one raises rather than choosing on the household's
             behalf.
+        estate_utility_shift: Real dollars added to every path's after-tax estate
+            before the certainty-equivalent objective takes its utility, and
+            subtracted from the result. Smaller values let the worst paths
+            dominate that objective; larger ones bring it toward the mean.
+            Optional, and finite and above zero when given; like
+            ``risk_aversion``, ``None`` is not a preference, and the objective
+            that needs it raises rather than choosing one.
         household: The people.
         spending: What they spend.
         assumptions: Inflation and capital markets.
@@ -1173,6 +1180,7 @@ class Scenario(_Base):
     n_paths: Annotated[int, Field(ge=1)]
     seed: int
     risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] | None = None
+    estate_utility_shift: Annotated[float, Field(gt=0.0, allow_inf_nan=False)] | None = None
     household: Household
     spending: Spending
     assumptions: Assumptions
