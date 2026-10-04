@@ -782,7 +782,7 @@ class TestBuildDraws:
     shares this module's ``mortality`` and ``two_person_scenario`` fixtures.
     """
 
-    def test_build_draws_month_count_is_the_household_maximum(
+    def test_build_draws_month_count_is_the_household_maximum_in_whole_years(
         self, two_person_scenario, mortality: ParamSet
     ) -> None:
         market = build_market_inputs(two_person_scenario.assumptions)
@@ -806,11 +806,14 @@ class TestBuildDraws:
         # person (b) must be the larger one, or this test would pass against
         # a first-person implementation by coincidence.
         assert months_b > months_a
+        # The rounded counts must differ too, or a first-person implementation
+        # could pass by rounding coincidence.
+        assert -(-months_a // 12) < -(-months_b // 12)
 
         draws = build_draws(two_person_scenario, market, n_paths=4, mortality=mortality)
 
-        assert draws.n_months == months_b
-        assert draws.real_returns.shape == (months_b, len(market.asset_class_names), 4)
+        assert draws.n_months == 840  # months_b is 830, rounded up to whole years
+        assert draws.real_returns.shape == (840, len(market.asset_class_names), 4)
 
     def test_build_deterministic_draws_is_one_path_same_month_count(
         self, two_person_scenario, mortality: ParamSet

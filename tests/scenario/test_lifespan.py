@@ -157,7 +157,7 @@ def test_person_past_terminal_age_beside_ordinary_person_is_refused_by_check_one
     assert "'a'" not in message
 
 
-# --- Check 2: the household's run cannot reach its first December close -----
+# --- Check 2: no one alive at the household's first December close ----------
 
 
 def test_person_exactly_terminal_age_january_birthday_is_refused_by_check_two(
@@ -166,8 +166,8 @@ def test_person_exactly_terminal_age_january_birthday_is_refused_by_check_two(
     """The pin between the two checks: exactly the terminal age, January birthday.
 
     Passes check 1 (age at open equals, does not exceed, terminal_age_years)
-    but the run has nowhere to go: it dies before its first December close,
-    and check 2 is what refuses it.
+    but no one can be alive at the run's first December close, and check 2 is
+    what refuses it.
     """
     age_months = terminal_age_years * MONTHS_PER_YEAR
     birth_year, birth_month = _birth_for_age_at_open(start_year, age_months)
@@ -184,7 +184,8 @@ def test_person_exactly_terminal_age_january_birthday_is_refused_by_check_two(
 
     message = str(excinfo.value)
     # This is check 2's message, not check 1's: no "older than" (check 1's
-    # wording), and it names the December close and the 12 months needed.
+    # wording), and it names the December close and the 12 months someone
+    # must outlive.
     assert "older than" not in message
     assert "December" in message
     assert "12" in message
@@ -225,6 +226,11 @@ def test_person_turning_terminal_age_in_march_is_refused_by_check_two(
 def test_person_turning_terminal_age_in_december_is_accepted(
     params: ParamYear, start_year: int, terminal_age_years: int
 ) -> None:
+    """The boundary check 2 tests, accepted side: a thirteen-month curve.
+
+    A December birthday gives ``months_to_terminal == 13``: a death month index of 12 is
+    possible, so someone can be alive at the first December close.
+    """
     birth_year = start_year - terminal_age_years
     birth_month = MONTHS_PER_YEAR
 
@@ -234,19 +240,24 @@ def test_person_turning_terminal_age_in_december_is_accepted(
     _clear_db_pensions(values)
     scenario = Scenario.model_validate(values)
 
+    assert (
+        months_to_terminal(
+            birth_year, birth_month, _person(values)["sex"], start_year, params["mortality"]
+        )
+        == MONTHS_PER_YEAR + 1
+    )
     check_lifespan(scenario, params)  # must not raise
 
 
-def test_person_turning_terminal_age_in_november_is_accepted(
+def test_person_turning_terminal_age_in_november_is_refused_by_check_two(
     params: ParamYear, start_year: int, terminal_age_years: int
 ) -> None:
-    """The boundary check 2 tests: exactly a twelve-month curve, refused by neither spelling.
+    """The boundary check 2 tests, refused side: a twelve-month curve.
 
-    A November birthday gives ``months_to_terminal == 12``: accepted under
-    ``longest < MONTHS_PER_YEAR`` but refused under
-    ``longest <= MONTHS_PER_YEAR``, unlike this file's other check-2
-    cases, whose curves (2, 4, 13, several hundred) are refused or accepted the
-    same way under either spelling.
+    A November birthday gives ``months_to_terminal == 12``: the latest death month index is
+    11, so no one can be alive at the first December close, and check 2 refuses it. The
+    December birthday's thirteen-month curve, in
+    ``test_person_turning_terminal_age_in_december_is_accepted``, is the accepted side.
     """
     birth_year = start_year - terminal_age_years
     birth_month = MONTHS_PER_YEAR - 1
@@ -262,7 +273,12 @@ def test_person_turning_terminal_age_in_november_is_accepted(
     )
     assert months == MONTHS_PER_YEAR
 
-    check_lifespan(scenario, params)  # must not raise
+    with pytest.raises(LifespanNotRepresentableError) as excinfo:
+        check_lifespan(scenario, params)
+
+    message = str(excinfo.value)
+    assert "within 12 month(s)" in message
+    assert "older than" not in message
 
 
 def test_short_lived_person_beside_ordinary_person_is_accepted_by_check_two(
@@ -302,7 +318,7 @@ def test_short_lived_person_beside_ordinary_person_is_accepted_by_check_two(
         ordinary_birth_year, ordinary_birth_month, ordinary_sex, start_year, params["mortality"]
     )
     assert short_months < MONTHS_PER_YEAR
-    assert ordinary_months >= MONTHS_PER_YEAR
+    assert ordinary_months > MONTHS_PER_YEAR
 
     check_lifespan(scenario, params)  # must not raise
 
@@ -343,7 +359,7 @@ def test_ordinary_person_first_short_lived_person_second_is_accepted_by_check_tw
         short_birth_year, short_birth_month, short_sex, start_year, params["mortality"]
     )
     assert short_months < MONTHS_PER_YEAR
-    assert ordinary_months >= MONTHS_PER_YEAR
+    assert ordinary_months > MONTHS_PER_YEAR
 
     check_lifespan(scenario, params)  # must not raise
 

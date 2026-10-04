@@ -173,10 +173,12 @@ curve to a death month. Deaths of spouses are independent.
 
 **L10. Terminal age.** Every path dies by the table's terminal age, where the
 probability is one. The simulation runs each path to the second death; there
-is no separate horizon. `engine/scenario/lifespan.py::check_lifespan` refuses
-rather than simulates a scenario this implies cannot run: a person already
-past the terminal age at the opening, or a household whose run cannot reach
-its first December close.
+is no separate horizon. The draws are sized to whole years, so the run always
+reaches the December close of the year of the last second death, and that
+year has a row. `engine/scenario/lifespan.py::check_lifespan` refuses rather
+than simulates a scenario the table cannot represent: a person already past
+the terminal age at the opening, or a household no one in which can be alive
+at the run's first December close.
 
 ## Income tax
 

@@ -69,6 +69,7 @@ from engine.core.state import (
     select_spending_level,
     updated,
 )
+from engine.core.timeline import MONTHS_PER_YEAR
 from engine.mc.market import MarketInputs
 from engine.mc.moments import covariance_from_correlation
 from engine.mc.returns import RandomDraws, deterministic, generate
@@ -273,18 +274,22 @@ def build_market_inputs(assumptions: Assumptions) -> MarketInputs:
 
 
 def _n_months_for_household(scenario: Scenario, mortality: ParamSet) -> int:
-    """The month count the run must be prepared to simulate: the household maximum.
+    """The month count the run must be prepared to simulate: the household maximum, in whole years.
 
     The **maximum** of :func:`~engine.core.mortality.months_to_terminal` across every person in
     ``scenario.household.persons`` — not the first person's — since the run goes to the *second*
-    death and must not truncate whichever person happens to be longer-lived.
+    death and must not truncate whichever person happens to be longer-lived. Rounded up to a
+    multiple of twelve: the run opens in January, so the count then ends on a December and the
+    run reaches the December close of the year of the last possible death, which gives that
+    year a row.
     """
-    return max(
+    longest = max(
         months_to_terminal(
             person.birth_year, person.birth_month, person.sex, scenario.start_year, mortality
         )
         for person in scenario.household.persons
     )
+    return -(-longest // MONTHS_PER_YEAR) * MONTHS_PER_YEAR
 
 
 def build_draws(
@@ -295,9 +300,11 @@ def build_draws(
 ) -> RandomDraws:
     """Generate the common random numbers a scenario's Monte Carlo run needs.
 
-    The month count is the household maximum, from :func:`_n_months_for_household` — the
-    longest of every person's :func:`~engine.core.mortality.months_to_terminal`, so the run
-    is never truncated by whichever person happens to die first. Delegates to
+    The month count is the household maximum in whole years, from
+    :func:`_n_months_for_household` — the longest of every person's
+    :func:`~engine.core.mortality.months_to_terminal`, rounded up to a multiple of twelve, so the
+    run is never truncated by whichever person happens to die first and reaches the December
+    close of the last death's year. Delegates to
     :func:`engine.mc.returns.generate`.
 
     Args:

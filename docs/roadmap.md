@@ -74,7 +74,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 51 | Stub signatures take `RealParamYear`, and the three builders the loop needs | agent | 29, 33, 48 | no bare `ParamYear`, no `n_years` argument and no `params_by_year` in the step, the loop, the policies or the optimizer |
 | 52 | `risk_aversion` is a scenario field, not a command-line flag | agent | 10 | the example loads with one; a scenario without one still loads |
 | 53 | Documentation drift the pending issues will not rewrite | agent | — | every changed hunk is a docstring, a comment or Markdown prose; no phase list touched |
-| 54 | Three guards: the `.raw` allowlist, scalar-vs-per-path state fields, and a scenario older than the life table | agent | 48 | an unclassified scalar field, an unlisted `.raw` access, and a scenario whose run cannot reach a December close, each fail |
+| 54 | Three guards: the `.raw` allowlist, scalar-vs-per-path state fields, and a scenario older than the life table | agent | 48 | an unclassified scalar field, an unlisted `.raw` access, and a household no one in which can be alive at its first December close, each fail |
 | 55 | A second committed scenario: the late-life couple | agent | 10, 33 | the two-person branch of `household_assessment` is reachable from a committed scenario |
 | 56 | Hand-check the couple scenario's death mechanics | human | 36, 55, 63, 67 | a spreadsheet is linked; a characterization test exists, created on instruction |
 | 57 | Wire the AIP penalty: the wind-up withholding and the December close | agent | 35, 50 | the penalty leaves cash in the wind-up month and nets to zero in April |

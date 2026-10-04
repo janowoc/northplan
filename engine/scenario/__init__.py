@@ -13,8 +13,8 @@ parameter file.
 ``start_ages`` refuses a CPP or OAS start age, or a RRIF conversion age, the
 scenario's parameter year does not allow. ``lifespan`` refuses a scenario the
 parameter year's life table cannot represent, either for one person past the
-terminal age or for a household whose run cannot reach its first December
-close. Building engine state from a scenario lives in
+terminal age or for a household no one in which can be alive at the run's first
+December close. Building engine state from a scenario lives in
 ``engine/core/build.py``, not here — this package hands out no NumPy arrays.
 
 Names ending in ``Spec`` are the deliberate exceptions to plain naming: they

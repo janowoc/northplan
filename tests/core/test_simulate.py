@@ -102,13 +102,14 @@ class TestResultRows:
     def test_full_run_row_and_month_counts(
         self, opening_state, draws, market, real_params, withdrawal_order
     ):
-        assert draws.n_months == 604
+        assert draws.n_months == 612
 
         recorder = RecordingPolicy(DoNothingPolicy(opening_state.elections, withdrawal_order))
         result = run(opening_state, recorder, draws, market, real_params, trace_path=0)
 
-        assert len(result.years) == 50
-        assert int(result.years[-1]) == 2075
+        assert len(result.years) == 51
+        assert int(result.years[-1]) == 2076
+        assert int(result.death_year.max()) == int(result.years[-1])
         assert len(result.trace) == draws.n_months
         assert len(recorder.calls) == draws.n_months
 

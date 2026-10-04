@@ -190,9 +190,11 @@ def test_terminal_assessments_sum_to_the_terminal_assessment_only_at_the_second_
 def test_couple_assessments_are_in_persons_order(couple_rows) -> None:
     """Person 0 is forced dead at month_index 27 (April 2028), so from 2029 on they have no
     income all year: their assessment must be zero and person 1's must carry the household
-    tax. Swapping the two assessments would fail the second assertion.
+    tax at every December close person 1 is alive for. Swapping the two assessments would
+    fail the second assertion.
     """
     count = 0
+    excluded = 0
     for row in couple_rows:
         if row["context.month"] != 12:
             continue
@@ -200,7 +202,14 @@ def test_couple_assessments_are_in_persons_order(couple_rows) -> None:
             0.0 + row["year_record.assessments.0.total"] + row["year_record.assessments.1.total"]
             == row["year_record.tax_assessed"]
         )
-        if row["year_record.year"] >= 2029:
+        if row["year_record.year"] >= 2029 and not (
+            row["persons.1.death_month_index"] > row["context.month_index"]
+        ):
+            # The December of person 1's death year: nobody is alive, both are 0.
+            excluded += 1
+            assert row["year_record.assessments.0.total"] == 0.0
+            assert row["year_record.assessments.1.total"] == 0.0
+        elif row["year_record.year"] >= 2029:
             assert (
                 row["year_record.assessments.0.total"]
                 == 0.0
@@ -208,6 +217,7 @@ def test_couple_assessments_are_in_persons_order(couple_rows) -> None:
             )
             count += 1
     assert count > 0
+    assert excluded == 1
 
 
 # =============================================================================

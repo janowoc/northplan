@@ -31,8 +31,9 @@ class SimulationResult:
     the count of December closes the run reached, not a count derived from the
     calendar. ``run`` stops at the first December close reached at or after every
     path's second death, or when ``draws.n_months`` is exhausted, whichever comes
-    first (see :func:`run`); a finished path whose death year's December the draws
-    never reach gets no row for it at all.
+    first (see :func:`run`). Draws from :mod:`engine.core.build` are sized to whole years, so with
+    them the close always comes first and every death year has a row; hand-built draws that end
+    before a death year's December leave that year without one.
 
     All dollar amounts are real; conversion to nominal happens at display, in
     ``api/`` or ``cli/``, never here.
@@ -135,9 +136,10 @@ def run(
     The loop breaks at the end of the first month, at or after every path's second death, in
     which ``close_year`` ran (``state.history`` grew) -- including a final death that itself
     falls in December, whose own close runs within the same step -- or when ``draws.n_months``
-    is exhausted, whichever comes first. The trace, when asked for, ends at that month too. A
-    finished path whose death year's December the draws never reach gets no row for that year
-    at all (the pre-#19 rule, unchanged).
+    is exhausted, whichever comes first. The trace, when asked for, ends at that month too. Draws
+    from :mod:`engine.core.build` are sized to whole years, so with them every death year
+    has a row; hand-built draws that end before a death year's December leave that year without
+    one.
 
     Args:
         initial_state: Opening state for the first simulated month.

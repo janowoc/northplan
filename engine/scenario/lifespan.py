@@ -16,11 +16,13 @@ Two refusals, both raised as :class:`LifespanNotRepresentableError`:
    is a data error, not a scenario.
 2. Only once every person clears check 1: a household whose longest
    :func:`~engine.core.mortality.months_to_terminal` across its persons is
-   below twelve. Month index 11 is December of the start year, and a
-   ``SimulationResult`` row exists only for a year whose December close ran
-   (issue #19); a run that never reaches one produces an empty first axis
-   that every objective in ``engine/optimize/objective.py`` would index into
-   or reduce over.
+   twelve or fewer. A person's death month index is at most that count less
+   one, and being alive at the run's first December close (month index 11)
+   needs a death month index above 11, so no one in such a household can be
+   alive at that close. The run would still reach the close, since the draws
+   are sized to whole years (:func:`engine.core.build.build_draws`), but its
+   one row would describe a household already gone; like check 1, that is
+   refused as a data error rather than simulated.
 
 A parameter year that does not match ``scenario.start_year`` is a caller
 mistake rather than a bad scenario, and raises ``ValueError`` instead, exactly
@@ -47,9 +49,9 @@ class LifespanNotRepresentableError(ScenarioError):
 
     Raised by :func:`check_lifespan`. Check 1's message names the person,
     their age at the opening, the terminal age, and the mortality parameter
-    file's source. Check 2's message additionally names the household's
-    longest month count and the twelve months it needed to reach a first
-    December close.
+    file's source. Check 2's message additionally names the household's longest
+    month count and the twelve months someone must outlive to be alive at the
+    run's first December close.
     """
 
 
@@ -65,8 +67,8 @@ def check_lifespan(scenario: Scenario, params: ParamYear) -> None:
        runs first.
     2. Only once every person clears check 1: refused if the household's
        longest :func:`~engine.core.mortality.months_to_terminal` across its
-       persons is below twelve, i.e. the run cannot reach its first December
-       close.
+       persons is twelve or fewer, i.e. no one in it can be alive at the run's
+       first December close.
 
     Args:
         scenario: The validated scenario.
@@ -111,15 +113,16 @@ def check_lifespan(scenario: Scenario, params: ParamYear) -> None:
         for person in scenario.household.persons
     )
     # Month index 11 is December of the start year, since the run opens on 1
-    # January (L4) and December is the twelfth month — so a curve needs at
-    # least MONTHS_PER_YEAR months to reach the household's first December
-    # close. The two coincide, not two independent quantities.
-    if longest < MONTHS_PER_YEAR:
+    # January (L4). A death drawn for month index k means not alive at the
+    # opening of month k, and death_month_index is at most longest - 1, so
+    # someone can be alive at the first December close only if longest exceeds
+    # MONTHS_PER_YEAR.
+    if longest <= MONTHS_PER_YEAR:
         raise LifespanNotRepresentableError(
-            f"household: every person in the household dies, per "
-            f"terminal_age_years ({terminal_age}) in {mortality.source}, "
-            f"within {longest} month(s) of the run's opening on 1 January "
-            f"{scenario.start_year} — short of the {MONTHS_PER_YEAR} months "
-            f"needed to reach the household's first December close. This "
-            "scenario would produce a SimulationResult with zero year rows."
+            f"household: no one in the household can be alive at the run's first "
+            f"December close. Per terminal_age_years ({terminal_age}) in "
+            f"{mortality.source}, every person dies within {longest} month(s) of the "
+            f"run's opening on 1 January {scenario.start_year}, and someone must "
+            f"outlive {MONTHS_PER_YEAR} months to be alive at that close. Like a "
+            "person past the terminal age, that is refused rather than simulated."
         )
