@@ -134,6 +134,16 @@ on the household depends on the field — too much room is optimistic, too high
 an ACB is optimistic on tax. Lives in each account module's `erode_nominal`,
 with the factor from `engine/core/indexation.py::nominal_carry_factor`.
 
+**L61. Nominal output is valued at the year end.** In reality a year's
+spending leaves across its months and an estate passes in the month of the
+second death; tax is a figure assessed on the year, not a payment on a date.
+With `--nominal` the command line converts each to nominal dollars at 31
+December of the year it falls in, by `(1 + inflation)` raised to the years
+from the start year's January. Direction: nominal spending and estates are
+overstated, by at most one year's inflation and about half of it on average;
+nominal tax is stated at its assessment date, the December close. Year-end
+balances are exact, and no simulated number changes. Lives in `cli/main.py`.
+
 **L7. Future legislated changes.** In reality the CPP enhancement phases in to
 2065 and the TFSA limit steps. We use the start year's parameters for every
 year. Direction: conservative on CPP for cohorts retiring after roughly 2040.

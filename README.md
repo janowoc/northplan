@@ -28,10 +28,11 @@ The parameter files for 2026 are populated and structurally tested. The
 loader, the scenario schema and loader, and all of `engine/tax/`,
 `engine/benefits/`, `engine/accounts/`, `engine/core/`, `engine/mc/`,
 `engine/policy/` and `engine/optimize/` are implemented, the monthly step, the
-run loop and the policy search included. `cli/` and `api/` are still stubs. The
-build order is `docs/roadmap.md`; each step is a GitHub issue. Known
-simplifications are listed in `docs/limitations.md`, and a change that adds one
-adds its entry there.
+run loop and the policy search included. `cli/` runs `northplan simulate` and
+`northplan optimize`; `api/` is still a stub. The build order is
+`docs/roadmap.md`; each step is a GitHub issue. Known simplifications are
+listed in `docs/limitations.md`, and a change that adds one adds its entry
+there.
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
@@ -162,6 +163,15 @@ pytest
 ruff check .
 ruff format .
 ```
+
+Run a scenario from the command line:
+
+```sh
+northplan simulate scenarios/example.yaml --paths 200 --out /tmp/example.csv
+northplan optimize scenarios/example.yaml --objective median_estate_after_tax --paths 200 --out /tmp/example.optimize.csv
+```
+
+`northplan simulate --help` and `northplan optimize --help` list the options.
 
 ## Build order
 
