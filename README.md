@@ -26,12 +26,12 @@ appears, something has gone wrong.
 
 The parameter files for 2026 are populated and structurally tested. The
 loader, the scenario schema and loader, and all of `engine/tax/`,
-`engine/benefits/`, `engine/accounts/`, `engine/core/`, `engine/mc/` and
-`engine/policy/` are implemented, the monthly step and the run loop included.
-`engine/optimize/`, `cli/` and `api/` are still stubs. The build order is
-`docs/roadmap.md`; each step is a GitHub issue. Known simplifications are
-listed in `docs/limitations.md`, and a change that adds one adds its entry
-there.
+`engine/benefits/`, `engine/accounts/`, `engine/core/`, `engine/mc/`,
+`engine/policy/` and `engine/optimize/` are implemented, the monthly step, the
+run loop and the policy search included. `cli/` and `api/` are still stubs. The
+build order is `docs/roadmap.md`; each step is a GitHub issue. Known
+simplifications are listed in `docs/limitations.md`, and a change that adds one
+adds its entry there.
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
@@ -168,11 +168,15 @@ ruff format .
 Engine first, UI last. The ordered list of steps, each a GitHub issue with
 its owner and success criteria, is `docs/roadmap.md`.
 
-**Early sanity check:** once RESP exists, the optimizer should discover
-unprompted that contributions up to the CESG maximum dominate nearly everything
-else, and that contributions beyond it do not. A guaranteed 20% match is hard
-to beat; a plan that winds up with a penalty is easy to beat. If it does not
-find both, the model is wrong.
+**RESP sanity check:** contributions up to the CESG maximum should beat
+smaller ones whenever the plan is spent on education: a guaranteed match is
+hard to beat. Contributions beyond it should lose in two ways: front-loaded,
+they reach the lifetime contribution limit early and forfeit grant room later
+years would have used; and whatever education does not use is wound up with
+the special tax on its income. `tests/optimize/test_resp_oracle.py` checks
+both. A modest excess that education does use is not penalised here: it grows
+sheltered and is paid out tax-free (`docs/limitations.md` L30, L31). If the
+oracle fails, the model is wrong.
 
 ## License
 

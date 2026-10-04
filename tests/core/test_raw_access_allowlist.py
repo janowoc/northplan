@@ -167,10 +167,8 @@ class TestTheGuardBites:
     def test_a_raw_access_inside_a_docstring_is_not_seen(self) -> None:
         """AST, not grep: a `.raw` access that only ever appears inside a string is invisible.
 
-        Demonstrated against a synthetic module rather than against
-        ``engine/optimize/search.py`` by name, even though that file's docstring contains
-        ``real_params.raw["mortality"]`` today — asserting against the real file by name would
-        make this test depend on a sentence staying exactly as worded.
+        Demonstrated against a synthetic module rather than a real file: asserting against a real
+        file by name would make this test depend on a sentence staying exactly as worded.
         """
         source = (
             "def f() -> None:\n"

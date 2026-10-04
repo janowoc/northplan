@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The RESP oracle scenario: one fictional parent saving for one child's
+# education. It is read by tests/optimize/test_resp_oracle.py, which checks
+# that contributions up to the grant-eligible amount beat smaller ones when the
+# plan is spent on education, that larger ones lose, and that the RESP stays
+# out of the estate at the final death (limitations.md L34). It is a test
+# fixture and not a model of anyone's finances.
+#
+# THE HOUSEHOLD IS FICTIONAL. The dates, balances, and costs below were made up
+# to exercise the engine.
+#
+# Conventions:
+#   - Every dollar amount is a REAL dollar of January 2026, the start year,
+#     except prior_year_net_income and net_income_two_years_prior, which are
+#     stated as filed; the engine restates them when it builds the opening
+#     state.
+#   - Rates and shares are bare fractions (0.02), never percentages (2).
+#   - Nothing here is a tax rule. Every RESP and tax figure comes from
+#     params/2026/; the test reads them from there and sets the opening grant
+#     room itself.
+#
+# Why the numbers are what they are:
+#   - Inflation is 0. Unindexed RESP limits erode in real terms otherwise, so
+#     a constant contribution weight would sit at the grant-eligible amount in
+#     one year only.
+#   - The asset class has no yields. The taxable account then produces no
+#     annual taxable income, so over the grant years the monthly budget is
+#     flat but for a small refund each April from the second year on, when
+#     the year before settles: the pension's withholding slightly exceeds its
+#     tax. A contribution weight set from the start year's budget therefore
+#     sits exactly at the grant-eligible amount in the start year and
+#     slightly above it later.
+#   - The income sits above the top enhanced-grant cut-off. The enhanced tier
+#     would otherwise reach the lifetime grant maximum early and mask the
+#     basic grant the oracle is about.
+#
+# Read by: tests/optimize/test_resp_oracle.py.
+
+name: resp-oracle
+start_year: 2026
+n_paths: 1
+seed: 1
+risk_aversion: 2.0
+estate_utility_shift: 50000
+household:
+  province: ab
+  persons:
+    - id: a
+      birth_year: 1981
+      birth_month: 3
+      sex: f
+      cpp: {contributory_history: 0.5}
+      prior_year_net_income: 130000
+      net_income_two_years_prior: 130000
+      db_pensions:
+        - {name: employer, start_year: 2025, start_month: 1, annual: 130000, indexation: full, survivor_share: 0.0}
+      accounts:
+        cash: {balance: 0}
+  beneficiaries:
+    - id: child1
+      birth_year: 2022
+      birth_month: 6
+      resp: {subscriber: a}          # contributions/grants/income 0; grant_room_carried set by the test from params
+      education: {start_year: 2040, start_month: 9, months: 48, annual_cost: 30000}
+spending:
+  schedule:
+    - {from_year: 2026, annual: 60000}
+  survivor_share: 1.0
+assumptions:
+  inflation: 0.0
+  asset_classes:
+    growth: {real_mean: 0.04, vol: 0.10, interest_yield: 0.0, dividend_yield: 0.0, distributed_gains_yield: 0.0}
+  correlation: [[1.0]]
+  allocations:
+    default: {growth: 1.0}
+policies:
+  - name: no-resp
+    contribution:
+      weights: {resp: 0.0, taxable: 1.0}
+      spill_order: [taxable]
+    withdrawal:
+      order: [taxable, rrif, rrsp, lif, tfsa]
+      taxable_ceiling_bracket: null
+      fill_pension_credit: false
+    elections:
+      cpp_start_age_years: {a: 70}
+      oas_start_age_years: {a: 70}
+      rrif_conversion: {age_years: 71, fraction: 1.0}

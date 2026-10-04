@@ -63,8 +63,7 @@ class SimulationResult:
         death_year: Calendar year of each person's death, in
             ``initial_state.persons`` order, ``(n_persons, n_paths)`` int64 --
             ``initial_state.year + death_month_index // 12``, from the opening
-            state's already-drawn ``death_month_index`` (#22 does any further
-            division by person).
+            state's already-drawn ``death_month_index``.
         gis_band_count: Persons in the GIS band at each December close, the sum over
             persons of ``YearRecord.gis_band``, ``(n_years, n_paths)`` int64.
         living_count: Persons alive at each year ``y``'s December close
@@ -94,7 +93,8 @@ class SimulationResult:
     def gis_band_person_years(self) -> NDArray[np.int64]:
         """``gis_band_count`` summed over years, ``(n_paths,)`` int64.
 
-        A count of person-years in the GIS band, for #22 to turn into a rate.
+        A count of person-years in the GIS band;
+        :func:`engine.optimize.objective.gis_exposure` turns it into a rate.
         Read-only: computed from ``gis_band_count`` on each access.
         """
         return self.gis_band_count.sum(axis=0, dtype=np.int64)

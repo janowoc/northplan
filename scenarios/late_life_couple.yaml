@@ -45,8 +45,7 @@
 #     non-zero bridge end to end; engine/benefits/pension.py's bridge branch
 #     has unit coverage only.
 #   - No RESP beneficiary. limitations.md L34 (the RESP is excluded from the
-#     estate) is not covered by either committed scenario; #22's oracle
-#     scenario is the natural place for it.
+#     estate) is covered by tests/optimize/test_resp_oracle.py instead.
 #   - GIS is not modelled in the first version (params/gis_not_implemented.yaml),
 #     so the couple GIS threshold is not exercised here despite the
 #     household's shape.
