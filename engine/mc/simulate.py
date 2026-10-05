@@ -36,7 +36,7 @@ class SimulationResult:
     before a death year's December leave that year without one.
 
     All dollar amounts are real; conversion to nominal happens at display, in
-    ``api/`` or ``cli/``, never here.
+    ``report/``, never here.
 
     Attributes:
         years: Calendar years simulated, ``(n_years,)``.

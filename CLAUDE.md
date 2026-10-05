@@ -64,7 +64,7 @@
   Per-person and per-beneficiary state are tuples of frozen dataclasses.
 - A policy reads only the opening state, the month context, and the
   parameters. Year to date is knowable; the year's total is not.
-- `engine/` never imports `api`, `fastapi`, `cli`, `starlette`, or `uvicorn`.
+- `engine/` never imports `api`, `fastapi`, `cli`, `report`, `starlette`, or `uvicorn`.
 
 ## Docstrings
 - A docstring states the contract: what the function takes and in what

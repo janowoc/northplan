@@ -19,12 +19,14 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
 
 import cli.main
-from cli.main import evaluation_rows, final_row, main, year_rows
+import report.tables
+from cli.main import main
 from engine.core.indexation import RoutedParameterError, UnroutedParameterError
 from engine.mc.prepare import PreparedRun, evaluate, prepare_run
 from engine.mc.simulate import SimulationResult
@@ -33,6 +35,7 @@ from engine.optimize.objective import select_objective, success_probability
 from engine.optimize.search import CandidateReport, SearchResult, search
 from engine.scenario import load_scenario
 from engine.scenario.schema import PolicySpec
+from report.tables import evaluation_rows, final_row, year_rows
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
@@ -932,13 +935,14 @@ class TestNonFinite:
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
+        module: ModuleType,
         name: str,
         replacement: object,
         argv: list[str],
         table: str,
         column: str,
     ) -> None:
-        monkeypatch.setattr(cli.main, name, replacement)
+        monkeypatch.setattr(module, name, replacement)
         out = tmp_path / "out.csv"
         with pytest.raises(ValueError, match=f"the {table} .*{column}"):
             main([*argv, "--deterministic", "--out", str(out)])
@@ -950,6 +954,7 @@ class TestNonFinite:
         self.refused(
             monkeypatch,
             tmp_path,
+            cli.main,
             "trace_rows",
             lambda _trace: [{"context.month": 1, "estate_after_tax": math.inf}],
             ["simulate", str(EXAMPLE), "--trace-path", "0"],
@@ -963,6 +968,7 @@ class TestNonFinite:
         self.refused(
             monkeypatch,
             tmp_path,
+            report.tables,
             "year_rows",
             lambda *_args, **_kwargs: [{"year": 2026, "net_worth_p50": math.nan}],
             ["simulate", str(EXAMPLE)],
@@ -976,6 +982,7 @@ class TestNonFinite:
         self.refused(
             monkeypatch,
             tmp_path,
+            report.tables,
             "final_row",
             lambda *_args, **_kwargs: {"estate_after_tax_mean": math.nan},
             ["simulate", str(EXAMPLE)],
@@ -989,6 +996,7 @@ class TestNonFinite:
         self.refused(
             monkeypatch,
             tmp_path,
+            report.tables,
             "evaluation_rows",
             lambda _found: [{"name": "x", "score": math.nan}],
             ["optimize", str(EXAMPLE), "--objective", "median_estate_after_tax"],
@@ -1004,6 +1012,7 @@ class TestNonFinite:
         self.refused(
             monkeypatch,
             tmp_path,
+            report.tables,
             "year_rows",
             lambda *_args, **_kwargs: [{"year": 2026, "net_worth_p50": math.nan}],
             ["optimize", str(EXAMPLE), "--objective", "median_estate_after_tax"],

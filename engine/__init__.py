@@ -3,9 +3,9 @@
 
 """northplan simulation engine.
 
-Pure Python. This package must never import ``api``, ``fastapi``, or ``cli``;
-``tests/test_layering.py`` enforces that by walking the AST of every module
-here.
+Pure Python. This package must never import ``api``, ``fastapi``, ``cli``,
+``report``, ``starlette``, or ``uvicorn``; ``tests/test_layering.py`` enforces
+that by walking the AST of every module here.
 
 Invariants that hold everywhere below this package:
 

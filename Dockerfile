@@ -20,6 +20,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY engine/ engine/
 COPY api/ api/
 COPY cli/ cli/
+COPY report/ report/
 COPY web/ web/
 COPY params/ params/
 

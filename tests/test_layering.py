@@ -11,6 +11,10 @@ This walks the AST rather than importing, so a forbidden import is caught even
 inside a function body, a ``TYPE_CHECKING`` block, or a module that would fail
 to import for an unrelated reason.
 
+``report/`` sits between the engine and the two front ends: it may import the
+engine, and neither front end nor FastAPI, so the command line and the API
+share it without depending on each other.
+
 It also pins the one permitted dependency of ``engine/scenario`` on
 ``engine/mc`` — the leaf ``engine.mc.moments``, which imports nothing from
 ``engine.scenario``.
@@ -27,7 +31,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENGINE_ROOT = REPO_ROOT / "engine"
 
 #: Top-level modules ``engine/`` must never import, directly or as a submodule.
-FORBIDDEN_ROOTS = frozenset({"api", "fastapi", "cli", "starlette", "uvicorn"})
+FORBIDDEN_ROOTS = frozenset({"api", "fastapi", "cli", "report", "starlette", "uvicorn"})
+
+REPORT_ROOT = REPO_ROOT / "report"
+
+#: Top-level modules ``report/`` must never import.
+REPORT_FORBIDDEN_ROOTS = frozenset({"api", "cli", "fastapi", "starlette", "uvicorn"})
 
 
 def engine_modules() -> list[Path]:
@@ -38,7 +47,7 @@ def engine_modules() -> list[Path]:
 def imported_roots(tree: ast.AST) -> set[tuple[str, int]]:
     """Top-level package name of every import in ``tree``, with its line number.
 
-    Relative imports are ignored: they cannot reach outside ``engine/``.
+    Relative imports are ignored: they cannot reach outside the package being walked.
     """
     found: set[tuple[str, int]] = set()
     for node in ast.walk(tree):
@@ -46,7 +55,7 @@ def imported_roots(tree: ast.AST) -> set[tuple[str, int]]:
             for alias in node.names:
                 found.add((alias.name.split(".")[0], node.lineno))
         elif isinstance(node, ast.ImportFrom):
-            if node.level:  # relative import, stays inside engine/
+            if node.level:  # relative import, stays inside the package
                 continue
             if node.module:
                 found.add((node.module.split(".")[0], node.lineno))
@@ -74,6 +83,70 @@ def test_engine_does_not_import_upper_layers(module: Path) -> None:
         "engine/ must be importable and testable with FastAPI absent, and must not "
         "depend on the layers above it:\n  " + "\n  ".join(violations)
     )
+
+
+def report_modules() -> list[Path]:
+    """Every Python module under ``report/``."""
+    return sorted(REPORT_ROOT.rglob("*.py"))
+
+
+def test_report_directory_exists() -> None:
+    """Guard against the walk silently passing because it found no files."""
+    modules = report_modules()
+    assert modules, f"No modules found under {REPORT_ROOT}; the layering test is vacuous."
+
+
+@pytest.mark.parametrize("module", report_modules(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
+def test_report_does_not_import_the_front_ends(module: Path) -> None:
+    """No module under ``report/`` imports the API or CLI layer, or FastAPI."""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+
+    violations = [
+        f"{module.relative_to(REPO_ROOT)}:{lineno} imports {root!r}"
+        for root, lineno in sorted(imported_roots(tree), key=lambda pair: pair[1])
+        if root in REPORT_FORBIDDEN_ROOTS
+    ]
+
+    assert not violations, (
+        "report/ is shared by cli/ and api/ and must depend on neither:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+API_ROOT = REPO_ROOT / "api"
+CLI_ROOT = REPO_ROOT / "cli"
+
+
+def test_front_end_directories_exist() -> None:
+    """Guard against the front-end walks silently passing because they found no files."""
+    for root in (API_ROOT, CLI_ROOT):
+        assert sorted(root.rglob("*.py")), f"No modules found under {root}; the test is vacuous."
+
+
+def front_end_violations(module: Path, forbidden: str) -> list[str]:
+    """Each import in ``module`` whose root is ``forbidden``, as ``path:line imports 'root'``."""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    return [
+        f"{module.relative_to(REPO_ROOT)}:{lineno} imports {root!r}"
+        for root, lineno in sorted(imported_roots(tree), key=lambda pair: pair[1])
+        if root == forbidden
+    ]
+
+
+@pytest.mark.parametrize(
+    "module", sorted(API_ROOT.rglob("*.py")), ids=lambda p: str(p.relative_to(REPO_ROOT))
+)
+def test_api_does_not_import_the_command_line(module: Path) -> None:
+    """No module under ``api/`` imports ``cli``."""
+    assert not front_end_violations(module, "cli")
+
+
+@pytest.mark.parametrize(
+    "module", sorted(CLI_ROOT.rglob("*.py")), ids=lambda p: str(p.relative_to(REPO_ROOT))
+)
+def test_command_line_does_not_import_the_api(module: Path) -> None:
+    """No module under ``cli/`` imports ``api``."""
+    assert not front_end_violations(module, "api")
 
 
 SCENARIO_ROOT = ENGINE_ROOT / "scenario"

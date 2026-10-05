@@ -142,7 +142,8 @@ December of the year it falls in, by `(1 + inflation)` raised to the years
 from the start year's January. Direction: nominal spending and estates are
 overstated, by at most one year's inflation and about half of it on average;
 nominal tax is stated at its assessment date, the December close. Year-end
-balances are exact, and no simulated number changes. Lives in `cli/main.py`.
+balances are exact, and no simulated number changes. Lives in
+`report/tables.py`.
 
 **L7. Future legislated changes.** In reality the CPP enhancement phases in to
 2065 and the TFSA limit steps. We use the start year's parameters for every

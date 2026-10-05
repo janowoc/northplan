@@ -92,7 +92,7 @@ Scope of the first version: Alberta residents, no GIS, no Quebec. See
 ```
 params/2026/     hand-populated parameters, one directory per tax year
 params/*.yaml    placeholder templates and drafts, unreachable by the loader
-engine/          pure Python, no FastAPI. MUST NOT import from api/ or cli/
+engine/          pure Python, no FastAPI. MUST NOT import from api/, cli/ or report/
   params/        YAML -> typed frozen parameter sets, no defaults
   scenario/      scenario schema and loader (pydantic)
   tax/           array-valued pure functions: brackets, federal, provincial, combined
@@ -102,6 +102,7 @@ engine/          pure Python, no FastAPI. MUST NOT import from api/ or cli/
   mc/            monthly draws + the loop over months
   policy/        parameterized decision rules
   optimize/      objectives and the policy search
+report/          result tables shared by cli/ and api/, real or nominal
 api/             FastAPI, thin. Serves web/ via StaticFiles
 web/             plain HTML + Alpine.js + Plotly from CDN. No build step
 cli/             YAML scenario in, results out
@@ -114,7 +115,8 @@ tests/params/    structural and provenance tests over the real parameter files
 
 `engine/` is importable and fully testable with FastAPI absent. This is
 enforced by `tests/test_layering.py`, which walks the AST of every module under
-`engine/` and fails on any import of `api`, `fastapi`, or `cli`.
+`engine/` and fails on any import of `api`, `fastapi`, `cli`, `report`,
+`starlette`, or `uvicorn`.
 
 ## Parameters are never invented
 
