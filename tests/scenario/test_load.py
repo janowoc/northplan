@@ -13,6 +13,9 @@ the mechanisms it exists for.
 
 from __future__ import annotations
 
+import json
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,7 +25,7 @@ from engine.core.build import build_initial_state
 from engine.core.indexation import real_year
 from engine.core.mortality import months_to_terminal
 from engine.core.state import DEATH_NOT_DRAWN
-from engine.params.loader import ParamYear, YamlConstructionError, load_year
+from engine.params.loader import ParamYear, YamlConstructionError, load_year, parse_yaml
 from engine.scenario import (
     InvalidScenarioError,
     MalformedScenarioFileError,
@@ -33,7 +36,12 @@ from engine.scenario import (
     check_start_ages,
     load_scenario,
 )
-from engine.scenario.load import DuplicateKeyError
+from engine.scenario.load import (
+    MAX_DOCUMENT_VALUES,
+    DuplicateKeyError,
+    _expanded_size,
+    scenario_from_text,
+)
 from engine.tax.combined import household_assessment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -423,3 +431,208 @@ def test_the_couple_reaches_the_two_person_branch_of_household_assessment(
     assessments = household_assessment(state, real_params)
 
     assert len(assessments) == 2
+
+
+# =============================================================================
+# scenario_from_text: text already in memory
+# =============================================================================
+
+
+def example_text() -> str:
+    return EXAMPLE.read_text(encoding="utf-8")
+
+
+def example_json() -> str:
+    return json.dumps(parse_yaml(example_text()))
+
+
+def test_yaml_text_gives_the_scenario_the_file_gives() -> None:
+    assert scenario_from_text(example_text(), "x", syntax="yaml") == load_scenario(EXAMPLE)
+
+
+def test_json_text_gives_the_scenario_the_yaml_gives() -> None:
+    from_json = scenario_from_text(example_json(), "request body", syntax="json")
+    assert from_json == scenario_from_text(example_text(), "x", syntax="yaml")
+
+
+def test_a_repeated_top_level_json_key_is_rejected() -> None:
+    with pytest.raises(DuplicateKeyError, match="key 'seed'") as caught:
+        scenario_from_text('{"seed": 1, "seed": 2}', "request body", syntax="json")
+    assert str(caught.value).startswith("request body: key ")
+
+
+def test_a_repeated_nested_json_key_is_rejected() -> None:
+    text = '{"assumptions": {"inflation": 0.02, "inflation": 0.03}}'
+    with pytest.raises(DuplicateKeyError, match="key 'inflation'"):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_a_json_syntax_error_is_malformed_and_not_a_duplicate_key() -> None:
+    with pytest.raises(MalformedScenarioFileError, match="is not valid JSON") as caught:
+        scenario_from_text('{"seed": ', "request body", syntax="json")
+    assert not isinstance(caught.value, DuplicateKeyError)
+
+
+def test_a_json_integer_over_the_digit_limit_is_malformed() -> None:
+    with pytest.raises(MalformedScenarioFileError, match="is not valid JSON"):
+        scenario_from_text("1" * 5000, "request body", syntax="json")
+
+
+def test_json_nested_too_deep_is_malformed() -> None:
+    text = "[" * 100000 + "]" * 100000
+    with pytest.raises(MalformedScenarioFileError, match="is not valid JSON"):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_a_json_top_level_array_is_not_a_mapping() -> None:
+    with pytest.raises(MalformedScenarioFileError, match=r"this parses to list\."):
+        scenario_from_text("[1, 2]", "request body", syntax="json")
+
+
+def test_a_json_object_that_fails_validation_names_the_source() -> None:
+    values = parse_yaml(example_text())
+    values["n_paths"] = 0
+    with pytest.raises(InvalidScenarioError) as caught:
+        scenario_from_text(json.dumps(values), "request body", syntax="json")
+    assert str(caught.value).startswith("request body is not a valid scenario:")
+
+
+def test_a_repeated_yaml_key_starts_with_the_source() -> None:
+    with pytest.raises(DuplicateKeyError) as caught:
+        scenario_from_text("seed: 1\nseed: 2\n", "request body", syntax="yaml")
+    assert str(caught.value).startswith("request body: ")
+
+
+def test_a_yaml_syntax_error_is_malformed() -> None:
+    with pytest.raises(MalformedScenarioFileError, match="is not valid YAML"):
+        scenario_from_text("a: [1, 2\n", "request body", syntax="yaml")
+
+
+def test_a_yaml_top_level_list_is_not_a_mapping() -> None:
+    with pytest.raises(MalformedScenarioFileError, match=r"this parses to list\."):
+        scenario_from_text("- 1\n- 2\n", "request body", syntax="yaml")
+
+
+def test_an_unknown_syntax_is_a_value_error_naming_it() -> None:
+    with pytest.raises(ValueError, match="'toml'"):
+        scenario_from_text(example_text(), "x", syntax="toml")  # type: ignore[arg-type]
+
+
+def test_json_goes_through_the_json_parser_and_not_the_yaml_one() -> None:
+    # YAML 1.1 reads 4.2e1 as the string "4.2e1", which an int field refuses; JSON
+    # reads it as the number 42.
+    text = example_json()
+    assert '"seed": 42' in text
+    exponent = text.replace('"seed": 42', '"seed": 4.2e1')
+    assert exponent != text
+    assert scenario_from_text(exponent, "request body", syntax="json").seed == 42
+    with pytest.raises(InvalidScenarioError):
+        scenario_from_text(exponent, "request body", syntax="yaml")
+
+
+def alias_bomb(levels: int = 7) -> str:
+    """YAML whose first level is a ten-item list and each next one ten aliases of the last."""
+    lines = ["l0: &l0 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]"]
+    for level in range(1, levels):
+        lines.append(f"l{level}: &l{level} [{', '.join([f'*l{level - 1}'] * 10)}]")
+    lines.append(f"name: *l{levels - 1}")
+    return "\n".join(lines) + "\n"
+
+
+CAP_REFUSAL = "more than 100,000 values"
+CYCLE_REFUSAL = "refers to itself through a YAML alias"
+
+
+def test_a_yaml_alias_bomb_is_refused_by_the_cap_quickly() -> None:
+    started = time.perf_counter()
+    with pytest.raises(MalformedScenarioFileError, match=CAP_REFUSAL) as caught:
+        scenario_from_text(alias_bomb(), "request body", syntax="yaml")
+    assert time.perf_counter() - started < 1.0
+    assert str(caught.value).startswith("request body: ")
+
+
+def test_a_document_of_exactly_the_cap_is_not_refused_by_the_cap() -> None:
+    # Root object 1, the list 1, and the leaves.
+    leaves = MAX_DOCUMENT_VALUES - 2
+    text = json.dumps({"a": [0] * leaves})
+    with pytest.raises(InvalidScenarioError):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_a_document_one_value_over_the_cap_is_refused_by_the_cap() -> None:
+    text = json.dumps({"a": [0] * (MAX_DOCUMENT_VALUES - 1)})
+    with pytest.raises(MalformedScenarioFileError, match=CAP_REFUSAL):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_a_self_referencing_yaml_list_is_refused_as_a_cycle() -> None:
+    with pytest.raises(MalformedScenarioFileError, match=CYCLE_REFUSAL):
+        scenario_from_text("a: &a [1, *a]\n", "request body", syntax="yaml")
+
+
+def test_a_self_referencing_yaml_mapping_is_refused_as_a_cycle() -> None:
+    with pytest.raises(MalformedScenarioFileError, match=CYCLE_REFUSAL):
+        scenario_from_text("a: &a {b: *a}\n", "request body", syntax="yaml")
+
+
+def test_values_held_only_in_omap_tuples_count_toward_the_cap() -> None:
+    big = ", ".join(["0"] * 1000)
+    text = "big: &big [" + big + "]\n"
+    text += "pairs: !!omap\n" + "".join(f"  - k{i}: *big\n" for i in range(150))
+    # 150 * 1000 leaves live only under the tuples !!omap builds; the document as
+    # written holds about 1,150 values, so only counting tuples refuses it.
+    with pytest.raises(MalformedScenarioFileError, match=CAP_REFUSAL):
+        scenario_from_text(text, "request body", syntax="yaml")
+
+
+def test_a_shared_but_small_alias_is_not_refused_by_the_cap() -> None:
+    with pytest.raises(InvalidScenarioError):
+        scenario_from_text("x: &x [1, 2]\ny: *x\nz: *x\n", "request body", syntax="yaml")
+
+
+def test_load_scenario_refuses_a_bomb_the_same_way(tmp_path: Path) -> None:
+    path = tmp_path / "bomb.yaml"
+    path.write_text(alias_bomb(), encoding="utf-8")
+    with pytest.raises(MalformedScenarioFileError, match=CAP_REFUSAL):
+        load_scenario(path)
+
+
+class CountingList(list[int]):
+    """A list that counts how many times it is iterated."""
+
+    iterations = 0
+
+    def __iter__(self) -> Iterator[int]:
+        type(self).iterations += 1
+        return super().__iter__()
+
+
+def _naive_size(node: object) -> int:
+    if isinstance(node, dict):
+        return 1 + sum(_naive_size(child) for child in node.values())
+    if isinstance(node, (list, tuple, set, frozenset)):
+        return 1 + sum(_naive_size(child) for child in node)
+    return 1
+
+
+def _nested_through(shared: object, depth: int) -> list[object]:
+    nested: list[object] = [shared]
+    for _ in range(depth):
+        nested = [shared, nested]
+    return nested
+
+
+def test_the_children_of_each_container_are_copied_once() -> None:
+    CountingList.iterations = 0
+    big = CountingList(range(1000))
+    value = {"big": big, "x": _nested_through(big, 300)}
+    _expanded_size(value, 10**9)
+    assert CountingList.iterations == 1
+
+
+def test_the_expanded_count_equals_a_naive_count() -> None:
+    big = list(range(1000))
+    value = {"big": big, "x": _nested_through(big, 50)}
+    assert _expanded_size(value, 10**9) == _naive_size(value)
+    aliased = parse_yaml("x: &x [1, 2]\ny: *x\nz: *x\n")
+    assert _expanded_size(aliased, 10**9) == _naive_size(aliased)
