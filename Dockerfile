@@ -26,8 +26,9 @@ COPY params/ params/
 
 RUN pip install --upgrade pip && pip install .
 
-# params/ and scenarios/ are bind-mounted by docker-compose so that
-# hand-edited parameters and local scenarios take effect without a rebuild.
+# params/ and scenarios/ are bind-mounted by docker-compose: hand-edited
+# parameters take effect on restart, and scenarios/example.yaml is what
+# /api/example serves.
 EXPOSE 8000
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

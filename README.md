@@ -34,6 +34,11 @@ runs a scenario and draws its fan chart. The build order is `docs/roadmap.md`;
 each step is a GitHub issue. Known simplifications are listed in
 `docs/limitations.md`, and a change that adds one adds its entry there.
 
+Still to do: checking the engine's figures by hand, in a spreadsheet of the
+deterministic path (#21), a hand check of the couple scenario's death mechanics
+(#56), and golden cases for the lines no case reaches yet (#69); and the
+resource limits the API needs before it serves anyone but one local user (#78).
+
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
 
@@ -134,27 +139,32 @@ are the filing month and the indexation schedules. See `CLAUDE.md`.
   source comment with the date it was checked. Each file's `indexation` block
   names its schedules and lists the dollar amounts on each; an amount on no
   schedule stops the run.
-- **Scenarios** — YAML, validated by `engine/scenario/`. One schema for
-  regression fixtures, real households, and the API. A scenario carries the
-  household (persons with birth date and sex, employment schedule, CPP history
-  or amount in pay, OAS amount if already in pay, prior-year net income, DB
-  pensions, account balances and room; RESP beneficiaries with plan state and
-  an education schedule), a spending schedule, return assumptions (asset
-  classes with real mean, volatility and the yields that fix their tax
+- **Scenarios** — YAML, or JSON over the API, validated by `engine/scenario/`.
+  One schema for regression fixtures, real households, and the API. A scenario
+  carries the household (persons with birth date and sex, employment schedule,
+  CPP history or amount in pay, OAS amount if already in pay, prior-year net
+  income, DB pensions, account balances and room; RESP beneficiaries with plan
+  state and an education schedule), a spending schedule, return assumptions
+  (asset classes with real mean, volatility and the yields that fix their tax
   character; a correlation matrix; allocations per account kind), and a list
   of named policies. `scenarios/example.yaml` is the reference.
-- **Results** — JSON over the API; CSV row-per-year for export; a single-path
-  monthly trace for debugging. The engine steps monthly and aggregates to
-  years at the boundary.
-- **No database.** Scenarios are files on a mounted volume.
+- **Results** — JSON over the API; CSV or JSON from the command line: a row per
+  year, and for `optimize` a row per policy evaluated; a single-path monthly
+  trace (`northplan simulate --trace-path`) for debugging. The engine steps
+  monthly and aggregates to years at the boundary.
+- **No database.** A scenario is a file, or the body of an API request.
 
 ## Running
 
 ```sh
-docker compose up
+docker compose up --build
 ```
 
 Serves the API and static files from one container on http://localhost:8000.
+`--build` rebuilds the image from the current tree. Without it, Compose reuses
+the image it built last, however old. Only `params/` and `scenarios/` are
+mounted into the container, so a change anywhere else takes effect only after a
+rebuild.
 
 The server is for one user on this machine: it has no authentication and bounds no
 run's size, so the compose file binds it to loopback.

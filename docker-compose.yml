@@ -11,6 +11,6 @@ services:
     volumes:
       # Hand-edited parameters take effect on restart, without a rebuild.
       - ./params:/app/params:ro
-      # Scenarios are files on a mounted volume. There is no database.
+      # The example scenario, served at /api/example. There is no database.
       - ./scenarios:/app/scenarios
     restart: unless-stopped
