@@ -19,7 +19,17 @@
     h1 { margin-bottom: 0.25rem; }
     .sub { opacity: 0.7; margin-top: 0; }
     .status { padding: 0.75rem 1rem; border-left: 3px solid currentColor; opacity: 0.85; }
+    #scenario {
+      width: 100%; box-sizing: border-box; margin-top: 1rem; padding: 0.5rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
+    }
+    button { margin-top: 0.5rem; padding: 0.4rem 1.2rem; font-size: 1rem; }
+    .error { margin-top: 1rem; padding: 0.75rem 1rem; border-left: 3px solid #c0392b; }
+    .error pre { white-space: pre-wrap; margin: 0.25rem 0 0; font-family: inherit; }
     #chart { height: 24rem; margin-top: 1.5rem; }
+    .caption { opacity: 0.7; font-size: 0.85rem; }
+    .summary p { margin: 0.25rem 0; }
+    [x-cloak] { display: none !important; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   </style>
 </head>
@@ -32,22 +42,46 @@
     <p>
       API: <strong x-text="health"></strong>
     </p>
-    <p>
-      The simulation endpoints return <code>501</code> until the engine
-      behind them is implemented and verified — see the build order in
-      <code>docs/roadmap.md</code>. The 2026 parameter files are populated
-      and structurally tested; the engine and <code>cli/</code> are implemented,
-      and <code>api/</code> is still a stub.
-    </p>
   </div>
 
-  <!-- Plotly renders here once /api/simulate returns something. -->
+  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario"></textarea>
+  <button type="button" :disabled="running" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
+
+  <div class="error" x-show="error" x-cloak>
+    <strong x-text="'Error ' + (error && error.status) + ':'"></strong>
+    <pre x-text="error && error.message"></pre>
+  </div>
+
   <div id="chart"></div>
+  <p class="caption" x-show="summary" x-text="summary && summary.statistics"></p>
+
+  <div class="summary" x-show="summary" x-cloak>
+    <p x-text="summary && summary.estate"></p>
+    <p x-text="summary && summary.depletion"></p>
+    <p x-text="summary && summary.run"></p>
+  </div>
 
   <script>
     function northplan() {
       return {
         health: 'checking…',
+        scenario: '',
+        running: false,
+        error: null,
+        summary: null,
+        async init() {
+          this.error = null;
+          try {
+            const r = await fetch('/api/example');
+            if (r.ok) {
+              this.scenario = await r.text();
+            } else {
+              this.error = await this.describe(r);
+            }
+          } catch (e) {
+            this.error = { status: 'network', message: String(e) };
+          }
+        },
         async checkHealth() {
           try {
             const r = await fetch('/health');
@@ -55,6 +89,90 @@
           } catch (e) {
             this.health = 'unreachable';
           }
+        },
+        async describe(response) {
+          let text;
+          try {
+            text = await response.text();
+          } catch (e) {
+            return { status: 'network', message: String(e) };
+          }
+          let message = text;
+          try {
+            const detail = JSON.parse(text).detail;
+            message = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
+          } catch (e) {
+            message = text;
+          }
+          return { status: response.status, message };
+        },
+        clear() {
+          this.error = null;
+          this.summary = null;
+          Plotly.purge('chart');
+        },
+        async run() {
+          this.running = true;
+          try {
+            this.clear();
+            let r;
+            try {
+              r = await fetch('/api/simulate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/yaml' },
+                body: this.scenario,
+              });
+            } catch (e) {
+              this.error = { status: 'network', message: String(e) };
+              return;
+            }
+            if (!r.ok) {
+              this.error = await this.describe(r);
+              return;
+            }
+            this.show(await r.json());
+          } catch (e) {
+            this.error = { status: 'client', message: String(e) };
+          } finally {
+            this.running = false;
+          }
+        },
+        show(doc) {
+          const x = doc.years.map((row) => row.year);
+          const column = (name) => doc.years.map((row) => row[name]);
+          const traces = [
+            {
+              x, y: column('after_tax_net_worth_p10'), name: '10th percentile',
+              mode: 'lines', line: { width: 0 }, connectgaps: false,
+            },
+            {
+              x, y: column('after_tax_net_worth_p90'), name: '90th percentile',
+              mode: 'lines', line: { width: 0 }, fill: 'tonexty',
+              fillcolor: 'rgba(31, 119, 180, 0.25)', connectgaps: false,
+            },
+            {
+              x, y: column('after_tax_net_worth_p50'), name: 'Median',
+              mode: 'lines', line: { width: 2 }, connectgaps: false,
+            },
+          ];
+          const layout = {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: getComputedStyle(document.body).color },
+            xaxis: { title: { text: 'Year' } },
+            yaxis: { title: { text: doc.meta.dollars } },
+          };
+          Plotly.newPlot('chart', traces, layout, { responsive: true });
+          const grouped = new Intl.NumberFormat('en-CA', { maximumFractionDigits: 0 });
+          const last = doc.years[doc.years.length - 1];
+          const estate = grouped.format(Math.round(doc.final.estate_after_tax_p50));
+          const depletion = (last.depletion_probability * 100).toFixed(1);
+          this.summary = {
+            statistics: doc.meta.statistics,
+            estate: `Median after-tax estate: $${estate} (${doc.meta.estate_dollars})`,
+            depletion: `Depletion probability: ${depletion}% — the share of paths that run out of money at some point before the second death.`,
+            run: `Policy ${doc.meta.policy} · ${grouped.format(doc.meta.paths)} paths · seed ${doc.meta.seed}`,
+          };
         },
       };
     }

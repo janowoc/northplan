@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "httpx2>=2.13",
     "ruff==0.16.4",
 ]
 
@@ -122,8 +123,6 @@ notice-rgx = "(?i)SPDX-FileCopyrightText:\\s*\\d{4}"
 "tests/**" = ["E501"]
 # Embedded CSS and HTML templates.
 "docs/roadmap_page.py" = ["E501"]
-# The two endpoint stubs; removed by #24.
-"api/main.py" = ["ARG001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["engine", "api", "cli", "report"]

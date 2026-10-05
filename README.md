@@ -29,10 +29,10 @@ loader, the scenario schema and loader, and all of `engine/tax/`,
 `engine/benefits/`, `engine/accounts/`, `engine/core/`, `engine/mc/`,
 `engine/policy/` and `engine/optimize/` are implemented, the monthly step, the
 run loop and the policy search included. `cli/` runs `northplan simulate` and
-`northplan optimize`; `api/` is still a stub. The build order is
-`docs/roadmap.md`; each step is a GitHub issue. Known simplifications are
-listed in `docs/limitations.md`, and a change that adds one adds its entry
-there.
+`northplan optimize`, and `api/` serves both over HTTP, with a web page that
+runs a scenario and draws its fan chart. The build order is `docs/roadmap.md`;
+each step is a GitHub issue. Known simplifications are listed in
+`docs/limitations.md`, and a change that adds one adds its entry there.
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
@@ -155,6 +155,21 @@ docker compose up
 ```
 
 Serves the API and static files from one container on http://localhost:8000.
+
+The server is for one user on this machine: it has no authentication and bounds no
+run's size, so the compose file binds it to loopback.
+
+Open that address to run the example scenario and see its fan chart. The API
+takes a scenario as the request body, JSON or YAML, and the run's options as
+query parameters: `paths`, `deterministic` and `nominal` on both endpoints,
+`policy` on `/api/simulate`, and `objective` (required), `risk_aversion` and
+`estate_utility_shift` on `/api/optimize`. Each does what the command line's
+flag of that name does, with underscores for hyphens:
+
+```sh
+curl -s -X POST 'http://localhost:8000/api/simulate?paths=200' \
+  -H 'Content-Type: application/yaml' --data-binary @scenarios/example.yaml
+```
 
 Locally, without Docker:
 

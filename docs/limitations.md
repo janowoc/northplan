@@ -137,8 +137,9 @@ with the factor from `engine/core/indexation.py::nominal_carry_factor`.
 **L61. Nominal output is valued at the year end.** In reality a year's
 spending leaves across its months and an estate passes in the month of the
 second death; tax is a figure assessed on the year, not a payment on a date.
-With `--nominal` the command line converts each to nominal dollars at 31
-December of the year it falls in, by `(1 + inflation)` raised to the years
+With `--nominal` on the command line, or `nominal=true` on the API, each is
+converted to nominal dollars at 31 December of the year it falls in, by
+`(1 + inflation)` raised to the years
 from the start year's January. Direction: nominal spending and estates are
 overstated, by at most one year's inflation and about half of it on average;
 nominal tax is stated at its assessment date, the December close. Year-end

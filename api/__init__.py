@@ -3,10 +3,9 @@
 
 """HTTP layer. Thin by construction.
 
-Translates JSON to engine calls and engine results back to JSON, and serves
-``web/`` as static files. No financial logic lives here.
-
-This is also where real dollars become nominal, if the client asks for nominal:
-the engine never converts a figure to nominal, so the conversion happens here,
-once, on the way out.
+Translates a request into engine calls and the engine's results back to JSON, and
+serves ``web/`` as static files. No financial logic lives here, and no table logic
+either: the tables, and the conversion to nominal dollars when the client asks for
+it, come from :mod:`report.tables`, the same code the command line writes its files
+with.
 """
