@@ -98,6 +98,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 75 | A CPP tier-2 test does not assert its total stays below the second ceiling | agent | — | the test fails when its total reaches `tier2_ceiling`; every comment premise in the CPP tier tests is asserted |
 | 76 | An under-65 survivor's income from a deceased spouse's plan is qualified pension income | agent | 67 | an under-65 survivor's inherited RRIF income earns the pension credit; L15's sentence goes |
 | 77 | A deemed RRIF or LIF balance on the terminal return counts as eligible pension income | agent | 76 | the terminal return's deemed RRIF/LIF balance is eligible pension income only as the law says; L42 states both parts |
+| 78 | API resource limits, before the server serves anyone but one local user | agent | 24 | each measured amplification is refused in under a second; no request size is unbounded |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -419,6 +420,15 @@ LIF balance counted toward the pension credit, and L42 recorded only the RRSP
 and LIRA part. Whether it should count turns on ITA 146.3(6) and 118(7). It
 sits right after 76, so the pension-income rules are settled before 22 starts
 scoring; nothing depends on it.
+
+78 came out of the third review of 24. 24 ships the API for one user on this
+machine and says so; its reviews found what would make the API costly to serve
+to anyone else: two parser amplifications the scenario cap does not count, and
+no bound on paths, grid size or request size. A later review added the shared
+loader's claim that YAML permits a repeated key, and its silence on one in an
+`!!omap`, since this issue edits that loader anyway. It sits right after 24;
+nothing depends on it, but it must land before the server is bound to anything
+but loopback.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
