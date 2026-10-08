@@ -9,7 +9,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      # Hand-edited parameters take effect on restart, without a rebuild.
+      # Hand-edited parameters take effect on the next request, without a
+      # rebuild.
       - ./params:/app/params:ro
       # The example scenario, served at /api/example. There is no database.
       - ./scenarios:/app/scenarios

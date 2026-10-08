@@ -23,12 +23,14 @@ COPY cli/ cli/
 COPY report/ report/
 COPY web/ web/
 COPY params/ params/
+COPY scenarios/example.yaml scenarios/
 
 RUN pip install --upgrade pip && pip install .
 
-# params/ and scenarios/ are bind-mounted by docker-compose: hand-edited
-# parameters take effect on restart, and scenarios/example.yaml is what
-# /api/example serves.
+# The image carries params/ and scenarios/example.yaml (what /api/example
+# serves), so it runs without a checkout. docker-compose bind-mounts ./params
+# and ./scenarios over them: hand-edited files take effect on the next
+# request, without a rebuild.
 EXPOSE 8000
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

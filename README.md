@@ -183,6 +183,22 @@ curl -s -X POST 'http://localhost:8000/api/simulate?paths=200' \
   -H 'Content-Type: application/yaml' --data-binary @scenarios/example.yaml
 ```
 
+To run the published image without cloning the repository:
+
+```sh
+docker run --rm -p 127.0.0.1:8000:8000 ghcr.io/janowoc/northplan:latest
+```
+
+`latest` is the most recently published release, also tagged `X.Y.Z` and
+`X.Y`. `main` is the most recently published build of the main branch, and
+`sha-` followed by a 7-character commit hash is the build of the push to `main`
+that ended at that commit. Keep the `127.0.0.1:` prefix: without it Docker
+publishes the port on every network interface, and the server has no
+authentication. The image carries its own copies of `params/` and
+`scenarios/example.yaml`. Compose mounts `./params` and `./scenarios` over
+them, so there an edit to either takes effect on the next request, without a
+rebuild; `docker run` serves the image's copies.
+
 Locally, without Docker:
 
 ```sh

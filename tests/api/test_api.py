@@ -13,6 +13,7 @@ response models against the tables they mirror.
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import time
 from pathlib import Path
@@ -324,6 +325,10 @@ class TestSchemaDrift:
                 assert content["schema"] == {"$ref": "#/components/schemas/Scenario"}
             schema = post["responses"]["200"]["content"]["application/json"]["schema"]
             assert schema["$ref"].endswith(f"/{model}")
+
+    def test_openapi_version_is_the_installed_package_version(self, client: TestClient) -> None:
+        version = client.get("/openapi.json").json()["info"]["version"]
+        assert version == importlib.metadata.version("northplan")
 
     def test_every_openapi_reference_resolves(self, client: TestClient) -> None:
         document = client.get("/openapi.json").json()

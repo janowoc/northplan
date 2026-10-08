@@ -31,6 +31,7 @@ it is served on loopback.
 
 from __future__ import annotations
 
+import importlib.metadata
 import inspect
 import threading
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
@@ -79,7 +80,7 @@ _REQUEST_BODY = {
 app = FastAPI(
     title="northplan",
     description="Canadian household financial planning engine",
-    version="0.0.0",
+    version=importlib.metadata.version("northplan"),
 )
 
 
