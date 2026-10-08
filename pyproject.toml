@@ -3,7 +3,7 @@
 
 [project]
 name = "northplan"
-version = "0.0.0"
+version = "0.1.0"
 description = "Canadian household financial planning engine: deterministic simulator, Monte Carlo, policy optimizer"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
