@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 import yaml
 
+import engine.mc.prepare as prepare_module
 from engine.core.build import (
     build_deterministic_draws,
     build_draws,
@@ -31,7 +32,14 @@ from engine.core.build import (
 )
 from engine.core.indexation import real_year
 from engine.core.timeline import MONTHS_PER_YEAR
-from engine.mc.prepare import PreparedRun, evaluate, prepare_run
+from engine.mc.prepare import (
+    MAX_CANDIDATE_PATHS,
+    MAX_PATHS,
+    PreparedRun,
+    RunTooLargeError,
+    evaluate,
+    prepare_run,
+)
 from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import DEFAULT_PARAMS_ROOT, load_year
 from engine.policy.build import build_policy, expand_grid
@@ -39,6 +47,7 @@ from engine.scenario import (
     LifespanNotRepresentableError,
     PolicySpec,
     Scenario,
+    ScenarioError,
     StartAgeNotAllowedError,
     load_scenario,
 )
@@ -390,3 +399,162 @@ def test_death_months_is_forwarded() -> None:
 
     unforced_result = evaluate(prepared, spec)
     assert not np.all(unforced_result.death_year[0] == expected_year)
+
+
+# =============================================================================
+# The size of a run
+# =============================================================================
+
+
+def _sized(n_paths: int, grid: dict[str, list[int]] | None = None, policies: int = 1) -> Scenario:
+    """The example with ``n_paths``, a grid, and ``policies`` copies of its policy."""
+    values = _values(EXAMPLE)
+    values["n_paths"] = n_paths
+    values["grid"] = grid or {}
+    first = values["policies"][0]
+    values["policies"] = [
+        {**first, "name": first["name"] if i == 0 else f"{first['name']}-{i}"}
+        for i in range(policies)
+    ]
+    return Scenario.model_validate(values)
+
+
+def test_run_too_large_error_is_a_scenario_error() -> None:
+    assert issubclass(RunTooLargeError, ScenarioError)
+
+
+def test_prepare_run_refuses_n_paths_over_the_limit() -> None:
+    with pytest.raises(RunTooLargeError, match="100,001 paths") as excinfo:
+        prepare_run(_sized(MAX_PATHS + 1))
+    assert "at most 100,000" in str(excinfo.value)
+
+
+def test_prepare_run_refuses_a_paths_override_over_the_limit() -> None:
+    with pytest.raises(RunTooLargeError, match="100,001 paths") as excinfo:
+        prepare_run(_sized(10), n_paths=MAX_PATHS + 1)
+    assert "at most 100,000" in str(excinfo.value)
+
+
+def test_prepare_run_counts_the_override_not_the_scenario() -> None:
+    prepared = prepare_run(_sized(MAX_PATHS + 1), n_paths=3)
+    assert prepared.draws.n_paths == 3
+
+
+def test_prepare_run_counts_one_path_when_deterministic() -> None:
+    prepared = prepare_run(_sized(MAX_PATHS + 1), deterministic=True)
+    assert prepared.draws.n_paths == 1
+
+
+def test_prepare_run_paths_limit_is_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prepare_module, "MAX_PATHS", 4)
+    assert prepare_run(_sized(10), n_paths=4).draws.n_paths == 4
+    with pytest.raises(RunTooLargeError, match="5 paths") as excinfo:
+        prepare_run(_sized(10), n_paths=5)
+    assert "at most 4." in str(excinfo.value)
+
+
+_WIDE_GRID = {
+    "elections.cpp_start_age_years.a": list(range(60, 71)),
+    "elections.oas_start_age_years.a": list(range(65, 75)),
+}
+
+
+# 11 x 11 x 11 = 1,331 candidates: over MAX_CANDIDATES, and within MAX_CANDIDATE_PATHS on
+# one path.
+_MANY_CANDIDATES_GRID = {
+    "elections.cpp_start_age_years.a": list(range(60, 71)),
+    "elections.oas_start_age_years.a": list(range(65, 76)),
+    "elections.rrif_conversion.age_years": list(range(60, 71)),
+}
+
+
+def _forbid_expansion(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("expanded or drew before the size check")
+
+    monkeypatch.setattr(prepare_module, "expand_grid", forbidden)
+    monkeypatch.setattr(prepare_module, "build_draws", forbidden)
+
+
+def test_prepare_run_refuses_candidates_over_the_limit_when_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _sized(10, _MANY_CANDIDATES_GRID)
+    assert MAX_CANDIDATE_PATHS >= 1_331 * 1
+    _forbid_expansion(monkeypatch)
+    with pytest.raises(RunTooLargeError) as excinfo:
+        prepare_run(scenario, deterministic=True)
+    assert str(excinfo.value) == (
+        "the run has 1,331 candidate policies, and a run may have at most 1,000. "
+        "Fewer policies or grid values bring it under."
+    )
+
+
+def test_prepare_run_refuses_candidates_over_the_limit_with_one_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_expansion(monkeypatch)
+    with pytest.raises(RunTooLargeError, match="the run has 1,331 candidate policies, and"):
+        prepare_run(_sized(10, _MANY_CANDIDATES_GRID), n_paths=1)
+
+
+def test_prepare_run_candidate_count_limit_is_inclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _sized(2, {"elections.cpp_start_age_years.a": [60, 65, 70]})
+    monkeypatch.setattr(prepare_module, "MAX_CANDIDATES", 3)
+    assert prepare_run(scenario, n_paths=2).draws.n_paths == 2
+    monkeypatch.setattr(prepare_module, "MAX_CANDIDATES", 2)
+    with pytest.raises(RunTooLargeError, match="the run has 3 candidate policies, and"):
+        prepare_run(scenario, n_paths=2)
+
+
+def test_prepare_run_refuses_candidates_times_paths_over_the_limit() -> None:
+    scenario = _sized(MAX_PATHS, _WIDE_GRID)
+    assert 11 * 10 * MAX_PATHS > MAX_CANDIDATE_PATHS
+    with pytest.raises(RunTooLargeError) as excinfo:
+        prepare_run(scenario)
+    message = str(excinfo.value)
+    assert "the run has 110 candidate policies on 100,000 paths each" in message
+    assert "11,000,000 in all" in message
+    assert "at most 10,000,000" in message
+
+
+def test_prepare_run_candidate_limit_is_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    scenario = _sized(2, {"elections.cpp_start_age_years.a": [60, 65]})
+    monkeypatch.setattr(prepare_module, "MAX_CANDIDATE_PATHS", 2 * 3)
+    assert prepare_run(scenario, n_paths=3).draws.n_paths == 3
+    with pytest.raises(RunTooLargeError, match="2 candidate policies on 4 paths each, 8 in all"):
+        prepare_run(scenario, n_paths=4)
+
+
+def test_prepare_run_counts_candidates_as_policies_times_grid_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _sized(
+        5,
+        {
+            "elections.cpp_start_age_years.a": [60, 65],
+            "elections.oas_start_age_years.a": [65, 66, 67],
+        },
+        policies=2,
+    )
+    monkeypatch.setattr(prepare_module, "MAX_CANDIDATE_PATHS", 12 * 5 - 1)
+    with pytest.raises(RunTooLargeError, match="the run has 12 candidate policies"):
+        prepare_run(scenario)
+
+
+def test_prepare_run_refuses_before_expanding_or_drawing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("expanded or drew before the size check")
+
+    monkeypatch.setattr(prepare_module, "expand_grid", forbidden)
+    monkeypatch.setattr(prepare_module, "build_draws", forbidden)
+
+    with pytest.raises(RunTooLargeError, match="100,001 paths"):
+        prepare_run(_sized(MAX_PATHS + 1))
+
+    with pytest.raises(RunTooLargeError, match="110 candidate policies"):
+        prepare_run(_sized(MAX_PATHS, _WIDE_GRID))

@@ -27,6 +27,7 @@ what this module is a convenience over, not a replacement for.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,10 +48,33 @@ from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamYear, load_year
 from engine.policy.build import build_policy, expand_grid
 from engine.scenario.lifespan import check_lifespan
+from engine.scenario.load import ScenarioError
 from engine.scenario.schema import PolicySpec, Scenario
 from engine.scenario.start_ages import check_start_ages
 
-__all__ = ["PreparedRun", "evaluate", "prepare_run"]
+__all__ = [
+    "MAX_CANDIDATES",
+    "MAX_CANDIDATE_PATHS",
+    "MAX_PATHS",
+    "PreparedRun",
+    "RunTooLargeError",
+    "evaluate",
+    "prepare_run",
+]
+
+# A run's size, bounded so that a mistake cannot exhaust a laptop's memory or tie it up for
+# hours: about 60 KB a path at the longest horizon, search holds one candidate at a time,
+# and each candidate costs a second or more whatever its paths.
+MAX_PATHS = 100_000
+MAX_CANDIDATES = 1_000
+MAX_CANDIDATE_PATHS = 10_000_000
+
+
+class RunTooLargeError(ScenarioError):
+    """A run larger than a run may have.
+
+    Too many paths, too many candidate policies, or too many candidates times paths.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,11 +138,34 @@ def prepare_run(
             a CPP or OAS pension in pay for someone too young to receive it.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or
             household the life table cannot represent.
+        RunTooLargeError: More than ``MAX_PATHS`` paths, more than
+            ``MAX_CANDIDATES`` candidate policies, or more than
+            ``MAX_CANDIDATE_PATHS`` candidate policies times paths. Checked before
+            the grid is expanded.
     """
     if deterministic and n_paths is not None:
         raise ValueError(
             f"prepare_run: deterministic=True and n_paths={n_paths!r} were both given; "
             "the deterministic run is always exactly one path."
+        )
+
+    paths = 1 if deterministic else n_paths if n_paths is not None else scenario.n_paths
+    candidates = len(scenario.policies) * math.prod(len(v) for v in scenario.grid.values())
+    if paths > MAX_PATHS:
+        raise RunTooLargeError(
+            f"the run asks for {paths:,} paths, and a run may have at most {MAX_PATHS:,}. "
+            "Lower n_paths, or the paths given for this run."
+        )
+    if candidates > MAX_CANDIDATES:
+        raise RunTooLargeError(
+            f"the run has {candidates:,} candidate policies, and a run may have at most "
+            f"{MAX_CANDIDATES:,}. Fewer policies or grid values bring it under."
+        )
+    if candidates * paths > MAX_CANDIDATE_PATHS:
+        raise RunTooLargeError(
+            f"the run has {candidates:,} candidate policies on {paths:,} paths each, "
+            f"{candidates * paths:,} in all, and a run may have at most "
+            f"{MAX_CANDIDATE_PATHS:,}. Fewer policies, grid values or paths bring it under."
         )
 
     expanded = expand_grid(scenario)

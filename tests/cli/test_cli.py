@@ -843,6 +843,40 @@ class TestScenarioRefusals:
         stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
         assert "key 'name' appears more than once in this mapping" in stderr
 
+    def test_simulate_paths_over_the_limit_exits_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = tmp_path / "out.csv"
+        assert run_main(["simulate", str(EXAMPLE), "--paths", "100001", "--out", str(out)]) == 2
+        stderr = capsys.readouterr().err
+        assert stderr.startswith("northplan: error: ")
+        assert "100,001 paths" in stderr
+        assert "at most 100,000" in stderr
+        assert not out.exists()
+
+    def grid_error_scenario(self, tmp_path: Path) -> Path:
+        grid = ", ".join(f"-{i}.0" for i in range(1, 31))
+        return mutated(
+            tmp_path,
+            (GRID_BLOCK, f"grid:\n  contribution.weights.rrsp: [{grid}]\n"),
+        )
+
+    def test_cli_caps_a_validation_error_from_the_grid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = self.grid_error_scenario(tmp_path)
+        argv = ["simulate", str(path), "--deterministic", "--out", str(tmp_path / "o.csv")]
+        assert run_main(argv) == 2
+        assert "... and 10 more errors, not shown." in capsys.readouterr().err
+
+    def test_cli_optimize_caps_a_validation_error_from_the_grid(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = self.grid_error_scenario(tmp_path)
+        argv = ["optimize", str(path), "--objective", CE, "--deterministic"]
+        assert run_main([*argv, "--out", str(tmp_path / "o.csv")]) == 2
+        assert "... and 10 more errors, not shown." in capsys.readouterr().err
+
     def test_schema_invalid_scenario(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

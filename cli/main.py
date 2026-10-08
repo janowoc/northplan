@@ -44,7 +44,7 @@ from engine.mc.trace import trace_rows
 from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
 from engine.params.loader import ParamError
-from engine.scenario.load import ScenarioError, load_scenario
+from engine.scenario.load import ScenarioError, load_scenario, validation_message
 from engine.scenario.schema import PolicySpec
 from report.tables import (
     Meta,
@@ -228,7 +228,7 @@ def _simulate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> list
     try:
         prepared = prepare_run(loaded, n_paths=args.paths, deterministic=args.deterministic)
     except ValidationError as error:
-        raise _ScenarioRefusedError(str(error)) from error
+        raise _ScenarioRefusedError(validation_message(error)) from error
     try:
         spec: PolicySpec = select_policy(prepared, loaded, args.policy)
     except UnknownPolicyError as error:
@@ -297,7 +297,7 @@ def _optimize(args: argparse.Namespace) -> list[tuple[Path, str]]:
     try:
         prepared = prepare_run(loaded, n_paths=args.paths, deterministic=args.deterministic)
     except ValidationError as error:
-        raise _ScenarioRefusedError(str(error)) from error
+        raise _ScenarioRefusedError(validation_message(error)) from error
     scenario = prepared.scenario
     risk_aversion, risk_text = preference(args.risk_aversion, scenario.risk_aversion, source="flag")
     shift, shift_text = preference(

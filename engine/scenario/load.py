@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Literal
 
@@ -41,7 +41,9 @@ from engine.params.loader import DuplicateYamlKeyError, parse_yaml
 from engine.scenario.schema import Scenario
 
 __all__ = [
+    "MAX_DOCUMENT_CHARACTERS",
     "MAX_DOCUMENT_VALUES",
+    "MAX_REPORTED_ERRORS",
     "DuplicateKeyError",
     "InvalidScenarioError",
     "MalformedScenarioFileError",
@@ -49,13 +51,19 @@ __all__ = [
     "ScenarioFileMissingError",
     "load_scenario",
     "scenario_from_text",
+    "validation_message",
 ]
 
-# How many values a scenario document may hold once each alias is expanded; the
-# committed example holds 140. It bounds how often aliases repeat a container, not
-# merge keys or the length of a string, so it is no defence against a hostile
-# document.
+# How much a scenario document may hold once each alias is expanded: values (the
+# committed example holds 140) and characters of text, counting every string, every
+# mapping key and every alias repeat (the example holds about 1,200). Merge keys are
+# bounded in the parser, engine.params.loader.parse_yaml.
 MAX_DOCUMENT_VALUES = 100_000
+MAX_DOCUMENT_CHARACTERS = 1_000_000
+
+# How many validation errors a message lists; a body under every cap can still produce
+# hundreds of thousands, and the message would be tens of megabytes.
+MAX_REPORTED_ERRORS = 20
 
 
 class ScenarioError(Exception):
@@ -70,7 +78,8 @@ class MalformedScenarioFileError(ScenarioError):
     """The text is not YAML or JSON, or its top level is not a mapping.
 
     Also raised when a document refers to itself through a YAML alias, holds more
-    than :data:`MAX_DOCUMENT_VALUES` values once its aliases are expanded, or is JSON
+    than :data:`MAX_DOCUMENT_VALUES` values or :data:`MAX_DOCUMENT_CHARACTERS` characters
+    of text once its aliases are expanded, or is JSON
     that Python refuses (an integer too long to convert, nesting too deep), and when
     a file is not UTF-8.
 
@@ -116,7 +125,9 @@ def load_scenario(path: str | Path) -> Scenario:
         MalformedScenarioFileError: Not valid UTF-8, not parseable as YAML,
             top level is not a mapping, a mapping repeats a key, the document
             refers to itself through a YAML alias, or it holds more than
-            ``MAX_DOCUMENT_VALUES`` values counting each value an alias repeats.
+            ``MAX_DOCUMENT_VALUES`` values counting each value an alias repeats,
+            or more than ``MAX_DOCUMENT_CHARACTERS`` characters of text counting
+            keys and each string an alias repeats.
         InvalidScenarioError: Parsed, but a validation rule rejects it. The
             message names the offending field and this file.
     """
@@ -132,6 +143,32 @@ def load_scenario(path: str | Path) -> Scenario:
             f"{source} is not valid UTF-8: {exc}. Save it as UTF-8."
         ) from exc
     return scenario_from_text(text, str(source), syntax="yaml")
+
+
+def validation_message(exc: ValidationError) -> str:
+    """``str(exc)``, listing at most ``MAX_REPORTED_ERRORS`` errors.
+
+    Past the limit the first errors are rebuilt into a new exception, so each shown
+    error reads as in ``str(exc)``, and a last line says how many more there were.
+    The header then counts the shown errors only.
+    """
+    if exc.error_count() <= MAX_REPORTED_ERRORS:
+        return str(exc)
+    errors = exc.errors()
+    shown = ValidationError.from_exception_data(
+        exc.title,
+        [
+            {
+                "type": e["type"],
+                "loc": e["loc"],
+                "input": e["input"],
+                **({"ctx": e["ctx"]} if "ctx" in e else {}),
+            }
+            for e in errors[:MAX_REPORTED_ERRORS]
+        ],
+    )
+    hidden = len(errors) - MAX_REPORTED_ERRORS
+    return f"{shown}\n... and {hidden:,} more {'error' if hidden == 1 else 'errors'}, not shown."
 
 
 def _unique_json_object(source: str, pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -154,16 +191,31 @@ class _CyclicDocumentError(Exception):
     """A parsed document contains a container that contains itself."""
 
 
-def _expanded_size(value: object, limit: int) -> int:
-    """The number of values ``value`` holds with every YAML alias expanded.
+def _one(_node: object) -> int:
+    """Weight 1 for every node: :func:`_expanded_size` then counts values."""
+    return 1
+
+
+def _text_length(node: object) -> int:
+    """Characters of text a node holds itself: a str or bytes, or a dict's str keys."""
+    if isinstance(node, (str, bytes)):
+        return len(node)
+    if isinstance(node, dict):
+        return sum(len(key) for key in node if isinstance(key, str))
+    return 0
+
+
+def _expanded_size(value: object, limit: int, weigh: Callable[[object], int] = _one) -> int:
+    """The weight of ``value`` with every YAML alias expanded.
 
     Containers are ``dict`` (its values), ``list``, ``tuple``, ``set`` and
-    ``frozenset``; anything else is a leaf counting 1. A container counts 1 plus
-    its children, and counts again each time it is reached. Iterative, so depth
-    cannot exhaust the recursion limit.
+    ``frozenset``; anything else is a leaf weighing ``weigh(leaf)``. A container
+    weighs ``weigh(container)`` plus its children, and counts again each time it
+    is reached. With the default weight, every node weighs 1 and this counts
+    values. Iterative, so depth cannot exhaust the recursion limit.
 
     Returns:
-        The count, or some number greater than ``limit`` once the count of a
+        The weight, or some number greater than ``limit`` once the count of a
         container still being counted passes it. Each distinct container is counted
         once, so the work is linear in the document as parsed.
 
@@ -194,11 +246,11 @@ def _expanded_size(value: object, limit: int) -> int:
             raise _CyclicDocumentError
         kids = children(node)
         if kids is None:
-            return 1
+            return weigh(node)
         open_ids.add(key)
         nodes.append(node)
         pending.append(iter(kids))
-        counts.append(1)
+        counts.append(weigh(node))
         return None
 
     known = enter(value)
@@ -243,9 +295,12 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
             text Python refuses: an integer over the digit limit, nesting too deep),
             or the top level is not a mapping, or the document refers to itself
             through a YAML alias, or it holds more than ``MAX_DOCUMENT_VALUES``
-            values counting each value an alias repeats.
+            values counting each value an alias repeats, or more than
+            ``MAX_DOCUMENT_CHARACTERS`` characters of text counting keys and each
+            string an alias repeats.
         DuplicateKeyError: A mapping repeats a key (a subclass of the above).
-        InvalidScenarioError: Parsed, but a validation rule rejects it.
+        InvalidScenarioError: Parsed, but a validation rule rejects it. The message
+            lists at most ``MAX_REPORTED_ERRORS`` errors, and says how many more there are.
 
     JSON goes through :func:`json.loads`, never the YAML parser: YAML 1.1 reads
     ``1e5`` as a string, which JSON defines as a number.
@@ -271,6 +326,8 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
 
     try:
         size = _expanded_size(values, MAX_DOCUMENT_VALUES)
+        if size <= MAX_DOCUMENT_VALUES:
+            characters = _expanded_size(values, MAX_DOCUMENT_CHARACTERS, _text_length)
     except _CyclicDocumentError as exc:
         raise MalformedScenarioFileError(
             f"{source}: the document refers to itself through a YAML alias, "
@@ -280,6 +337,12 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
         raise MalformedScenarioFileError(
             f"{source}: the document holds more than {MAX_DOCUMENT_VALUES:,} values, "
             "counting each value an alias repeats; a scenario holds a few hundred."
+        )
+    if characters > MAX_DOCUMENT_CHARACTERS:
+        raise MalformedScenarioFileError(
+            f"{source}: the document holds more than {MAX_DOCUMENT_CHARACTERS:,} characters "
+            "of text, counting keys and each string an alias repeats; a scenario holds "
+            "a few thousand."
         )
 
     if not isinstance(values, dict):
@@ -291,4 +354,6 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
     try:
         return Scenario.model_validate(values)
     except ValidationError as exc:
-        raise InvalidScenarioError(f"{source} is not a valid scenario:\n{exc}") from exc
+        raise InvalidScenarioError(
+            f"{source} is not a valid scenario:\n{validation_message(exc)}"
+        ) from exc

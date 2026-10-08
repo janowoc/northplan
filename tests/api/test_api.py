@@ -12,6 +12,7 @@ response models against the tables they mirror.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -51,7 +52,7 @@ GRID_LINE = "elections.cpp_start_age_years.a: [60, 65, 70]"
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 def example_text() -> str:
@@ -665,7 +666,7 @@ class TestRoutedParameterError:
 
     def test_it_is_a_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(api.main, "prepare_run", self.raise_routed)
-        quiet = TestClient(app, raise_server_exceptions=False)
+        quiet = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
         response = quiet.post(
             "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
         )
@@ -674,7 +675,7 @@ class TestRoutedParameterError:
     def test_it_propagates_to_the_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(api.main, "prepare_run", self.raise_routed)
         with pytest.raises(RoutedParameterError):
-            TestClient(app).post(
+            TestClient(app, base_url="http://localhost").post(
                 "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
             )
 
@@ -685,7 +686,7 @@ class TestParameterErrorsAnywhereInTheRun:
         raise MissingParameterError("missing for this test")
 
     def post(self, path: str, quiet: bool = False):
-        client = TestClient(app, raise_server_exceptions=not quiet)
+        client = TestClient(app, base_url="http://localhost", raise_server_exceptions=not quiet)
         return client.post(path, content=example_text().encode(), headers=YAML)
 
     def test_simulate_evaluate_is_a_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -777,3 +778,349 @@ class TestExample:
 
 def test_health(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
+
+
+# =============================================================================
+# The Host check, the body cap, the run lock, and the engine's size limits
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["localhost", "localhost:8000", "127.0.0.1:8000", "[::1]", "[::1]:8000", "LOCALHOST:8000"],
+)
+def test_host_check_allows_loopback(client: TestClient, host: str) -> None:
+    response = client.get("/health", headers={"Host": host})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "testserver",
+        "evil.example:8000",
+        "192.168.1.5:8000",
+        "localhost.evil.example",
+        "[::2]:8000",
+        "[::1]evil",
+        "[::1]:x:y",
+        "localhost:abc",
+        "localhost:",
+    ],
+)
+@pytest.mark.parametrize(
+    ("method", "path"), [("get", "/health"), ("get", "/"), ("post", "/api/simulate")]
+)
+def test_host_check_refuses_other_hosts(
+    client: TestClient, host: str, method: str, path: str
+) -> None:
+    response = getattr(client, method)(path, headers={"Host": host})
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": (
+            f"host {host!r} is not served: this server answers only localhost, "
+            "127.0.0.1 and [::1], because it is for this machine alone."
+        )
+    }
+
+
+REPEATED_HOST = (
+    "the request carries more than one Host header; this server answers a request with exactly one."
+)
+
+
+def _drive(headers: list[tuple[bytes, bytes]], path: str = "/health") -> tuple[int, dict]:
+    """Call the ASGI app with exactly these headers; the status and the JSON body."""
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": headers,
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    asyncio.run(app(scope, receive, send))
+    body = b"".join(m.get("body", b"") for m in sent[1:])
+    return sent[0]["status"], json.loads(body)
+
+
+def test_host_check_refuses_an_empty_host() -> None:
+    status, body = _drive([(b"host", b"")])
+    assert status == 400
+    assert body["detail"].startswith("host '' is not served")
+
+
+@pytest.mark.parametrize(("first", "second"), [("localhost", "evil"), ("evil", "localhost")])
+def test_host_check_refuses_repeated_host_headers(first: str, second: str) -> None:
+    status, body = _drive([(b"host", first.encode()), (b"host", second.encode())])
+    assert status == 400
+    assert body["detail"] == REPEATED_HOST
+
+
+def test_host_check_refuses_a_repeated_localhost() -> None:
+    status, body = _drive([(b"host", b"localhost"), (b"host", b"localhost")])
+    assert status == 400
+    assert body["detail"] == REPEATED_HOST
+
+
+def test_host_is_checked_before_the_query(client: TestClient) -> None:
+    response = client.post(
+        "/api/simulate?nominl=1",
+        content=example_text().encode(),
+        headers={**YAML, "Host": "evil.example"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("host 'evil.example' is not served")
+
+
+def test_host_check_refuses_a_missing_host() -> None:
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/health",
+        "raw_path": b"/health",
+        "query_string": b"",
+        "headers": [],
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    asyncio.run(app(scope, receive, send))
+
+    assert sent[0]["status"] == 400
+    body = b"".join(m.get("body", b"") for m in sent[1:])
+    assert json.loads(body)["detail"].startswith("host None is not served")
+
+
+OVERSIZE = "request body is larger than 1,048,576 bytes; a scenario is a few kilobytes."
+
+
+def test_body_over_the_limit_is_413_by_content_length(client: TestClient) -> None:
+    body = b"#" * (api.main.MAX_BODY_BYTES + 1)
+    response = client.post("/api/simulate", content=body, headers=YAML)
+    assert response.status_code == 413
+    assert response.json()["detail"] == OVERSIZE
+
+
+def test_content_length_alone_refuses_before_any_byte_is_read(client: TestClient) -> None:
+    """A declared length over the limit is refused although the bytes sent are few."""
+    declared = {**YAML, "Content-Length": str(api.main.MAX_BODY_BYTES + 1)}
+    response = client.post("/api/simulate", content=b"#", headers=declared)
+    assert response.status_code == 413
+    assert response.json()["detail"] == OVERSIZE
+
+
+def test_body_over_the_limit_is_413_when_streamed(client: TestClient) -> None:
+    def chunks():
+        for _ in range(api.main.MAX_BODY_BYTES // 65_536 + 1):
+            yield b"#" * 65_536
+
+    request = client.build_request("POST", "/api/simulate", content=chunks(), headers=YAML)
+    assert "content-length" not in request.headers
+    response = client.send(request)
+    assert response.status_code == 413
+    assert response.json()["detail"] == OVERSIZE
+
+
+def test_body_at_the_limit_is_read(client: TestClient) -> None:
+    body = b"#" * api.main.MAX_BODY_BYTES
+    response = client.post("/api/simulate", content=body, headers=YAML)
+    assert response.status_code == 422
+    assert "request body" in response.json()["detail"]
+
+
+def test_content_type_is_checked_before_the_body(client: TestClient) -> None:
+    body = b"#" * (api.main.MAX_BODY_BYTES + 1)
+    response = client.post("/api/simulate", content=body, headers={"Content-Type": "text/plain"})
+    assert response.status_code == 415
+    assert response.json()["detail"].startswith("unsupported Content-Type 'text/plain'")
+
+
+def test_body_is_checked_before_the_run_lock(client: TestClient) -> None:
+    body = b"#" * (api.main.MAX_BODY_BYTES + 1)
+    assert api.main._RUN_LOCK.acquire(blocking=False)
+    try:
+        response = client.post("/api/simulate", content=body, headers=YAML)
+    finally:
+        api.main._RUN_LOCK.release()
+    assert response.status_code == 413
+    assert response.json()["detail"] == OVERSIZE
+
+
+def test_content_length_with_thousands_of_digits_is_413() -> None:
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"#", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/simulate",
+        "raw_path": b"/api/simulate",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"localhost"),
+            (b"content-type", b"application/yaml"),
+            (b"content-length", b"9" * 5_000),
+        ],
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 413
+    assert json.loads(sent[1]["body"])["detail"] == OVERSIZE
+
+
+RUN_BUSY = (
+    "a run is already in progress; this server runs one at a time, so that two cannot "
+    "exhaust memory together. Try again when it finishes."
+)
+
+
+def test_second_run_is_refused_with_429(client: TestClient) -> None:
+    assert api.main._RUN_LOCK.acquire(blocking=False)
+    try:
+        simulated = client.post(
+            "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
+        )
+        optimized = client.post(
+            "/api/optimize?paths=2&objective=median_estate_after_tax",
+            content=example_text().encode(),
+            headers=YAML,
+        )
+    finally:
+        api.main._RUN_LOCK.release()
+    for response in (simulated, optimized):
+        assert response.status_code == 429
+        assert response.json()["detail"] == RUN_BUSY
+
+
+def _lock_is_free() -> bool:
+    if not api.main._RUN_LOCK.acquire(blocking=False):
+        return False
+    api.main._RUN_LOCK.release()
+    return True
+
+
+def test_run_lock_is_released_after_a_run(client: TestClient) -> None:
+    response = client.post("/api/simulate?paths=2", content=example_text().encode(), headers=YAML)
+    assert response.status_code == 200
+    assert _lock_is_free()
+
+
+def test_run_lock_is_released_after_a_refused_run(client: TestClient) -> None:
+    response = client.post(
+        "/api/simulate?paths=2&policy=nope", content=example_text().encode(), headers=YAML
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("unknown policy 'nope'")
+    assert _lock_is_free()
+
+
+def test_run_over_the_path_limit_is_422(client: TestClient) -> None:
+    response = client.post(
+        "/api/simulate?paths=100001", content=example_text().encode(), headers=YAML
+    )
+    assert response.status_code == 422
+    assert "100,001 paths" in response.json()["detail"]
+    assert "at most 100,000" in response.json()["detail"]
+    assert _lock_is_free()
+
+
+def test_simulate_is_bound_by_candidates_too(client: TestClient) -> None:
+    body = example_text().replace(
+        GRID_LINE,
+        "elections.cpp_start_age_years.a: [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70]\n"
+        "  elections.oas_start_age_years.a: [65, 66, 67, 68, 69, 70, 71, 72, 73, 74]",
+    )
+    assert body != example_text()
+    response = client.post("/api/simulate?paths=100000", content=body.encode(), headers=YAML)
+    assert response.status_code == 422
+    assert "110 candidate policies on 100,000 paths each" in response.json()["detail"]
+
+
+def test_deterministic_run_is_bound_by_candidates(client: TestClient) -> None:
+    body = example_text().replace(
+        GRID_LINE,
+        "elections.cpp_start_age_years.a: [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70]\n"
+        "  elections.oas_start_age_years.a: [65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75]\n"
+        "  elections.rrif_conversion.age_years: [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70]",
+    )
+    assert body != example_text()
+    response = client.post("/api/simulate?deterministic=true", content=body.encode(), headers=YAML)
+    assert response.status_code == 422
+    assert "1,331 candidate policies, and a run may have at most 1,000" in response.json()["detail"]
+
+
+def test_huge_validation_error_is_capped(client: TestClient) -> None:
+    values = parse_yaml(example_text())
+    values["policies"] = ["x"] * 5_000
+    response = client.post(
+        "/api/simulate?paths=2", content=json.dumps(values).encode(), headers=JSON
+    )
+    assert response.status_code == 422
+    assert len(response.json()["detail"]) < 10_000
+    assert "more errors, not shown" in response.json()["detail"]
+
+
+def test_content_length_with_leading_zeros_within_the_limit_is_read() -> None:
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"#" * 10, "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/simulate",
+        "raw_path": b"/api/simulate",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"localhost"),
+            (b"content-type", b"application/yaml"),
+            (b"content-length", b"0" * 5_000 + b"10"),
+        ],
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    asyncio.run(app(scope, receive, send))
+    assert sent[0]["status"] == 422
+
+
+def _negative_grid_body() -> bytes:
+    grid = ", ".join(f"-{i}.0" for i in range(1, 31))
+    body = example_text().replace(GRID_LINE, f"contribution.weights.rrsp: [{grid}]")
+    assert body != example_text()
+    return body.encode()
+
+
+def test_api_caps_a_validation_error_from_the_grid(client: TestClient) -> None:
+    response = client.post(
+        "/api/simulate?deterministic=true", content=_negative_grid_body(), headers=YAML
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"].endswith("... and 10 more errors, not shown.")

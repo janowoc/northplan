@@ -24,7 +24,7 @@ SCRIPTS = [
 
 @pytest.fixture(scope="module")
 def page() -> tuple[str, str]:
-    response = TestClient(app).get("/")
+    response = TestClient(app, base_url="http://localhost").get("/")
     assert response.status_code == 200
     return response.headers["content-type"], response.text
 

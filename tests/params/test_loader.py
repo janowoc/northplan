@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import datetime
 import inspect
+import random
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Final
 
@@ -875,3 +878,185 @@ def test_named_accessor_for_a_missing_file_raises(params_root: Path) -> None:
     year = load_year(2030, params_root)
     with pytest.raises(ParamFileMissingError):
         _ = year.cpp
+
+
+# =============================================================================
+# Merge keys, ordered maps
+# =============================================================================
+
+
+def _merge_bomb(levels: int) -> str:
+    """Anchors ``b0`` to ``b<levels>``: each merges ten copies of the one before."""
+    lines = ["b0: &b0 {" + ", ".join(f"k{j}: {j}" for j in range(10)) + "}"]
+    for i in range(1, levels + 1):
+        lines.append(f"b{i}: &b{i} {{<<: [{', '.join([f'*b{i - 1}'] * 10)}]}}")
+    return "\n".join(lines) + "\n"
+
+
+def test_parse_yaml_merge_bomb_is_linear() -> None:
+    text = _merge_bomb(6)
+    assert len(text) == 469
+
+    start = time.perf_counter()
+    loaded = parse_yaml(text)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.0
+    assert loaded["b6"] == loaded["b0"]
+
+
+_MERGE_CORPUS = [
+    pytest.param(
+        "base: &base\n  zzz_synthetic_key: 1\n  other_synthetic_key: 2\n"
+        "merged:\n  <<: *base\n  other_synthetic_key: 3\n",
+        id="override after a merge",
+    ),
+    pytest.param(
+        "a: &a {k: 1}\nx:\n  b: &b\n    <<: *a\n    k: 2\nc:\n  <<: *b\n  k: 3\n",
+        id="nested merge source",
+    ),
+    pytest.param(
+        "a: &a {k: 1}\nx:\n  - &b\n    <<: *a\n    k: 2\nc:\n  <<: [*b]\n  k: 3\n",
+        id="merge source in a sequence",
+    ),
+    pytest.param("a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n", id="two merge keys"),
+    pytest.param(
+        "a: &a {x: 1, y: 1, z: 1}\nb: &b {y: 2, w: 2}\nm:\n  <<: [*a, *b]\n",
+        id="precedence across a merge list",
+    ),
+    pytest.param(
+        "a: &a {x: 1, y: 1, z: 1}\nb: &b {y: 2, w: 2}\nm:\n  <<: [*b, *a]\n",
+        id="precedence across a reversed merge list",
+    ),
+    pytest.param(
+        "a: &a {x: 1, y: 1}\nm:\n  y: 9\n  <<: *a\n  q: 0\n",
+        id="explicit key before the merge",
+    ),
+    pytest.param(
+        "a: &a {x: 1, y: 1}\nm:\n  q: 0\n  <<: *a\n  y: 9\n",
+        id="explicit key after the merge",
+    ),
+    pytest.param(
+        "a: &a {x: 1}\nb: &b {<<: *a, y: 2}\nc: &c {<<: *b, z: 3}\nd: {<<: [*c, *a], x: 7}\n",
+        id="a merge whose source is a merge",
+    ),
+    pytest.param(
+        "A: &A {1: a}\nB: &B {1.0: b}\nx: {<<: [*B, *A], 1: c}\n",
+        id="1 and 1.0 across a merge list",
+    ),
+    pytest.param("A: &A {~: a}\nB: &B {null: b}\nx: {<<: [*B, *A], ~: c}\n", id="~ and null"),
+    pytest.param(
+        "A: &A {true: a}\nB: &B {yes: b}\nx: {<<: [*B, *A], true: c}\n", id="true and yes"
+    ),
+    pytest.param(
+        "A: &A {1: a}\nB: &B {+1: b}\nC: &C {0x1: c}\nx: {<<: [*C, *B, *A], 1: d}\n",
+        id="1, +1 and 0x1",
+    ),
+    pytest.param(
+        "m0: &m0 {1.0: v00}\nm1: &m1 {+1: v10, <<: [*m0]}\nm2: {<<: [*m0, *m1], a: z}\n",
+        id="three-level spellings",
+    ),
+    pytest.param(_merge_bomb(1), id="bomb level 1"),
+    pytest.param(_merge_bomb(2), id="bomb level 2"),
+    pytest.param(_merge_bomb(3), id="bomb level 3"),
+]
+
+
+@pytest.mark.parametrize("text", _MERGE_CORPUS)
+def test_parse_yaml_matches_safe_load_on_merges(text: str) -> None:
+    """The differential oracle: same value, and same key order at every level."""
+    loaded = parse_yaml(text)
+    assert loaded == yaml.safe_load(text)
+    assert repr(loaded) == repr(yaml.safe_load(text))
+
+
+_RANDOM_KEYS = ["1", "1.0", "+1", "0x1", "true", "yes", "~", "null", "a", "'1'"]
+
+
+def _random_merge_document(rng: random.Random) -> str:
+    lines = []
+    for m in range(4):
+        keys = rng.sample(_RANDOM_KEYS, rng.randint(1, 3))
+        pairs = [f"{key}: v{m}{j}" for j, key in enumerate(keys)]
+        if m > 0 and rng.random() < 0.8:
+            earlier = [f"*m{i}" for i in range(m)]
+            chosen = rng.sample(earlier, rng.randint(1, len(earlier)))
+            pairs.insert(rng.randint(0, len(pairs)), f"<<: [{', '.join(chosen)}]")
+        lines.append(f"m{m}: &m{m} {{{', '.join(pairs)}}}")
+    return "\n".join(lines) + "\n"
+
+
+def test_parse_yaml_matches_safe_load_on_random_merges() -> None:
+    """Draw documents until 2,000 are accepted; a draw with a repeat is legitimately refused.
+
+    Most keys in the list read the same as another once built (``1``, ``1.0``, ``+1``,
+    ``0x1``, ``true`` and ``yes`` are one key), so many draws are refused.
+    """
+    rng = random.Random(7)
+    compared = 0
+    for _ in range(20_000):
+        text = _random_merge_document(rng)
+        try:
+            loaded = parse_yaml(text)
+        except DuplicateYamlKeyError:
+            continue
+        assert repr(loaded) == repr(yaml.safe_load(text)), text
+        compared += 1
+        if compared == 2_000:
+            break
+    assert compared >= 1_000
+
+
+def _tracked_yaml_files() -> list[str]:
+    root = Path(__file__).resolve().parents[2]
+    listing = subprocess.run(
+        ["git", "ls-files", "*.yaml", "*.yml"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    return [str(root / name) for name in listing]
+
+
+@pytest.mark.parametrize("path", _tracked_yaml_files())
+def test_parse_yaml_matches_safe_load_on_every_tracked_yaml(path: str) -> None:
+    text = Path(path).read_text(encoding="utf-8")
+    assert repr(parse_yaml(text)) == repr(yaml.safe_load(text))
+
+
+def test_tracked_yaml_listing_is_not_empty() -> None:
+    assert len(_tracked_yaml_files()) > 10
+
+
+def test_parse_yaml_refuses_a_repeated_key_in_an_omap() -> None:
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml("o: !!omap [{a: 1}, {a: 2}]\n")
+
+    message = str(excinfo.value)
+    assert "line 1" in message
+    assert repr("a") in message
+    assert "ordered map" in message
+
+
+def test_parse_yaml_refuses_an_omap_repeat_that_reads_the_same() -> None:
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml("o: !!omap [{1: x}, {1.0: y}]\n")
+
+    assert "ordered map" in str(excinfo.value)
+
+
+def test_parse_yaml_keeps_an_omap_without_repeats() -> None:
+    text = "o: !!omap [{a: 1}, {b: 2}, {c: 3}]\n"
+    assert parse_yaml(text) == yaml.safe_load(text)
+    assert parse_yaml(text) == {"o": [("a", 1), ("b", 2), ("c", 3)]}
+
+
+def test_parse_yaml_keeps_repeated_keys_in_pairs() -> None:
+    text = "o: !!pairs [{a: 1}, {a: 2}]\n"
+    assert parse_yaml(text) == yaml.safe_load(text)
+    assert parse_yaml(text) == {"o": [("a", 1), ("a", 2)]}
+
+
+def test_omap_override_leaves_safe_load_alone() -> None:
+    assert yaml.safe_load("o: !!omap [{a: 1}, {a: 2}]\n") == {"o": [("a", 1), ("a", 2)]}

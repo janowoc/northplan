@@ -26,6 +26,7 @@ from engine.core.indexation import real_year
 from engine.core.mortality import months_to_terminal
 from engine.core.state import DEATH_NOT_DRAWN
 from engine.params.loader import ParamYear, YamlConstructionError, load_year, parse_yaml
+from engine.policy.build import expand_grid
 from engine.scenario import (
     InvalidScenarioError,
     MalformedScenarioFileError,
@@ -37,10 +38,14 @@ from engine.scenario import (
     load_scenario,
 )
 from engine.scenario.load import (
+    MAX_DOCUMENT_CHARACTERS,
     MAX_DOCUMENT_VALUES,
+    MAX_REPORTED_ERRORS,
     DuplicateKeyError,
     _expanded_size,
+    _text_length,
     scenario_from_text,
+    validation_message,
 )
 from engine.tax.combined import household_assessment
 
@@ -636,3 +641,141 @@ def test_the_expanded_count_equals_a_naive_count() -> None:
     assert _expanded_size(value, 10**9) == _naive_size(value)
     aliased = parse_yaml("x: &x [1, 2]\ny: *x\nz: *x\n")
     assert _expanded_size(aliased, 10**9) == _naive_size(aliased)
+
+
+# =============================================================================
+# The character budget
+# =============================================================================
+
+CHARACTER_REFUSAL = "more than 1,000,000 characters of text"
+
+
+def test_scenario_from_text_refuses_aliased_long_strings_quickly() -> None:
+    text = "long: &s " + "x" * 10_000 + "\nmany:\n" + "  - *s\n" * 10_000
+    started = time.perf_counter()
+    with pytest.raises(MalformedScenarioFileError, match=CHARACTER_REFUSAL) as caught:
+        scenario_from_text(text, "request body", syntax="yaml")
+    assert time.perf_counter() - started < 1.0
+    assert "1,000,000" in str(caught.value)
+    assert str(caught.value).startswith("request body: ")
+
+
+def test_scenario_from_text_counts_mapping_keys_as_text() -> None:
+    key = "k" * 200
+    text = f"shared: &m {{{key}: 1}}\nmany:\n" + "  - *m\n" * 10_000
+    # The strings alone: the one key is not a string value, and nothing else is long.
+    values = parse_yaml(text)
+    assert _expanded_size(values, 10**9, _text_length) > MAX_DOCUMENT_CHARACTERS
+    assert _expanded_size(values, 10**9) < MAX_DOCUMENT_VALUES
+    assert sum(len(v) for v in values["many"][0].values() if isinstance(v, str)) == 0
+
+    with pytest.raises(MalformedScenarioFileError, match=CHARACTER_REFUSAL):
+        scenario_from_text(text, "request body", syntax="yaml")
+
+
+def test_scenario_from_text_character_budget_applies_to_json() -> None:
+    text = json.dumps({"name": "x" * (MAX_DOCUMENT_CHARACTERS + 1)})
+    with pytest.raises(MalformedScenarioFileError, match=CHARACTER_REFUSAL):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_text_length_weights() -> None:
+    def weight(value: object) -> int:
+        return _expanded_size(value, 10**9, _text_length)
+
+    shared = "abcd"
+    assert weight("abc") == 3
+    assert weight(b"abcde") == 5
+    assert weight(7) == 0
+    assert weight({"ab": 1, 1: 2, "cde": 3}) == 5
+    assert weight({"ab": "xyz"}) == 5
+    assert weight([shared, shared, shared]) == 12
+    assert weight({"k": [shared, shared]}) == 9
+
+
+def test_omap_repeat_in_a_scenario_is_a_duplicate_key_error() -> None:
+    with pytest.raises(DuplicateKeyError, match="ordered map"):
+        scenario_from_text("x: !!omap [{a: 1}, {a: 2}]\n", "request body", syntax="yaml")
+
+
+@pytest.mark.parametrize(
+    "path", sorted((REPO_ROOT / "scenarios").glob("*.yaml")), ids=lambda path: path.name
+)
+def test_committed_scenarios_are_far_under_the_character_budget(path: Path) -> None:
+    values = parse_yaml(path.read_text(encoding="utf-8"))
+    assert _expanded_size(values, 10**9, _text_length) < MAX_DOCUMENT_CHARACTERS / 100
+
+
+# =============================================================================
+# The cap on a validation message
+# =============================================================================
+
+
+def _invalid(policies: object) -> ValidationError:
+    values = parse_yaml((REPO_ROOT / "scenarios" / "example.yaml").read_text(encoding="utf-8"))
+    values["policies"] = policies
+    with pytest.raises(ValidationError) as caught:
+        Scenario.model_validate(values)
+    return caught.value
+
+
+@pytest.mark.parametrize("count", [2, MAX_REPORTED_ERRORS])
+def test_validation_message_is_unchanged_up_to_the_limit(count: int) -> None:
+    exc = _invalid(["x"] * count)
+    assert exc.error_count() == count
+    assert validation_message(exc) == str(exc)
+
+
+def test_validation_message_caps_at_the_limit() -> None:
+    exc = _invalid(["x"] * (MAX_REPORTED_ERRORS + 1))
+    assert exc.error_count() == MAX_REPORTED_ERRORS + 1
+
+    message = validation_message(exc)
+
+    assert message.endswith("\n... and 1 more error, not shown.")
+    shown = message.split("\n", 1)[1].removesuffix("\n... and 1 more error, not shown.")
+    full = str(exc).split("\n", 1)[1]
+    assert full.startswith(shown)
+    assert shown.count("policies.") == MAX_REPORTED_ERRORS
+    assert f"policies.{MAX_REPORTED_ERRORS}" not in shown
+    assert f"policies.{MAX_REPORTED_ERRORS - 1}" in shown
+
+
+def test_scenario_from_text_caps_a_huge_validation_message() -> None:
+    values = parse_yaml((REPO_ROOT / "scenarios" / "example.yaml").read_text(encoding="utf-8"))
+    values["policies"] = ["x"] * 99_000
+    text = json.dumps(values)
+
+    started = time.perf_counter()
+    with pytest.raises(InvalidScenarioError) as caught:
+        scenario_from_text(text, "request body", syntax="json")
+    elapsed = time.perf_counter() - started
+
+    assert len(str(caught.value)) < 10_000
+    assert "98,980 more" in str(caught.value)
+    assert elapsed < 2.0
+
+
+def test_validation_message_keeps_a_validator_error() -> None:
+    exc = _invalid([])
+    assert exc.error_count() == 1
+    assert validation_message(exc) == str(exc)
+    assert "policies: none given" in validation_message(exc)
+
+
+def test_validation_message_rebuilds_a_validator_error() -> None:
+    """Thirty value_error entries with ctx, from the grid's re-validation in expand_grid."""
+    scenario = load_scenario(REPO_ROOT / "scenarios" / "example.yaml")
+    grid = {"contribution.weights.rrsp": tuple(-float(i) for i in range(1, 31))}
+    with pytest.raises(ValidationError) as caught:
+        expand_grid(scenario.model_copy(update={"grid": grid}))
+    exc = caught.value
+    assert exc.error_count() == 30
+    assert all(e["type"] == "value_error" and "ctx" in e for e in exc.errors())
+
+    message = validation_message(exc)
+
+    assert message.endswith("\n... and 10 more errors, not shown.")
+    shown = message.split("\n", 1)[1].removesuffix("\n... and 10 more errors, not shown.")
+    assert str(exc).split("\n", 1)[1].startswith(shown)
+    assert shown.count("[type=value_error") == MAX_REPORTED_ERRORS

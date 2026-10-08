@@ -36,8 +36,7 @@ each step is a GitHub issue. Known simplifications are listed in
 
 Still to do: checking the engine's figures by hand, in a spreadsheet of the
 deterministic path (#21), a hand check of the couple scenario's death mechanics
-(#56), and golden cases for the lines no case reaches yet (#69); and the
-resource limits the API needs before it serves anyone but one local user (#78).
+(#56), and golden cases for the lines no case reaches yet (#69).
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
@@ -166,8 +165,11 @@ the image it built last, however old. Only `params/` and `scenarios/` are
 mounted into the container, so a change anywhere else takes effect only after a
 rebuild.
 
-The server is for one user on this machine: it has no authentication and bounds no
-run's size, so the compose file binds it to loopback.
+The server is for one user on this machine. It bounds what a request can cost, so that
+a mistake cannot exhaust a laptop: at most 100,000 paths, at most 1,000 candidate
+policies, at most 10,000,000 paths across all of them, a body of at most 1 MiB, and one
+run at a time. It answers only `localhost`, `127.0.0.1` and `[::1]`. It has no
+authentication, so the compose file binds it to loopback.
 
 Open that address to run the example scenario and see its fan chart. The API
 takes a scenario as the request body, JSON or YAML, and the run's options as

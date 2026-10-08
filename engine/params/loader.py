@@ -24,16 +24,19 @@ Conventions the files themselves must follow (see the header in any file under
 are bare fractions rather than percentages or basis points, and dollar amounts
 are the nominal figures as published for that tax year.
 
-A mapping that repeats a key is refused: YAML permits it and keeps the last
-value without a word. :func:`parse_yaml` is the one parser for hand-edited
+A mapping or an ordered map (``!!omap``) that repeats a key is refused: YAML
+forbids it, but PyYAML accepts it and keeps the last value without a word.
+:func:`parse_yaml` is the one parser for hand-edited
 YAML, so the refusal is the same everywhere it is used; a merge key (``<<``)
 is not a repeat. Two keys that read the same once stored as text (``65`` and
-``"65"``) are refused too, because every key is stored as text.
+``"65"``) are refused too, because every key is stored as text. A merged mapping
+keeps one pair per key, as construction would, so merge keys cannot multiply a
+document's size.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -111,7 +114,10 @@ class MissingParameterError(ParamError):
 
 
 class DuplicateYamlKeyError(ValueError):
-    """A mapping repeats a key, which YAML permits by keeping the last value."""
+    """A mapping or an ordered map repeats a key.
+
+    YAML forbids it, and PyYAML accepts it by keeping the last value.
+    """
 
 
 class YamlConstructionError(yaml.YAMLError):
@@ -130,6 +136,9 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     in place. Only a key whose tag is in ``_SCALAR_KEY_TAGS`` is built and
     compared; a value-tagged key (``=``) is compared by its text. Every other
     key, including a merge key, is left to SafeLoader's own construction.
+    An ordered map (``!!omap``) that repeats a key is refused the same way. After
+    merge flattening a mapping keeps one pair per key, with keys compared as
+    construction compares them (``1`` and ``1.0`` are one key).
     """
 
     def compose_mapping_node(self, anchor: Any) -> yaml.MappingNode:
@@ -148,12 +157,67 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 raise DuplicateYamlKeyError(
                     f"line {key_node.start_mark.line + 1}, column "
                     f"{key_node.start_mark.column + 1}: key {key!r} appears more "
-                    "than once in this mapping. YAML permits it and keeps the "
-                    "last, so whichever value you meant, one of them is being "
-                    "discarded silently."
+                    "than once in this mapping. YAML forbids it, and PyYAML would keep "
+                    "the last, so one of the values would be discarded silently."
                 )
             seen.add(key)
         return node
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        """Merge as PyYAML does, then keep one pair per key.
+
+        A key keeps the position of its first occurrence and the value of its
+        last, which is the dict construction would build. Without this, a merge
+        list is multiplied by its fan-out at each level of nesting.
+        """
+        super().flatten_mapping(node)
+        index: dict[Any, int] = {}
+        pairs: list[tuple[yaml.Node, yaml.Node]] = []
+        for key_node, value_node in node.value:
+            identity: Any
+            if isinstance(key_node, yaml.ScalarNode):
+                if key_node.tag in _SCALAR_KEY_TAGS:
+                    identity = ("k", self.construct_object(key_node))
+                else:
+                    identity = ("t", key_node.tag, key_node.value)
+            else:
+                identity = ("i", id(key_node))
+            if identity in index:
+                pairs[index[identity]] = (pairs[index[identity]][0], value_node)
+            else:
+                index[identity] = len(pairs)
+                pairs.append((key_node, value_node))
+        if len(pairs) != len(node.value):
+            node.value = pairs
+
+    def construct_yaml_omap(self, node: yaml.Node) -> Iterator[Any]:
+        """Refuse a repeated key in an ordered map, then build it as SafeLoader does."""
+        if isinstance(node, yaml.SequenceNode):
+            seen: set[Any] = set()
+            for entry in node.value:
+                if not isinstance(entry, yaml.MappingNode) or len(entry.value) != 1:
+                    continue
+                key_node = entry.value[0][0]
+                if not isinstance(key_node, yaml.ScalarNode):
+                    continue
+                if key_node.tag == _VALUE_TAG:
+                    key = key_node.value
+                elif key_node.tag in _SCALAR_KEY_TAGS:
+                    key = self.construct_object(key_node)
+                else:
+                    continue
+                if key in seen:
+                    raise DuplicateYamlKeyError(
+                        f"line {key_node.start_mark.line + 1}, column "
+                        f"{key_node.start_mark.column + 1}: key {key!r} appears more "
+                        "than once in this ordered map. YAML forbids it, and PyYAML would "
+                        "keep the last, so one of the values would be discarded silently."
+                    )
+                seen.add(key)
+        yield from super().construct_yaml_omap(node)
+
+
+_UniqueKeyLoader.add_constructor("tag:yaml.org,2002:omap", _UniqueKeyLoader.construct_yaml_omap)
 
 
 def parse_yaml(text: str) -> Any:
@@ -166,7 +230,8 @@ def parse_yaml(text: str) -> Any:
         Whatever ``yaml.safe_load(text)`` would return for the same text.
 
     Raises:
-        DuplicateYamlKeyError: If one mapping in ``text`` repeats a key. Keys
+        DuplicateYamlKeyError: If one mapping, or one ordered map (``!!omap``), in
+            ``text`` repeats a key. Keys
             are compared as built, so ``1``, ``1.0`` and ``true`` are one key.
             A merge key (``<<``) is never counted, even when a mapping has
             two. A ``ValueError``, not a :class:`yaml.YAMLError`.
