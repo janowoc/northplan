@@ -100,6 +100,9 @@ belongs. `--standalone` writes a full document for a browser.
 | 77 | A deemed RRIF or LIF balance on the terminal return counts as eligible pension income | agent | 76 | the terminal return's deemed RRIF/LIF balance is eligible pension income only as the law says; L42 states both parts |
 | 78 | API resource limits, before the server serves anyone but one local user | agent | 24 | each measured amplification is refused in under a second; no request size is unbounded |
 | 79 | First public release: a public repository and a published container image | agent, human | 78 | a push to `main` publishes the image; a pull request pushes nothing; the repository and the image are public |
+| 80 | The `northplan` command inside the image looks for parameters in site-packages | agent | 79 | `northplan simulate` runs inside the image; a test covers the installed-package path |
+| 81 | Reproducible image builds: locked dependencies, a pinned base image, and a way to update every pin | agent | 79 | two uncached builds of one commit install identical packages; every pin has an update path |
+| 82 | Run the test suite in parallel with pytest-xdist | agent | 79 | `pytest -n auto` passes ten runs in a row with the serial count |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -437,6 +440,15 @@ depends on it: a published image will be run listening on every interface,
 which the server can serve only once 78 bounds what a request can cost. The
 workflow can be written and run while the repository is private; making the
 repository and the image public waits for 78.
+
+80, 81 and 82 came out of the review of 79. 80 is a bug the review
+reproduced: the published image makes the command line inside it likely to
+be tried, and there it cannot find its parameters. 81 holds what 79 chose
+not to pin: the Python dependencies and the base image float, and pinning
+them needs an update path decided first, or the image ages into missing
+security fixes. 82 is the owner's request of 2026-10-08, once the serial
+suite began gating every published image. All three sit right after 79,
+which they depend on; none blocks anything.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
