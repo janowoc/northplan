@@ -99,6 +99,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 76 | An under-65 survivor's income from a deceased spouse's plan is qualified pension income | agent | 67 | an under-65 survivor's inherited RRIF income earns the pension credit; L15's sentence goes |
 | 77 | A deemed RRIF or LIF balance on the terminal return counts as eligible pension income | agent | 76 | the terminal return's deemed RRIF/LIF balance is eligible pension income only as the law says; L42 states both parts |
 | 78 | API resource limits, before the server serves anyone but one local user | agent | 24 | each measured amplification is refused in under a second; no request size is unbounded |
+| 79 | First public release: a public repository and a published container image | agent, human | 78 | a push to `main` publishes the image; a pull request pushes nothing; the repository and the image are public |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -427,8 +428,15 @@ to anyone else: two parser amplifications the scenario cap does not count, and
 no bound on paths, grid size or request size. A later review added the shared
 loader's claim that YAML permits a repeated key, and its silence on one in an
 `!!omap`, since this issue edits that loader anyway. It sits right after 24;
-nothing depends on it, but it must land before the server is bound to anything
-but loopback.
+79 depends on it, and it must land before the server is bound to anything but
+loopback.
+
+79 came from the owner's request of 2026-10-08 to make the repository public
+and publish a container image on every push. It sits right after 78 and
+depends on it: a published image will be run listening on every interface,
+which the server can serve only once 78 bounds what a request can cost. The
+workflow can be written and run while the repository is private; making the
+repository and the image public waits for 78.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
