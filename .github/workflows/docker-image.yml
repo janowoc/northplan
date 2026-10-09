@@ -120,6 +120,10 @@ jobs:
             type=sha,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+          # GitHub detects the licence as AGPL-3.0; the project is
+          # AGPL-3.0-or-later.
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
       # Normally a rebuild from the smoke builds' cache; on a cache miss, a
       # fresh build that was not smoke-tested.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
