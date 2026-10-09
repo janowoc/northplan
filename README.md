@@ -233,6 +233,32 @@ both. A modest excess that education does use is not penalised here: it grows
 sheltered and is paid out tax-free (`docs/limitations.md` L30, L31). If the
 oracle fails, the model is wrong.
 
+## Disclaimer
+
+northplan is a personal modelling tool. Nothing it produces, including
+projections, tax estimates, withdrawal strategies or any other output, is
+financial, tax or legal advice, and you should not rely on it as such. Consult
+a qualified professional before acting on any result.
+
+**Tax and benefit figures.** All tax and benefit parameters (rates, brackets,
+credits, thresholds and amounts) are 2026 figures entered by hand. They cover
+Alberta only; other provinces and territories are not modelled. They have not
+been independently verified and may contain errors or omissions. They will also
+go out of date as legislation and indexation change. Check any figure that
+matters against the Canada Revenue Agency, the Government of Alberta or another
+official source.
+
+**Simplifications.** The model simplifies many tax rules and real-world
+conditions. These simplifications are listed in
+[docs/limitations.md](docs/limitations.md). Read it before interpreting any
+results.
+
+**No warranty.** This software is provided "as is", without warranty of any
+kind, express or implied. The author accepts no liability for any loss arising
+from its use. The full terms are in the [License](#license) section and in
+sections 15 (Disclaimer of Warranty) and 16 (Limitation of Liability) of the
+GNU Affero General Public License v3 in [LICENSE](LICENSE).
+
 ## License
 
 AGPL-3.0-or-later. The full text is in `LICENSE`.
