@@ -103,6 +103,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 80 | The `northplan` command inside the image looks for parameters in site-packages | agent | 79 | `northplan simulate` runs inside the image; a test covers the installed-package path |
 | 81 | Reproducible image builds: locked dependencies, a pinned base image, and a way to update every pin | agent | 79 | two uncached builds of one commit install identical packages; every pin has an update path |
 | 82 | Run the test suite in parallel with pytest-xdist | agent | 79 | `pytest -n auto` passes ten runs in a row with the serial count |
+| 84 | Run the engine in the browser: a static Pyodide build of the web page | agent, human | — | a push to `main` deploys a page that runs the example scenario in the browser; its document equals the API's |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -449,6 +450,16 @@ them needs an update path decided first, or the image ages into missing
 security fixes. 82 is the owner's request of 2026-10-08, once the serial
 suite began gating every published image. All three sit right after 79,
 which they depend on; none blocks anything.
+
+84 came from the owner's question of 2026-10-09 about distributing northplan
+to people who will not install Python or Docker. Of running it in the
+browser, hosting it on demand, and a packaged desktop app, the browser needs
+no install and no server, and keeps a household's figures on its own
+machine. Its first step measures the engine under Pyodide and stops for the
+owner, since the slowdown is unknown. It depends on nothing and blocks
+nothing, and sits after the image work of 79 to 82 because it is the next
+way to publish the same engine. 83 is not an issue: it is the pull request
+that checked 79's workflow.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
