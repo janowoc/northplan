@@ -21,7 +21,9 @@ written until every table is computed. In the trace a NaN — the engine's
 value is refused.
 
 Exit codes: 0 on success; 2 on a scenario the engine refuses or a usage error, with the
-message on stderr; 1 on a missing parameter or a failed write. Any other exception propagates.
+message on stderr; 1 on a missing parameter or a failed write. A missing parameters
+directory, when ``--params`` was not given, is exit 1 with a line saying to pass ``--params``.
+Any other exception propagates.
 """
 
 from __future__ import annotations
@@ -39,13 +41,13 @@ from pydantic import ValidationError
 
 import report.tables
 from engine.core.indexation import RoutedParameterError
-from engine.mc.prepare import evaluate, prepare_run
+from engine.mc.prepare import PreparedRun, evaluate, prepare_run
 from engine.mc.trace import trace_rows
 from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
-from engine.params.loader import ParamError
+from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamError, ParamYearMissingError
 from engine.scenario.load import ScenarioError, load_scenario, validation_message
-from engine.scenario.schema import PolicySpec
+from engine.scenario.schema import PolicySpec, Scenario
 from report.tables import (
     Meta,
     RunReport,
@@ -139,6 +141,14 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         help="convert dollar columns of the year and final tables to nominal dollars at the "
         "year end each row reports",
     )
+    parser.add_argument(
+        "--params",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="parameters directory, holding one subdirectory per tax year "
+        "(default: params/ beside the source tree)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -222,11 +232,20 @@ def _columns(rows: Sequence[dict[str, object]]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _prepare(loaded: Scenario, args: argparse.Namespace) -> PreparedRun:
+    """``prepare_run`` with ``--params`` passed only when given."""
+    if args.params is None:
+        return prepare_run(loaded, n_paths=args.paths, deterministic=args.deterministic)
+    return prepare_run(
+        loaded, n_paths=args.paths, deterministic=args.deterministic, params_root=args.params
+    )
+
+
 def _simulate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> list[tuple[Path, str]]:
     loaded = load_scenario(args.scenario)
     out = args.out if args.out is not None else Path(f"{loaded.name}.csv")
     try:
-        prepared = prepare_run(loaded, n_paths=args.paths, deterministic=args.deterministic)
+        prepared = _prepare(loaded, args)
     except ValidationError as error:
         raise _ScenarioRefusedError(validation_message(error)) from error
     try:
@@ -295,7 +314,7 @@ def _optimize(args: argparse.Namespace) -> list[tuple[Path, str]]:
     loaded = load_scenario(args.scenario)
     out = args.out if args.out is not None else Path(f"{loaded.name}.optimize.csv")
     try:
-        prepared = prepare_run(loaded, n_paths=args.paths, deterministic=args.deterministic)
+        prepared = _prepare(loaded, args)
     except ValidationError as error:
         raise _ScenarioRefusedError(validation_message(error)) from error
     scenario = prepared.scenario
@@ -363,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         schema refuses, or a missing preference, after printing the message to stderr;
         1 on any other :class:`~engine.params.loader.ParamError` (a
         :class:`~engine.core.indexation.RoutedParameterError` propagates) or an ``OSError``
-        writing outputs.
+        writing outputs; when the error is a missing tax year, ``--params`` was not given and
+        the default parameters directory does not exist, a second line says to pass
+        ``--params``.
 
     Raises:
         RoutedParameterError: Propagated with its traceback, not reported: it signals an
@@ -387,6 +408,16 @@ def main(argv: list[str] | None = None) -> int:
         raise
     except ParamError as error:
         print(f"northplan: error: {error}", file=sys.stderr)
+        if (
+            isinstance(error, ParamYearMissingError)
+            and args.params is None
+            and not DEFAULT_PARAMS_ROOT.is_dir()
+        ):
+            print(
+                "northplan: pass --params DIR, the directory holding one subdirectory "
+                "per tax year.",
+                file=sys.stderr,
+            )
         return 1
 
     try:

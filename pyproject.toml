@@ -24,10 +24,12 @@ dev = [
     "pytest>=8.0",
     "httpx2>=2.13",
     "ruff==0.16.4",
+    "setuptools>=77",
 ]
 
 [project.scripts]
 northplan = "cli.main:main"
+northplan-serve = "api.serve:main"
 
 [build-system]
 requires = ["setuptools>=77"]
@@ -46,9 +48,13 @@ packages = [
     "engine.policy",
     "engine.optimize",
     "api",
+    "api.web",
     "cli",
     "report",
 ]
+
+[tool.setuptools.package-data]
+"api.web" = ["*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -73,7 +79,7 @@ empty_parameter_set_mark = "fail_at_collect"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["web"]
+extend-exclude = ["api/web"]
 force-exclude = true
 
 [tool.ruff.format]

@@ -107,8 +107,8 @@ engine/          pure Python, no FastAPI. MUST NOT import from api/, cli/ or rep
   policy/        parameterized decision rules
   optimize/      objectives and the policy search
 report/          result tables shared by cli/ and api/, real or nominal
-api/             FastAPI, thin. Serves web/ via StaticFiles
-web/             plain HTML + Alpine.js + Plotly from CDN. No build step
+api/             FastAPI, thin. Serves api/web/ via StaticFiles; northplan-serve
+  web/           plain HTML + Alpine.js + Plotly from CDN. No build step
 cli/             YAML scenario in, results out
 scenarios/       example.yaml is committed; *.local.yaml is gitignored
 docs/            roadmap.md (build order), limitations.md (every simplification)
@@ -199,6 +199,18 @@ authentication. The image carries its own copies of `params/` and
 them, so there an edit to either takes effect on the next request, without a
 rebuild; `docker run` serves the image's copies.
 
+The image also has the command line. Mount a directory for its output:
+
+```sh
+docker run --rm -v "$PWD:/out" --user "$(id -u):$(id -g)" ghcr.io/janowoc/northplan:latest \
+  northplan simulate scenarios/example.yaml --paths 200 --out /out/example.csv
+```
+
+`scenarios/example.yaml` there is the image's copy, under `/app`. To run a
+scenario of your own, put it in the mounted directory and pass it as
+`/out/` followed by its name. `--user` makes the files written yours; without
+it they belong to root.
+
 Locally, without Docker:
 
 ```sh
@@ -217,6 +229,13 @@ northplan optimize scenarios/example.yaml --objective median_estate_after_tax --
 ```
 
 `northplan simulate --help` and `northplan optimize --help` list the options.
+
+`northplan-serve` serves the API and the page on http://localhost:8000, as
+Compose does; `--port` changes the port. An editable install finds `params/`
+and `scenarios/example.yaml` in the checkout. Any other install has neither:
+pass `--params DIR`, the directory holding one subdirectory per tax year, to
+`northplan simulate`, `northplan optimize` and `northplan-serve`, and
+`--example FILE` to `northplan-serve` for the page's example scenario.
 
 ## Build order
 

@@ -53,7 +53,7 @@ def test_it_no_longer_says_the_endpoints_are_not_implemented(page: tuple[str, st
 
 
 def test_the_pages_field_names_are_fields_of_the_response_models() -> None:
-    html = (REPO_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    html = (REPO_ROOT / "api" / "web" / "index.html").read_text(encoding="utf-8")
     meta = set(re.findall(r"doc\.meta\.(\w+)", html))
     final = set(re.findall(r"doc\.final\.(\w+)", html))
     top = set(re.findall(r"doc\.(\w+)", html))

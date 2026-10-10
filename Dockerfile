@@ -21,11 +21,14 @@ COPY engine/ engine/
 COPY api/ api/
 COPY cli/ cli/
 COPY report/ report/
-COPY web/ web/
 COPY params/ params/
 COPY scenarios/example.yaml scenarios/
 
-RUN pip install --upgrade pip && pip install .
+# Editable, so that the installed code is /app's: the `northplan` command and
+# the server both default to /app/params, and the server to
+# /app/scenarios/example.yaml, the paths compose mounts over. A plain install
+# would put a second copy of the code in site-packages, where neither exists.
+RUN pip install --upgrade pip && pip install -e .
 
 # The image carries params/ and scenarios/example.yaml (what /api/example
 # serves), so it runs without a checkout. docker-compose bind-mounts ./params

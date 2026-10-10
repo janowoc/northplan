@@ -7,8 +7,11 @@
 body, JSON or YAML, and the run's options in the query string, and return the
 document ``--out x.json`` writes, except that ``meta.scenario`` names the scenario
 alone and the notes name query parameters, not flags. ``GET /api/example``
-returns ``scenarios/example.yaml`` as it is on disk. ``GET /health`` does not touch
-the engine.
+returns the file at ``EXAMPLE_PATH`` as it is on disk: ``scenarios/example.yaml``
+beside the source tree, unless ``northplan-serve`` was given ``--example``. Runs load
+their parameters from ``PARAMS_ROOT``, the engine's default unless ``northplan-serve``
+was given ``--params``; both are read per request. ``GET /health`` does not touch the
+engine.
 
 Status codes: 422 for whatever the command line refuses with exit 2 (a body that
 does not parse or validate, a scenario the load checks refuse, an unknown policy or
@@ -51,13 +54,14 @@ from engine.core.indexation import RoutedParameterError
 from engine.mc.prepare import PreparedRun, evaluate, prepare_run
 from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
-from engine.params.loader import ParamError
+from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamError
 from engine.scenario.load import ScenarioError, scenario_from_text, validation_message
 from engine.scenario.schema import Scenario
 from report.tables import RunReport, UnknownPolicyError, preference, select_policy
 
-WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
+WEB_ROOT = Path(__file__).resolve().parent / "web"
 EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "example.yaml"
+PARAMS_ROOT: Path = DEFAULT_PARAMS_ROOT
 
 MAX_BODY_BYTES = 1 << 20
 _ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
@@ -296,7 +300,9 @@ def _open_run(
         raise HTTPException(status_code=422, detail=str(error)) from error
     try:
         with _parameter_errors():
-            prepared = prepare_run(scenario, n_paths=paths, deterministic=deterministic)
+            prepared = prepare_run(
+                scenario, n_paths=paths, deterministic=deterministic, params_root=PARAMS_ROOT
+            )
     except (ValidationError, ScenarioError) as error:
         detail = validation_message(error) if isinstance(error, ValidationError) else str(error)
         raise HTTPException(status_code=422, detail=detail) from error
@@ -433,7 +439,7 @@ _OPTIMIZE_QUERY = _query_names(optimize)
 
 @app.get("/api/example")
 def example() -> Response:
-    """The committed example scenario, as it is on disk."""
+    """The file at ``EXAMPLE_PATH``, as it is on disk; 404 when it does not exist."""
     try:
         content = EXAMPLE_PATH.read_bytes()
     except FileNotFoundError as exc:

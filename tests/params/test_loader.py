@@ -115,6 +115,21 @@ def test_missing_year_raises_named_error(params_root: Path) -> None:
     assert "2030" in str(exc.value), "The error should list the years that do exist."
 
 
+def test_a_root_that_is_a_file_is_reported_as_not_a_directory(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.write_text("not a directory\n", encoding="utf-8")
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(2026, root)
+    assert "the params root is not a directory" in str(exc.value)
+    assert "itself does not exist" not in str(exc.value)
+
+
+def test_a_root_that_does_not_exist_is_reported_as_missing(tmp_path: Path) -> None:
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(2026, tmp_path / "absent")
+    assert "the params root itself does not exist" in str(exc.value)
+
+
 def test_missing_file_raises_named_error(params_root: Path) -> None:
     year = load_year(2030, params_root)
     with pytest.raises(ParamFileMissingError) as exc:

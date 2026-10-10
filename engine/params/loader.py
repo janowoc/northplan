@@ -617,11 +617,12 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
     root = Path(root)
     year_dir = root / str(year)
     if not year_dir.is_dir():
-        available = (
-            ", ".join(sorted(p.name for p in root.iterdir() if p.is_dir()))
-            if root.is_dir()
-            else "none — the params root itself does not exist"
-        )
+        if root.is_dir():
+            available = ", ".join(sorted(p.name for p in root.iterdir() if p.is_dir()))
+        elif root.exists():
+            available = "none — the params root is not a directory"
+        else:
+            available = "none — the params root itself does not exist"
         raise ParamYearMissingError(
             f"No parameters for tax year {year}: {year_dir} does not exist. "
             f"Available years: {available or 'none'}."

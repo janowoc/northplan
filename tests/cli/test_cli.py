@@ -15,6 +15,7 @@ import csv
 import dataclasses
 import json
 import math
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from engine.mc.simulate import SimulationResult
 from engine.mc.trace import trace_rows
 from engine.optimize.objective import select_objective, success_probability
 from engine.optimize.search import CandidateReport, SearchResult, search
+from engine.params.loader import DEFAULT_PARAMS_ROOT
 from engine.scenario import load_scenario
 from engine.scenario.schema import PolicySpec
 from report.tables import evaluation_rows, final_row, year_rows
@@ -1309,3 +1311,116 @@ class TestStatic:
         assert files
         for path in files:
             assert "start_month" not in path.read_text(encoding="utf-8"), path
+
+
+PARAMS_HINT = "northplan: pass --params DIR"
+COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
+
+
+class TestParamsFlag:
+    def test_params_flag_gives_byte_identical_output_to_the_default(self, tmp_path: Path) -> None:
+        copy = tmp_path / "params"
+        shutil.copytree(DEFAULT_PARAMS_ROOT, copy)
+        cases = [
+            ["simulate", str(EXAMPLE), "--paths", "50"],
+            ["simulate", str(COUPLE), "--paths", "50"],
+            [
+                "optimize",
+                str(EXAMPLE),
+                "--objective",
+                "median_estate_after_tax",
+                "--paths",
+                "20",
+            ],
+        ]
+        for index, case in enumerate(cases):
+            plain = tmp_path / f"plain{index}"
+            given = tmp_path / f"given{index}"
+            plain.mkdir()
+            given.mkdir()
+            run_ok([*case, "--out", str(plain / "x.csv")])
+            run_ok([*case, "--out", str(given / "x.csv"), "--params", str(copy)])
+            names = sorted(path.name for path in plain.iterdir())
+            assert len(names) >= 2
+            assert names == sorted(path.name for path in given.iterdir())
+            for name in names:
+                assert (plain / name).read_bytes() == (given / name).read_bytes(), name
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            pytest.param(["simulate", str(EXAMPLE), "--paths", "10"], id="simulate"),
+            pytest.param(
+                [
+                    "optimize",
+                    str(EXAMPLE),
+                    "--objective",
+                    "median_estate_after_tax",
+                    "--paths",
+                    "10",
+                ],
+                id="optimize",
+            ),
+        ],
+    )
+    def test_a_given_params_directory_that_does_not_exist_fails_without_the_hint(
+        self,
+        prefix: list[str],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        absent = tmp_path / "absent"
+        out = tmp_path / "x.csv"
+        argv = [*prefix, "--out", str(out)]
+        assert run_main([*argv, "--params", str(absent)]) == 1
+        stderr = capsys.readouterr().err
+        assert str(absent) in stderr
+        assert "pass --params" not in stderr
+        assert not out.exists()
+        monkeypatch.setattr(cli.main, "DEFAULT_PARAMS_ROOT", absent)
+        assert run_main([*argv, "--params", str(absent)]) == 1
+        stderr = capsys.readouterr().err
+        assert str(absent) in stderr
+        assert "pass --params" not in stderr
+        assert not out.exists()
+
+    def test_a_params_path_that_is_a_file_fails_without_the_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        not_a_directory = tmp_path / "file"
+        not_a_directory.write_text("not a directory\n", encoding="utf-8")
+        out = tmp_path / "x.csv"
+        argv = ["simulate", str(EXAMPLE), "--paths", "10", "--out", str(out)]
+        assert run_main([*argv, "--params", str(not_a_directory)]) == 1
+        stderr = capsys.readouterr().err
+        assert "the params root is not a directory" in stderr
+        assert "pass --params" not in stderr
+        assert not out.exists()
+
+    def test_a_missing_default_params_directory_adds_the_hint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert not (DEFAULT_PARAMS_ROOT / "2099").exists()
+        path = mutated(tmp_path, ("start_year: 2026 ", "start_year: 2099 "))
+        monkeypatch.setattr(cli.main, "DEFAULT_PARAMS_ROOT", tmp_path / "absent")
+        assert run_main(["simulate", str(path), "--out", str(tmp_path / "x.csv")]) == 1
+        lines = capsys.readouterr().err.splitlines()
+        assert lines[0].startswith("northplan: error: No parameters for tax year 2099")
+        assert lines[1] == (
+            "northplan: pass --params DIR, the directory holding one subdirectory per tax year."
+        )
+        assert len(lines) == 2
+
+    def test_a_missing_year_under_an_existing_default_has_no_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert not (DEFAULT_PARAMS_ROOT / "2099").exists()
+        path = mutated(tmp_path, ("start_year: 2026 ", "start_year: 2099 "))
+        assert run_main(["simulate", str(path), "--out", str(tmp_path / "x.csv")]) == 1
+        stderr = capsys.readouterr().err
+        assert "No parameters for tax year 2099" in stderr
+        assert "pass --params" not in stderr
