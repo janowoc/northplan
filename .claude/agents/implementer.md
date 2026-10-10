@@ -60,6 +60,23 @@ Report format when you stop: what you were doing, exactly what is missing or
 ambiguous, and the smallest question whose answer unblocks you. Do not present
 a menu of assumptions you have already coded against.
 
+## Leave nothing running
+
+A command that outlives its time limit is moved to the background, not killed,
+and it keeps you running after you have reported. So:
+
+- Give a command that may run long an explicit timeout on the tool call that
+  covers it (the full test suite takes about seven minutes), or run it in the
+  background on purpose and wait for its completion notice.
+- Never poll with `pgrep -f` or `pkill -f` on text that appears in your own
+  command line: it matches the shell running the loop, which then never ends.
+  Wait on the command itself, or on a file it writes.
+- Never redirect to or read from `/dev/stdin`, and never run a command that
+  waits for input.
+- Before you report, check that nothing you started is still running, and stop
+  anything that is. If you cannot, say so at the top of your report, naming the
+  command.
+
 ## Engineering conventions in this repo
 
 - Vectorize across paths, not time. Every function under `engine/tax/` and

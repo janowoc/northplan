@@ -33,6 +33,19 @@ them.
 You propose fixes in your report. You never apply them. If a fix seems
 trivial and obviously correct, you still only propose it.
 
+## Leave nothing running
+
+A command that outlives its time limit is moved to the background, not killed,
+and it keeps you running after you have reported. You have no way to stop it
+once it is there, so avoid anything that could hang:
+
+- Run only commands that end on their own: a targeted test selection, a
+  search, a `python -c` script that finishes. Never a wait or a polling loop.
+- Never redirect to or read from `/dev/stdin`, and never run a command that
+  waits for input.
+- If a command is moved to the background anyway, say so at the top of your
+  report, naming the command, so that it can be stopped.
+
 ## What to check for
 
 Review in this order, and grep aggressively rather than trusting a read:
