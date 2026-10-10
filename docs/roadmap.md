@@ -104,6 +104,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 81 | Reproducible image builds: locked dependencies, a pinned base image, and a way to update every pin | agent | 79 | two uncached builds of one commit install identical packages; every pin has an update path |
 | 82 | Run the test suite in parallel with pytest-xdist | agent | 79 | `pytest -n auto` passes ten runs in a row with the serial count |
 | 84 | Run the engine in the browser: a static Pyodide build of the web page | agent, human | — | a push to `main` deploys a page that runs the example scenario in the browser; its document equals the API's |
+| 85 | A parameters directory the loader cannot read is a traceback or a misleading message, not a parameter error | agent | 80 | an unreadable root or year directory is exit 1 and a 400 naming it, never a traceback or a 500 |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -460,6 +461,12 @@ owner, since the slowdown is unknown. It depends on nothing and blocks
 nothing, and sits after the image work of 79 to 82 because it is the next
 way to publish the same engine. 83 is not an issue: it is the pull request
 that checked 79's workflow.
+
+85 came out of the review of 80. The loader has always let an unreadable
+parameters directory escape as a bare `PermissionError`, or report its files
+as absent; 80's `--params` and `northplan-serve --params` let a user point it
+at any directory, so the failure is now easy to reach. It sits right after
+80, which it depends on, and blocks nothing.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
