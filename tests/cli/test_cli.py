@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import errno
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -34,7 +37,7 @@ from engine.mc.simulate import SimulationResult
 from engine.mc.trace import trace_rows
 from engine.optimize.objective import select_objective, success_probability
 from engine.optimize.search import CandidateReport, SearchResult, search
-from engine.params.loader import DEFAULT_PARAMS_ROOT
+from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamDirectoryUnreadableError
 from engine.scenario import load_scenario
 from engine.scenario.schema import PolicySpec
 from report.tables import evaluation_rows, final_row, year_rows
@@ -1314,6 +1317,20 @@ class TestStatic:
 
 
 PARAMS_HINT = "northplan: pass --params DIR"
+PARAMS_PREFIXES = [
+    pytest.param(["simulate", str(EXAMPLE), "--paths", "10"], id="simulate"),
+    pytest.param(
+        [
+            "optimize",
+            str(EXAMPLE),
+            "--objective",
+            "median_estate_after_tax",
+            "--paths",
+            "10",
+        ],
+        id="optimize",
+    ),
+]
 COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
 
 
@@ -1346,23 +1363,7 @@ class TestParamsFlag:
             for name in names:
                 assert (plain / name).read_bytes() == (given / name).read_bytes(), name
 
-    @pytest.mark.parametrize(
-        "prefix",
-        [
-            pytest.param(["simulate", str(EXAMPLE), "--paths", "10"], id="simulate"),
-            pytest.param(
-                [
-                    "optimize",
-                    str(EXAMPLE),
-                    "--objective",
-                    "median_estate_after_tax",
-                    "--paths",
-                    "10",
-                ],
-                id="optimize",
-            ),
-        ],
-    )
+    @pytest.mark.parametrize("prefix", PARAMS_PREFIXES)
     def test_a_given_params_directory_that_does_not_exist_fails_without_the_hint(
         self,
         prefix: list[str],
@@ -1384,6 +1385,59 @@ class TestParamsFlag:
         assert str(absent) in stderr
         assert "pass --params" not in stderr
         assert not out.exists()
+
+    @pytest.mark.parametrize("prefix", PARAMS_PREFIXES)
+    def test_an_unreadable_params_root_fails_without_the_hint(
+        self,
+        prefix: list[str],
+        tmp_path: Path,
+        lock: Callable[[Path, int], None],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = tmp_path / "params"
+        shutil.copytree(DEFAULT_PARAMS_ROOT, root)
+        lock(root, 0o000)
+        out = tmp_path / "x.csv"
+        assert run_main([*prefix, "--out", str(out), "--params", str(root)]) == 1
+        denied = os.strerror(errno.EACCES)
+        assert capsys.readouterr().err.splitlines() == [
+            f"northplan: error: Cannot look up tax year 2026 in the parameters directory "
+            f"{root}: {denied}."
+        ]
+        assert not out.exists()
+
+    def test_an_unreadable_year_directory_fails_without_the_hint(
+        self,
+        tmp_path: Path,
+        lock: Callable[[Path, int], None],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = tmp_path / "params"
+        shutil.copytree(DEFAULT_PARAMS_ROOT, root)
+        lock(root / "2026", 0o000)
+        out = tmp_path / "x.csv"
+        argv = ["simulate", str(EXAMPLE), "--paths", "10", "--out", str(out)]
+        assert run_main([*argv, "--params", str(root)]) == 1
+        denied = os.strerror(errno.EACCES)
+        assert capsys.readouterr().err.splitlines() == [
+            f"northplan: error: Cannot list the parameters directory {root / '2026'}: {denied}."
+        ]
+        assert not out.exists()
+
+    def test_an_unreadable_directory_error_never_adds_the_hint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise ParamDirectoryUnreadableError("x")
+
+        monkeypatch.setattr(cli.main, "DEFAULT_PARAMS_ROOT", tmp_path / "absent")
+        monkeypatch.setattr(cli.main, "_simulate", refuse)
+        argv = ["simulate", str(EXAMPLE), "--out", str(tmp_path / "x.csv")]
+        assert run_main(argv) == 1
+        assert capsys.readouterr().err.splitlines() == ["northplan: error: x"]
 
     def test_a_params_path_that_is_a_file_fails_without_the_hint(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

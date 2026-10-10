@@ -12,21 +12,25 @@ raises. There is no third outcome and no default.
 from engine.params.loader import (
     MalformedParamFileError,
     MissingParameterError,
+    ParamDirectoryUnreadableError,
     ParamError,
     ParamFileMissingError,
     ParamSet,
     ParamYear,
     ParamYearMissingError,
+    check_params_root,
     load_year,
 )
 
 __all__ = [
     "MalformedParamFileError",
     "MissingParameterError",
+    "ParamDirectoryUnreadableError",
     "ParamError",
     "ParamFileMissingError",
     "ParamSet",
     "ParamYear",
     "ParamYearMissingError",
+    "check_params_root",
     "load_year",
 ]

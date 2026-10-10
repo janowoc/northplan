@@ -21,9 +21,9 @@ written until every table is computed. In the trace a NaN — the engine's
 value is refused.
 
 Exit codes: 0 on success; 2 on a scenario the engine refuses or a usage error, with the
-message on stderr; 1 on a missing parameter or a failed write. A missing parameters
-directory, when ``--params`` was not given, is exit 1 with a line saying to pass ``--params``.
-Any other exception propagates.
+message on stderr; 1 on a parameter that is missing or cannot be read, or a failed write.
+A missing parameters directory, when ``--params`` was not given, is exit 1 with a line
+saying to pass ``--params``. Any other exception propagates.
 """
 
 from __future__ import annotations

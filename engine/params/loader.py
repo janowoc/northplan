@@ -36,6 +36,9 @@ document's size.
 
 from __future__ import annotations
 
+import errno
+import os
+import stat
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,12 +52,14 @@ __all__ = [
     "DuplicateYamlKeyError",
     "MalformedParamFileError",
     "MissingParameterError",
+    "ParamDirectoryUnreadableError",
     "ParamError",
     "ParamFileMissingError",
     "ParamSet",
     "ParamYear",
     "ParamYearMissingError",
     "YamlConstructionError",
+    "check_params_root",
     "load_year",
     "parse_yaml",
 ]
@@ -88,8 +93,12 @@ class ParamYearMissingError(ParamError):
     """No parameter directory exists for the requested tax year."""
 
 
+class ParamDirectoryUnreadableError(ParamError):
+    """A parameters directory, or one on the way to it, cannot be looked up, entered or listed."""
+
+
 class ParamFileMissingError(ParamError):
-    """A parameter set was requested but its YAML file does not exist."""
+    """A parameter set was requested but its YAML file does not exist or cannot be read."""
 
 
 class MalformedParamFileError(ParamError):
@@ -589,6 +598,57 @@ def _read_yaml(path: Path) -> Mapping[str, Any]:
         raise MalformedParamFileError(f"{path}: {exc}") from exc
 
 
+#: The errors ``Path.is_dir()`` reads as "no such directory" in Python 3.12, rather
+#: than raising. Any other ``OSError`` from a lookup is raised to the caller.
+_ABSENT_ERRNOS: Final[frozenset[int]] = frozenset(
+    {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
+)
+
+
+def _lookup(path: Path) -> os.stat_result | None:
+    """``path.stat()``, or None on a ``ValueError`` or on ENOENT, ENOTDIR, EBADF or ELOOP.
+
+    Any other error is raised.
+    """
+    try:
+        return path.stat()
+    except ValueError:
+        return None
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return None
+        raise
+
+
+def _is_directory(path: Path) -> bool:
+    found = _lookup(path)
+    return found is not None and stat.S_ISDIR(found.st_mode)
+
+
+def _reason(exc: OSError) -> str:
+    return exc.strerror or str(exc)
+
+
+def _available_years(root: Path) -> str:
+    try:
+        if _is_directory(root):
+            entries = list(root.iterdir())
+        elif _lookup(root) is not None:
+            return "none — the params root is not a directory"
+        else:
+            return "none — the params root itself does not exist"
+    except OSError as exc:
+        return f"unknown — {root} cannot be listed: {_reason(exc)}"
+    years = []
+    for entry in entries:
+        try:
+            if _is_directory(entry):
+                years.append(entry.name)
+        except OSError:
+            pass  # an entry the loader cannot look up is not an available year
+    return ", ".join(sorted(years)) or "none"
+
+
 def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
     """Load every parameter file for one tax year.
 
@@ -606,7 +666,12 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
         A frozen :class:`ParamYear`.
 
     Raises:
-        ParamYearMissingError: If no directory exists for that year.
+        ParamYearMissingError: If the lookup of the year's directory fails with a
+            ``ValueError`` or with ENOENT, ENOTDIR, EBADF or ELOOP, or finds something
+            other than a directory.
+        ParamDirectoryUnreadableError: If the lookup of the year's directory fails with
+            an ``OSError`` other than ENOENT, ENOTDIR, EBADF or ELOOP (the message names
+            ``root``), or the listing of that directory fails (the message names it).
         ParamFileMissingError: If a file in the directory exists but the
             operating system cannot open or read it.
         MalformedParamFileError: If any file in the directory is not valid
@@ -616,20 +681,26 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
     """
     root = Path(root)
     year_dir = root / str(year)
-    if not year_dir.is_dir():
-        if root.is_dir():
-            available = ", ".join(sorted(p.name for p in root.iterdir() if p.is_dir()))
-        elif root.exists():
-            available = "none — the params root is not a directory"
-        else:
-            available = "none — the params root itself does not exist"
+    try:
+        is_year_dir = _is_directory(year_dir)
+    except OSError as exc:
+        raise ParamDirectoryUnreadableError(
+            f"Cannot look up tax year {year} in the parameters directory {root}: {_reason(exc)}."
+        ) from exc
+    if not is_year_dir:
         raise ParamYearMissingError(
             f"No parameters for tax year {year}: {year_dir} does not exist. "
-            f"Available years: {available or 'none'}."
+            f"Available years: {_available_years(root)}."
         )
+    try:
+        entries = list(year_dir.iterdir())
+    except OSError as exc:
+        raise ParamDirectoryUnreadableError(
+            f"Cannot list the parameters directory {year_dir}: {_reason(exc)}."
+        ) from exc
 
     sets: dict[str, ParamSet] = {}
-    for path in sorted(year_dir.glob("*.yaml")):
+    for path in sorted(entry for entry in entries if entry.name.endswith(".yaml")):
         sets[path.stem] = ParamSet(
             name=path.stem,
             year=year,
@@ -638,3 +709,63 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
         )
 
     return ParamYear(year=year, root=year_dir.resolve(), sets=MappingProxyType(sets))
+
+
+def check_params_root(root: Path | str) -> None:
+    """Raise if a lookup or listing of ``root``, or of a year entry in it, is refused.
+
+    For the start of a long-running process, so that a refusal comes at once rather than
+    on every run. A year entry is an entry of ``root`` whose name is ASCII digits; when
+    ``root`` can be listed, each is looked up, and listed if it is a directory. Opens no
+    parameter file, so a year directory that can be listed but not entered passes. A
+    lookup that fails with a ``ValueError`` or with ENOENT, ENOTDIR, EBADF or ELOOP finds
+    nothing; it is not a refusal.
+
+    ``root`` passes when it can be listed and the lookup of every year entry in it finds
+    a directory that can be listed, something else, or nothing, including when it holds
+    no year entry. It also passes when its own lookup finds nothing or something other
+    than a directory: :func:`load_year` reports it per year. And it passes when it cannot
+    be listed but can be entered, an exception to the summary: :func:`load_year` loads
+    from it, and its years cannot be enumerated, so none is checked.
+
+    Raises:
+        ParamDirectoryUnreadableError: If the lookup of ``root`` fails with an
+            ``OSError`` other than ENOENT, ENOTDIR, EBADF or ELOOP; if ``root`` is a
+            directory that can be neither listed nor entered; or if ``root`` can be
+            listed and the lookup of a year entry in it fails with such an error or finds
+            a directory that cannot be listed.
+    """
+    root = Path(root)
+    try:
+        if not _is_directory(root):
+            return
+    except OSError as exc:
+        raise ParamDirectoryUnreadableError(
+            f"Cannot look up the parameters directory {root}: {_reason(exc)}."
+        ) from exc
+    try:
+        names = [entry.name for entry in root.iterdir()]
+    except OSError as listing:
+        if not os.access(root, os.X_OK):
+            raise ParamDirectoryUnreadableError(
+                f"Cannot list the parameters directory {root}: {_reason(listing)}."
+            ) from listing
+        return
+    for name in sorted(names):
+        if not (name.isascii() and name.isdigit()):
+            continue
+        year_dir = root / name
+        try:
+            if not _is_directory(year_dir):
+                continue
+        except OSError as exc:
+            raise ParamDirectoryUnreadableError(
+                f"Cannot look up tax year {name} in the parameters directory {root}: "
+                f"{_reason(exc)}."
+            ) from exc
+        try:
+            list(year_dir.iterdir())
+        except OSError as exc:
+            raise ParamDirectoryUnreadableError(
+                f"Cannot list the parameters directory {year_dir}: {_reason(exc)}."
+            ) from exc

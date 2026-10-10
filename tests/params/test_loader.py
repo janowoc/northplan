@@ -13,12 +13,15 @@ plausible wrong number.
 from __future__ import annotations
 
 import datetime
+import errno
 import inspect
+import os
 import random
 import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
@@ -30,11 +33,13 @@ from engine.params.loader import (
     DuplicateYamlKeyError,
     MalformedParamFileError,
     MissingParameterError,
+    ParamDirectoryUnreadableError,
     ParamError,
     ParamFileMissingError,
     ParamSet,
     ParamYearMissingError,
     YamlConstructionError,
+    check_params_root,
     load_year,
     parse_yaml,
 )
@@ -652,6 +657,7 @@ def test_every_loader_error_is_a_param_error() -> None:
     """One exception root, so a caller can catch the whole category."""
     for error in (
         MissingParameterError,
+        ParamDirectoryUnreadableError,
         ParamFileMissingError,
         ParamYearMissingError,
         MalformedParamFileError,
@@ -1075,3 +1081,431 @@ def test_parse_yaml_keeps_repeated_keys_in_pairs() -> None:
 
 def test_omap_override_leaves_safe_load_alone() -> None:
     assert yaml.safe_load("o: !!omap [{a: 1}, {a: 2}]\n") == {"o": [("a", 1), ("a", 2)]}
+
+
+# --- Directories the operating system will not read ---------------------------
+
+DENIED = os.strerror(errno.EACCES)
+
+Lock = Callable[[Path, int], None]
+
+
+def _assert_refused(action: Callable[[], object]) -> None:
+    """The operating system, not the loader, refuses ``action`` with a ``PermissionError``."""
+    with pytest.raises(PermissionError):
+        action()
+
+
+def _lookup_message(year: int | str, root: Path) -> str:
+    return f"Cannot look up tax year {year} in the parameters directory {root}: {DENIED}."
+
+
+def _listing_message(directory: Path) -> str:
+    return f"Cannot list the parameters directory {directory}: {DENIED}."
+
+
+def _root_with_a_year(tmp_path: Path, params_root: Path, name: str = "root") -> Path:
+    """A fresh root inside ``tmp_path``, which is also the fixture's root.
+
+    It holds a copy of the fixture's 2030 directory.
+    """
+    root = tmp_path / name
+    shutil.copytree(params_root / "2030", root / "2030")
+    return root
+
+
+def test_a_root_that_cannot_be_entered_or_read_is_unreadable(params_root: Path, lock: Lock) -> None:
+    lock(params_root, 0o000)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, params_root)
+    assert str(exc.value) == _lookup_message(2030, params_root)
+
+
+def test_a_root_that_can_be_read_but_not_entered_is_unreadable(
+    params_root: Path, lock: Lock
+) -> None:
+    lock(params_root, 0o444)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, params_root)
+    assert str(exc.value) == _lookup_message(2030, params_root)
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["present", "absent"])
+def test_a_root_whose_parent_cannot_be_entered_is_unreadable(
+    tmp_path: Path, params_root: Path, lock: Lock, present: bool
+) -> None:
+    parent = tmp_path / "outer"
+    root = parent / "params"
+    if present:
+        shutil.copytree(params_root / "2030", root / "2030")
+    else:
+        parent.mkdir()
+        assert not root.exists()
+    lock(parent, 0o000)
+    _assert_refused(root.stat)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, root)
+    assert str(exc.value) == _lookup_message(2030, root)
+
+
+def test_a_root_that_can_be_entered_but_not_read_still_loads(params_root: Path, lock: Lock) -> None:
+    before = load_year(2030, params_root).names()
+    assert before == ("ab", "federal")
+    lock(params_root, 0o111)
+    _assert_refused(lambda: list(params_root.iterdir()))
+    assert load_year(2030, params_root).names() == before
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o111], ids=["000", "111"])
+def test_a_year_directory_that_cannot_be_listed_is_unreadable(
+    params_root: Path, lock: Lock, mode: int
+) -> None:
+    year_dir = params_root / "2030"
+    lock(year_dir, mode)
+    _assert_refused(lambda: list(year_dir.iterdir()))
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, params_root)
+    assert str(exc.value) == _listing_message(year_dir)
+
+
+def test_a_year_directory_that_can_be_read_but_not_entered_names_the_file(
+    params_root: Path, lock: Lock
+) -> None:
+    year_dir = params_root / "2030"
+    first = sorted(year_dir.glob("*.yaml"))[0]
+    lock(year_dir, 0o444)
+    assert first in list(year_dir.iterdir())  # the listing works
+    with pytest.raises(ParamFileMissingError) as exc:
+        load_year(2030, params_root)
+    assert str(exc.value).startswith(f"Cannot read parameter file {first}: ")
+
+
+def test_an_unreadable_parameter_file_is_a_file_error(params_root: Path, lock: Lock) -> None:
+    path = params_root / "2030" / "ab.yaml"
+    lock(path, 0o000)
+    with pytest.raises(PermissionError) as refused:
+        path.read_text(encoding="utf-8")
+    with pytest.raises(ParamFileMissingError) as exc:
+        load_year(2030, params_root)
+    assert str(exc.value) == f"Cannot read parameter file {path}: {refused.value}"
+
+
+def test_a_missing_year_under_a_root_that_cannot_be_listed_says_unknown(
+    params_root: Path, lock: Lock
+) -> None:
+    lock(params_root, 0o111)
+    _assert_refused(lambda: list(params_root.iterdir()))
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(1999, params_root)
+    assert str(exc.value).endswith(
+        f"Available years: unknown — {params_root} cannot be listed: {DENIED}."
+    )
+
+
+def test_a_missing_year_under_a_root_that_cannot_be_entered_is_unreadable(
+    params_root: Path, lock: Lock
+) -> None:
+    lock(params_root, 0o444)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(1999, params_root)
+    assert str(exc.value) == _lookup_message(1999, params_root)
+
+
+def _root_with_an_unlookable_year(tmp_path: Path, params_root: Path, lock: Lock) -> Path:
+    """A root whose ``2031`` is a symlink into a directory the process cannot enter."""
+    root = _root_with_a_year(tmp_path, params_root)
+    other = tmp_path / "other"
+    (other / "inner").mkdir(parents=True)
+    (root / "2031").symlink_to(other / "inner", target_is_directory=True)
+    lock(other, 0o000)
+    _assert_refused(lambda: (root / "2031").stat())
+    return root
+
+
+def test_a_year_entry_that_cannot_be_looked_up_is_left_out_of_the_available_years(
+    tmp_path: Path, params_root: Path, lock: Lock
+) -> None:
+    root = _root_with_an_unlookable_year(tmp_path, params_root, lock)
+    with pytest.raises(ParamYearMissingError) as with_link:
+        load_year(1999, root)
+    (root / "2031").unlink()
+    with pytest.raises(ParamYearMissingError) as without_link:
+        load_year(1999, root)
+    assert "2030" in str(with_link.value)
+    assert "2031" not in str(with_link.value)
+    assert str(with_link.value) == str(without_link.value)
+
+
+def test_a_root_that_is_a_symlink_loop_is_missing(tmp_path: Path) -> None:
+    root = tmp_path / "loop"
+    root.symlink_to("loop")
+    with pytest.raises(OSError) as raised:
+        root.stat()
+    assert raised.value.errno == errno.ELOOP
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(2030, root)
+    assert str(exc.value) == (
+        f"No parameters for tax year 2030: {root / '2030'} does not exist. "
+        "Available years: none — the params root itself does not exist."
+    )
+
+
+def test_a_year_that_is_a_symlink_loop_is_missing(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "1999").symlink_to(root / "1999")
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(1999, root)
+    assert "does not exist" in str(exc.value)
+
+
+def test_a_root_with_a_nul_byte_is_missing(tmp_path: Path) -> None:
+    with pytest.raises(ParamYearMissingError) as exc:
+        load_year(2030, tmp_path / "a\0b")
+    assert "the params root itself does not exist" in str(exc.value)
+
+
+def test_the_year_listing_matches_glob(tmp_path: Path) -> None:
+    year_dir = tmp_path / "2030"
+    year_dir.mkdir()
+    created = [
+        "a.yaml",
+        ".h.yaml",
+        ".yaml",
+        "b.YAML",
+        "c.yaml.bak",
+        "d.yml",
+        "n\n.yaml",
+        "a[1].yaml",
+        "*.yaml",
+        "x.yaml ",
+        "é.yaml",
+    ]
+    for name in created:
+        (year_dir / name).write_text("", encoding="utf-8")
+    (year_dir / "link.yaml").symlink_to(year_dir / "a.yaml")
+    (year_dir / "sub").mkdir()
+    (year_dir / "sub" / "nested.yaml").write_text("", encoding="utf-8")
+    matched = sorted(path.stem for path in year_dir.glob("*.yaml"))
+    assert len(matched) >= 8
+    assert sum(1 for name in [*created, "sub"] if Path(name).stem not in matched) >= 4
+    assert load_year(2030, tmp_path).names() == tuple(matched)
+
+
+@pytest.mark.parametrize("kind", ["directory", "broken link"])
+def test_a_directory_or_broken_link_named_yaml_is_a_file_error(tmp_path: Path, kind: str) -> None:
+    year_dir = tmp_path / "2030"
+    year_dir.mkdir()
+    path = year_dir / ("dir.yaml" if kind == "directory" else "broken.yaml")
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.symlink_to(year_dir / "absent")
+    with pytest.raises(ParamFileMissingError) as exc:
+        load_year(2030, tmp_path)
+    assert str(exc.value).startswith(f"Cannot read parameter file {path}: ")
+
+
+# --- check_params_root --------------------------------------------------------
+
+
+def test_check_passes_a_readable_root(tmp_path: Path, params_root: Path) -> None:
+    copy = tmp_path / "copy"
+    shutil.copytree(DEFAULT_PARAMS_ROOT, copy)
+    assert check_params_root(params_root) is None
+    assert check_params_root(copy) is None
+
+
+def test_check_passes_an_empty_readable_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    assert check_params_root(root) is None
+
+
+@pytest.mark.parametrize("kind", ["absent", "file"])
+def test_check_passes_a_root_that_does_not_exist_or_is_a_file(tmp_path: Path, kind: str) -> None:
+    root = tmp_path / "root"
+    if kind == "file":
+        root.write_text("not a directory\n", encoding="utf-8")
+    assert check_params_root(root) is None
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["present", "absent"])
+def test_check_refuses_a_root_whose_parent_cannot_be_entered(
+    tmp_path: Path, params_root: Path, lock: Lock, present: bool
+) -> None:
+    parent = tmp_path / "outer"
+    root = parent / "params"
+    if present:
+        shutil.copytree(params_root / "2030", root / "2030")
+    else:
+        parent.mkdir()
+        assert not root.exists()
+    lock(parent, 0o000)
+    _assert_refused(root.stat)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(root)
+    assert str(exc.value) == f"Cannot look up the parameters directory {root}: {DENIED}."
+
+
+def test_check_refuses_a_root_that_cannot_be_entered_or_read(params_root: Path, lock: Lock) -> None:
+    lock(params_root, 0o000)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(params_root)
+    assert str(exc.value) == _listing_message(params_root)
+
+
+def test_check_passes_a_root_that_can_be_entered_but_not_read(
+    params_root: Path, lock: Lock
+) -> None:
+    lock(params_root, 0o111)
+    _assert_refused(lambda: list(params_root.iterdir()))
+    assert check_params_root(params_root) is None
+
+
+def test_check_passes_a_root_that_can_be_entered_but_not_read_holding_an_unreadable_year(
+    params_root: Path, lock: Lock
+) -> None:
+    lock(params_root / "2030", 0o000)
+    lock(params_root, 0o111)
+    _assert_refused(lambda: list(params_root.iterdir()))
+    _assert_refused(lambda: list((params_root / "2030").iterdir()))
+    assert check_params_root(params_root) is None
+
+
+def test_check_passes_a_root_that_can_be_entered_but_not_read_holding_an_unlookable_year(
+    tmp_path: Path, params_root: Path, lock: Lock
+) -> None:
+    root = _root_with_an_unlookable_year(tmp_path, params_root, lock)
+    lock(root, 0o111)
+    _assert_refused(lambda: list(root.iterdir()))
+    _assert_refused(lambda: (root / "2031").stat())
+    assert check_params_root(root) is None
+
+
+def test_check_refuses_a_root_that_can_be_read_but_not_entered(
+    tmp_path: Path, params_root: Path, lock: Lock
+) -> None:
+    root = _root_with_a_year(tmp_path, params_root)
+    lock(root, 0o444)
+    assert [entry.name for entry in root.iterdir()] == ["2030"]
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(root)
+    assert str(exc.value) == _lookup_message(2030, root)
+
+
+def test_check_refuses_a_root_that_can_be_read_but_not_entered_holding_a_year_file(
+    tmp_path: Path, lock: Lock
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "2031").write_text("", encoding="utf-8")
+    lock(root, 0o444)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(root)
+    assert str(exc.value) == _lookup_message(2031, root)
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o111], ids=["000", "111"])
+def test_check_refuses_a_year_directory_that_cannot_be_listed(
+    params_root: Path, lock: Lock, mode: int
+) -> None:
+    year_dir = params_root / "2030"
+    lock(year_dir, mode)
+    _assert_refused(lambda: list(year_dir.iterdir()))
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(params_root)
+    assert str(exc.value) == _listing_message(year_dir)
+
+
+def test_check_skips_entries_not_named_as_years(tmp_path: Path, lock: Lock) -> None:
+    root = tmp_path / "root"
+    names = ["lost+found", "templates", "²"]
+    for name in names:
+        (root / name).mkdir(parents=True)
+    (root / "2031").write_text("not a directory\n", encoding="utf-8")
+    for name in names:
+        lock(root / name, 0o000)
+    _assert_refused(lambda: list((root / "lost+found").iterdir()))
+    assert check_params_root(root) is None
+
+
+@pytest.mark.parametrize("kind", ["year directory", "file"])
+def test_check_does_not_read_files(params_root: Path, lock: Lock, kind: str) -> None:
+    year_dir = params_root / "2030"
+    lock(
+        year_dir if kind == "year directory" else year_dir / "ab.yaml",
+        0o444 if kind == "year directory" else 0o000,
+    )
+    assert check_params_root(params_root) is None
+    with pytest.raises(ParamFileMissingError):
+        load_year(2030, params_root)
+
+
+def test_check_refuses_a_year_entry_that_cannot_be_looked_up(
+    tmp_path: Path, params_root: Path, lock: Lock
+) -> None:
+    root = _root_with_an_unlookable_year(tmp_path, params_root, lock)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(root)
+    assert str(exc.value) == _lookup_message(2031, root)
+
+
+def _too_long(tmp_path: Path) -> Path:
+    name_max = os.pathconf(tmp_path, "PC_NAME_MAX")
+    assert name_max > 0, "the filesystem reports no limit on a name's length"
+    return tmp_path / ("x" * (name_max + 1))
+
+
+def test_a_root_whose_name_is_too_long_is_unreadable(tmp_path: Path) -> None:
+    root = _too_long(tmp_path)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, root)
+    reason = os.strerror(errno.ENAMETOOLONG)
+    assert str(exc.value) == (
+        f"Cannot look up tax year 2030 in the parameters directory {root}: {reason}."
+    )
+
+
+def test_check_refuses_a_root_whose_name_is_too_long(tmp_path: Path) -> None:
+    root = _too_long(tmp_path)
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        check_params_root(root)
+    reason = os.strerror(errno.ENAMETOOLONG)
+    assert str(exc.value) == f"Cannot look up the parameters directory {root}: {reason}."
+
+
+def test_check_passes_a_root_that_can_be_read_but_not_entered_with_no_year(
+    tmp_path: Path, lock: Lock
+) -> None:
+    root = tmp_path / "root"
+    (root / "templates").mkdir(parents=True)
+    lock(root, 0o444)
+    _assert_refused((root / "templates").stat)
+    assert check_params_root(root) is None
+    with pytest.raises(ParamDirectoryUnreadableError) as exc:
+        load_year(2030, root)
+    assert str(exc.value) == _lookup_message(2030, root)
+
+
+@pytest.mark.parametrize("kind", ["loop", "nul"])
+def test_check_passes_a_root_that_is_a_symlink_loop_or_holds_a_nul_byte(
+    tmp_path: Path, kind: str
+) -> None:
+    if kind == "loop":
+        root = tmp_path / "loop"
+        root.symlink_to(root.name)
+    else:
+        root = tmp_path / "a\0b"
+    assert check_params_root(root) is None
+
+
+def test_check_passes_a_year_entry_that_is_a_symlink_loop(
+    tmp_path: Path, params_root: Path
+) -> None:
+    root = _root_with_a_year(tmp_path, params_root)
+    (root / "2031").symlink_to("2031")
+    with pytest.raises(OSError) as raised:
+        (root / "2031").stat()
+    assert raised.value.errno == errno.ELOOP
+    assert check_params_root(root) is None

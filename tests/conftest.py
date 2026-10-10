@@ -38,7 +38,9 @@ judged by the first test that requests it.
 from __future__ import annotations
 
 import functools
-from collections.abc import Iterator
+import os
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from types import MappingProxyType
 
 import pydantic
@@ -125,3 +127,25 @@ def _load_checks_on_every_build() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(engine.core.build, "_select_policy", _checked_select)
         yield
+
+
+@pytest.fixture
+def lock() -> Iterator[Callable[[Path, int], None]]:
+    """``lock(path, mode)`` chmods ``path`` for this test; modes are restored after it.
+
+    Skips the test for the superuser, whom directory permissions do not stop. Lock an
+    inner path before the directory holding it.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("the superuser is not stopped by directory permissions")
+    saved: list[tuple[Path, int]] = []
+
+    def _lock(path: Path, mode: int) -> None:
+        saved.append((path, path.stat().st_mode & 0o7777))
+        path.chmod(mode)
+
+    try:
+        yield _lock
+    finally:
+        for path, mode in reversed(saved):
+            path.chmod(mode)

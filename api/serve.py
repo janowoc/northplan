@@ -9,9 +9,10 @@ because the server has no authentication. ``--params`` and ``--example`` set
 module's own default. The parameters directory is checked before anything starts.
 
 Exit codes: 0 after the server stops on Ctrl-C; 1 on a parameters directory that does
-not exist or is not a directory; 2 on a usage error, with the message on stderr; 3, from
-uvicorn, when the server cannot start, for instance because the port is in use. On
-SIGTERM the process ends by the signal.
+not exist, is not a directory, or is refused by
+:func:`~engine.params.loader.check_params_root`; 2 on a usage error, with the message on
+stderr; 3, from uvicorn, when the server cannot start, for instance because the port is
+in use. On SIGTERM the process ends by the signal.
 """
 
 from __future__ import annotations
@@ -23,7 +24,11 @@ from pathlib import Path
 import uvicorn
 
 import api.main
-from engine.params.loader import DEFAULT_PARAMS_ROOT
+from engine.params.loader import (
+    DEFAULT_PARAMS_ROOT,
+    ParamDirectoryUnreadableError,
+    check_params_root,
+)
 
 
 def _port(text: str) -> int:
@@ -45,9 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         0 after the server stops on Ctrl-C; on SIGTERM the process ends by the signal
         instead. 1, after a message on stderr and with nothing started, when the
-        parameters directory (``--params``, else the engine's default) does not exist or
-        is not a directory; the message adds a line saying to pass ``--params`` when the
-        default was used.
+        parameters directory (``--params``, else the engine's default) does not exist, is
+        not a directory, or is refused by :func:`~engine.params.loader.check_params_root`;
+        the message adds a line saying to pass ``--params`` only when the directory does
+        not exist (or is not a directory) and the default was used.
 
     Raises:
         SystemExit: With code 2, on a usage error (argparse's own, a port outside 1 to
@@ -84,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = args.params if args.params is not None else DEFAULT_PARAMS_ROOT
+    try:
+        check_params_root(root)
+    except ParamDirectoryUnreadableError as error:
+        print(f"northplan-serve: error: {error}", file=sys.stderr)
+        return 1
     if not Path(root).is_dir():
         print(
             f"northplan-serve: error: the parameters directory {root} does not exist "
