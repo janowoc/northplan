@@ -28,11 +28,11 @@ commit.
 
 `.github/dependabot.yml` opens at most one pull request per ecosystem a month,
 grouping every update in it, and proposes a release only once it is seven days
-old. For `uv` it changes only `uv.lock`; the lower bounds in `pyproject.toml`
-stay as they are, and ruff is left alone. For `docker` it stays on Python 3.12:
-moving to a new minor version is an issue of its own. Dependabot security
-updates, a repository setting, open pull requests outside the monthly schedule
-and the seven-day wait.
+old, when the registry gives the release's date. For `uv` it changes only
+`uv.lock`; the lower bounds in `pyproject.toml` stay as they are, and ruff is
+left alone. For `docker` it stays on Python 3.12: moving to a new minor version
+is an issue of its own. Dependabot security updates, a repository setting, open
+pull requests outside the monthly schedule and the seven-day wait.
 
 The verifier agent reviews every Dependabot pull request before it is merged.
 When the pull request's CI fails at `tests/test_pins.py`, the failure names the
@@ -42,6 +42,13 @@ change is committed to the pull request's branch. A new Python patch can be
 newer than the pinned uv knows how to download; CI then fails at `uv sync`, not
 at `tests/test_pins.py`, and the `uv` stage and the `setup-uv` versions move in
 the same pull request.
+
+ghcr.io, where the uv image lives, gives Dependabot no release date, so the
+seven-day wait does not hold for the `uv` stage: Dependabot proposes a uv
+release however recent it is, and says at the top of the pull request that the
+cooldown could not be applied. Whenever a pull request says so, the review
+reads each release's date from the release notes in the pull request, and the
+pull request is merged only once every release in it is seven days old.
 
 ## By hand
 
