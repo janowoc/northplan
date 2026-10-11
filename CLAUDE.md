@@ -131,6 +131,9 @@
   or `Resolves` — those close the issue when the commit reaches the default
   branch, and closing an issue is mine alone. A commit that serves two issues
   names both.
+- A Dependabot pull request needs no issue and its merge carries no `Refs`
+  line; the `verifier` agent reviews its diff before I merge it, and a fix it
+  needs goes on the pull request's branch.
 
 ## Issues
 - You may read and comment on GitHub issues via `gh`.
