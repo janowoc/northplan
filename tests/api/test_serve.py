@@ -164,6 +164,173 @@ def test_an_example_that_is_a_directory_is_a_usage_error(
     assert recorder.calls == []
 
 
+def _last_line(capsys: pytest.CaptureFixture[str]) -> str:
+    return capsys.readouterr().err.rstrip("\n").splitlines()[-1]
+
+
+def test_an_example_file_of_mode_zero_is_a_usage_error(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str], lock: Lock
+) -> None:
+    path = tmp_path / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(path, 0o000)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == (
+        f"northplan-serve: error: --example {str(path)!r} cannot be read: {DENIED}."
+    )
+
+
+def test_an_example_in_a_directory_of_mode_zero_is_a_usage_error(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str], lock: Lock
+) -> None:
+    directory = tmp_path / "d"
+    directory.mkdir()
+    path = directory / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(directory, 0o000)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == (
+        f"northplan-serve: error: --example {str(path)!r} cannot be read: {DENIED}."
+    )
+
+
+def test_an_example_that_is_a_symlink_to_itself_is_a_usage_error(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "loop.yaml"
+    path.symlink_to(path)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == (
+        f"northplan-serve: error: --example {str(path)!r} "
+        f"cannot be read: {os.strerror(errno.ELOOP)}."
+    )
+
+
+def test_an_example_through_a_regular_file_is_not_a_file(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    through = tmp_path / "f"
+    through.write_text("x\n", encoding="utf-8")
+    path = through / "example.yaml"
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == f"northplan-serve: error: --example {str(path)!r} is not a file."
+
+
+def test_an_example_directory_is_not_a_file(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_serve(["--example", str(tmp_path)]) == 2
+    assert recorder.calls == []
+    assert (
+        _last_line(capsys) == f"northplan-serve: error: --example {str(tmp_path)!r} is not a file."
+    )
+
+
+def test_an_example_that_cannot_be_opened_is_a_usage_error(
+    recorder: Recorder,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("boom")
+
+    path = tmp_path / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "open", boom)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == (
+        f"northplan-serve: error: --example {str(path)!r} cannot be read: boom."
+    )
+
+
+def test_an_absent_example_is_not_a_file(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "absent.yaml"
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == f"northplan-serve: error: --example {str(path)!r} is not a file."
+
+
+def test_an_example_that_is_a_dangling_symlink_is_not_a_file(
+    recorder: Recorder, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "example.yaml"
+    path.symlink_to(tmp_path / "absent.yaml")
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == f"northplan-serve: error: --example {str(path)!r} is not a file."
+
+
+def test_an_example_fifo_is_not_a_file_and_is_not_opened(
+    recorder: Recorder,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unopened(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("the example was opened")
+
+    path = tmp_path / "example.yaml"
+    os.mkfifo(path)
+    monkeypatch.setattr(Path, "open", unopened)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == f"northplan-serve: error: --example {str(path)!r} is not a file."
+
+
+def test_an_example_lookup_error_without_a_reason_is_a_usage_error(
+    recorder: Recorder,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    original = Path.stat
+
+    def stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self == path:
+            raise OSError("boom")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert run_serve(["--example", str(path)]) == 2
+    assert recorder.calls == []
+    assert _last_line(capsys) == (
+        f"northplan-serve: error: --example {str(path)!r} cannot be read: boom."
+    )
+
+
+def test_an_example_in_an_enterable_unlistable_directory_starts(
+    recorder: Recorder, tmp_path: Path, lock: Lock
+) -> None:
+    directory = tmp_path / "d"
+    directory.mkdir()
+    path = directory / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(directory, 0o100)
+    assert api.serve.main(["--example", str(path)]) == 0
+    assert len(recorder.calls) == 1
+
+
+def test_an_unreadable_default_example_still_starts(
+    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock: Lock
+) -> None:
+    path = tmp_path / "example.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(path, 0o000)
+    monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+    assert api.serve.main([]) == 0
+    assert len(recorder.calls) == 1
+
+
 def test_a_missing_default_example_still_starts(
     recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

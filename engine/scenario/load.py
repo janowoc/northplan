@@ -49,6 +49,7 @@ __all__ = [
     "MalformedScenarioFileError",
     "ScenarioError",
     "ScenarioFileMissingError",
+    "ScenarioFileUnreadableError",
     "load_scenario",
     "scenario_from_text",
     "validation_message",
@@ -71,7 +72,15 @@ class ScenarioError(Exception):
 
 
 class ScenarioFileMissingError(ScenarioError):
-    """No file exists at the path given."""
+    """No file is found at the path given (ENOENT or ENOTDIR), or a directory is there."""
+
+
+class ScenarioFileUnreadableError(ScenarioError):
+    """Reading the path given failed with an ``OSError`` other than ENOENT, ENOTDIR or EISDIR.
+
+    For instance EACCES, when the file or a directory on the way to it refuses; ELOOP; or
+    ENAMETOOLONG. A file may or may not exist at the path.
+    """
 
 
 class MalformedScenarioFileError(ScenarioError):
@@ -121,7 +130,11 @@ def load_scenario(path: str | Path) -> Scenario:
         The validated, deeply immutable :class:`Scenario`.
 
     Raises:
-        ScenarioFileMissingError: No file at ``path``.
+        ScenarioFileMissingError: No file is found at ``path`` (ENOENT or ENOTDIR), or a
+            directory is there.
+        ScenarioFileUnreadableError: The read fails with any other ``OSError``, such as
+            EACCES, ELOOP or ENAMETOOLONG. The message gives the operating system's reason,
+            or the exception's own text when it carries none.
         MalformedScenarioFileError: Not valid UTF-8, not parseable as YAML,
             top level is not a mapping, a mapping repeats a key, the document
             refers to itself through a YAML alias, or it holds more than
@@ -134,10 +147,14 @@ def load_scenario(path: str | Path) -> Scenario:
     source = Path(path)
     try:
         text = source.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, NotADirectoryError) as exc:
         raise ScenarioFileMissingError(f"No scenario file at {source}.") from exc
     except IsADirectoryError as exc:
         raise ScenarioFileMissingError(f"{source} is a directory, not a scenario file.") from exc
+    except OSError as exc:
+        raise ScenarioFileUnreadableError(
+            f"Cannot read the scenario file at {source}: {exc.strerror or exc}."
+        ) from exc
     except UnicodeDecodeError as exc:
         raise MalformedScenarioFileError(
             f"{source} is not valid UTF-8: {exc}. Save it as UTF-8."

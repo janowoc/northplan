@@ -13,9 +13,12 @@ response models against the tables they mirror.
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib.metadata
 import json
+import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -779,6 +782,111 @@ class TestExample:
         response = client.get("/api/example")
         assert response.status_code == 404
         assert isinstance(response.json()["detail"], str)
+
+    def test_a_file_of_mode_zero_is_a_503(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        lock: Callable[[Path, int], None],
+    ) -> None:
+        path = tmp_path / "example.yaml"
+        path.write_text("x: 1\n", encoding="utf-8")
+        lock(path, 0o000)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        response = client.get("/api/example")
+        reason = os.strerror(errno.EACCES)
+        assert response.status_code == 503
+        assert response.json()["detail"] == f"cannot read the example scenario at {path}: {reason}."
+
+    def test_a_file_in_a_directory_of_mode_zero_is_a_503(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        lock: Callable[[Path, int], None],
+    ) -> None:
+        directory = tmp_path / "d"
+        directory.mkdir()
+        path = directory / "example.yaml"
+        path.write_text("x: 1\n", encoding="utf-8")
+        lock(directory, 0o000)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        response = client.get("/api/example")
+        reason = os.strerror(errno.EACCES)
+        assert response.status_code == 503
+        assert response.json()["detail"] == f"cannot read the example scenario at {path}: {reason}."
+
+    def test_a_symlink_to_itself_is_a_503(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "loop.yaml"
+        path.symlink_to(path)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        response = client.get("/api/example")
+        reason = os.strerror(errno.ELOOP)
+        assert response.status_code == 503
+        assert response.json()["detail"] == f"cannot read the example scenario at {path}: {reason}."
+
+    def test_a_directory_is_a_404(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", tmp_path)
+        response = client.get("/api/example")
+        assert response.status_code == 404
+        assert response.json()["detail"] == f"{tmp_path} is a directory, not a scenario file."
+
+    def test_a_path_through_a_regular_file_is_a_404(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        through = tmp_path / "f"
+        through.write_text("x\n", encoding="utf-8")
+        path = through / "s.yaml"
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        response = client.get("/api/example")
+        assert response.status_code == 404
+        assert response.json()["detail"] == f"no example scenario at {path}."
+
+    def test_an_error_without_a_reason_is_a_503(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*_args: object, **_kwargs: object) -> bytes:
+            raise OSError("boom")
+
+        path = tmp_path / "example.yaml"
+        path.write_text("x: 1\n", encoding="utf-8")
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        monkeypatch.setattr(Path, "read_bytes", boom)
+        response = client.get("/api/example")
+        assert response.status_code == 503
+        assert response.json()["detail"] == f"cannot read the example scenario at {path}: boom."
+
+    def test_a_fifo_is_a_404_and_is_not_read(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def unread(*_args: object, **_kwargs: object) -> bytes:
+            pytest.fail("the example was read")
+
+        path = tmp_path / "example.yaml"
+        os.mkfifo(path)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        monkeypatch.setattr(Path, "read_bytes", unread)
+        response = client.get("/api/example")
+        assert response.status_code == 404
+        assert response.json()["detail"] == f"{path} is not a regular file."
+
+    def test_a_character_device_is_a_404_and_is_not_read(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def unread(*_args: object, **_kwargs: object) -> bytes:
+            pytest.fail("the example was read")
+
+        path = Path(os.devnull)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        monkeypatch.setattr(Path, "read_bytes", unread)
+        response = client.get("/api/example")
+        assert response.status_code == 404
+        assert response.json()["detail"] == f"{path} is not a regular file."
 
 
 def test_health(client: TestClient) -> None:

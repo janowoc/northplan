@@ -13,16 +13,18 @@ their parameters from ``PARAMS_ROOT``, the engine's default unless ``northplan-s
 was given ``--params``; both are read per request. ``GET /health`` does not touch the
 engine.
 
-Status codes: 422 for whatever the command line refuses with exit 2 (a body that
-does not parse or validate, a scenario the load checks refuse, an unknown policy or
-query parameter, a missing preference, a bad option, a run over the engine's limits
+Status codes: 422 for whatever the command line refuses with exit 2 (a body that does
+not parse or validate, a scenario the load checks refuse, an unknown policy or query
+parameter, a missing preference, a bad option, a run over the engine's limits
 (:class:`~engine.mc.prepare.RunTooLargeError`)); 400 with the message for a
-:class:`~engine.params.loader.ParamError`, and for a Host other than loopback; 415 for
-a Content-Type that is neither JSON nor YAML, or a charset other than UTF-8; 413 for a
-body over ``MAX_BODY_BYTES``; 429 while another run is in progress. A
-:class:`~engine.core.indexation.RoutedParameterError` signals an engine bug and is
-not caught, so it surfaces as a 500. The engine work runs in a worker thread, off
-the event loop.
+:class:`~engine.params.loader.ParamError`, and for a Host other than loopback; 415 for a
+Content-Type that is neither JSON nor YAML, or a charset other than UTF-8; 413 for a
+body over ``MAX_BODY_BYTES``; 429 while another run is in progress. ``GET /api/example``
+answers 404 when no file is found at ``EXAMPLE_PATH`` (ENOENT or ENOTDIR) or what is
+there is not a regular file, and 503 when its lookup or read fails with any other
+``OSError``, such as EACCES. A :class:`~engine.core.indexation.RoutedParameterError`
+signals an engine bug and is not caught, so it surfaces as a 500. The engine work runs
+in a worker thread, off the event loop.
 
 The server is for one user on this machine. It bounds what one request can cost (the
 body's size, the run's paths and candidates, one run at a time, and the scenario
@@ -36,6 +38,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import inspect
+import stat
 import threading
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from contextlib import contextmanager
@@ -439,12 +442,32 @@ _OPTIMIZE_QUERY = _query_names(optimize)
 
 @app.get("/api/example")
 def example() -> Response:
-    """The file at ``EXAMPLE_PATH``, as it is on disk; 404 when it does not exist."""
+    """The file at ``EXAMPLE_PATH``, as it is on disk.
+
+    Raises:
+        HTTPException: 404 when no file is found there (ENOENT or ENOTDIR) or what is there
+            is not a regular file, such as a directory or a FIFO, which is not read; 503
+            when the lookup or the read fails with any other ``OSError``, such as EACCES,
+            ELOOP or ENAMETOOLONG, with the operating system's reason in the detail, or the
+            exception's own text when it carries none.
+    """
     try:
+        mode = EXAMPLE_PATH.stat().st_mode
+        if stat.S_ISDIR(mode):
+            raise HTTPException(
+                status_code=404, detail=f"{EXAMPLE_PATH} is a directory, not a scenario file."
+            )
+        if not stat.S_ISREG(mode):
+            raise HTTPException(status_code=404, detail=f"{EXAMPLE_PATH} is not a regular file.")
         content = EXAMPLE_PATH.read_bytes()
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, NotADirectoryError) as exc:
         raise HTTPException(
             status_code=404, detail=f"no example scenario at {EXAMPLE_PATH}."
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"cannot read the example scenario at {EXAMPLE_PATH}: {exc.strerror or exc}.",
         ) from exc
     return Response(content=content, media_type="application/yaml; charset=utf-8")
 

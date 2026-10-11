@@ -32,6 +32,7 @@ from engine.scenario.load import (
     MalformedScenarioFileError,
     ScenarioError,
     ScenarioFileMissingError,
+    ScenarioFileUnreadableError,
     load_scenario,
 )
 from engine.scenario.schema import (
@@ -106,6 +107,7 @@ __all__ = [
     "Scenario",
     "ScenarioError",
     "ScenarioFileMissingError",
+    "ScenarioFileUnreadableError",
     "Spending",
     "SpendingBand",
     "StartAgeNotAllowedError",

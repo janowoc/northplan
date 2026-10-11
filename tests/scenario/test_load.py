@@ -13,14 +13,18 @@ the mechanisms it exists for.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import engine.scenario
+import engine.scenario.load
 from engine.core.build import build_initial_state
 from engine.core.indexation import real_year
 from engine.core.mortality import months_to_terminal
@@ -33,6 +37,7 @@ from engine.scenario import (
     Scenario,
     ScenarioError,
     ScenarioFileMissingError,
+    ScenarioFileUnreadableError,
     check_lifespan,
     check_start_ages,
     load_scenario,
@@ -96,6 +101,106 @@ def test_a_missing_file_names_the_path(tmp_path: Path) -> None:
         load_scenario(absent)
 
     assert str(absent) in str(excinfo.value)
+
+
+def test_a_file_of_mode_zero_is_unreadable(
+    tmp_path: Path, lock: Callable[[Path, int], None]
+) -> None:
+    """A file the operating system refuses is reported with its reason, not a traceback."""
+    path = tmp_path / "s.yaml"
+    path.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    lock(path, 0o000)
+
+    with pytest.raises(ScenarioFileUnreadableError) as excinfo:
+        load_scenario(path)
+
+    reason = os.strerror(errno.EACCES)
+    assert str(excinfo.value) == f"Cannot read the scenario file at {path}: {reason}."
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+
+
+def test_a_file_in_a_directory_of_mode_zero_is_unreadable(
+    tmp_path: Path, lock: Callable[[Path, int], None]
+) -> None:
+    """A readable file behind a directory that refuses entry is unreadable."""
+    directory = tmp_path / "d"
+    directory.mkdir()
+    path = directory / "s.yaml"
+    path.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    lock(directory, 0o000)
+
+    with pytest.raises(ScenarioFileUnreadableError) as excinfo:
+        load_scenario(path)
+
+    reason = os.strerror(errno.EACCES)
+    assert str(excinfo.value) == f"Cannot read the scenario file at {path}: {reason}."
+
+
+def test_an_absent_file_in_a_directory_of_mode_zero_is_unreadable_not_missing(
+    tmp_path: Path, lock: Callable[[Path, int], None]
+) -> None:
+    """Behind a directory that refuses entry, a file may or may not exist."""
+    directory = tmp_path / "d"
+    directory.mkdir()
+    path = directory / "absent.yaml"
+    lock(directory, 0o000)
+
+    with pytest.raises(ScenarioFileUnreadableError) as excinfo:
+        load_scenario(path)
+
+    assert not isinstance(excinfo.value, ScenarioFileMissingError)
+    reason = os.strerror(errno.EACCES)
+    assert str(excinfo.value) == f"Cannot read the scenario file at {path}: {reason}."
+
+
+def test_a_symlink_to_itself_is_unreadable(tmp_path: Path) -> None:
+    """A symlink loop is reported with the operating system's reason."""
+    path = tmp_path / "loop.yaml"
+    path.symlink_to(path)
+
+    with pytest.raises(ScenarioFileUnreadableError) as excinfo:
+        load_scenario(path)
+
+    reason = os.strerror(errno.ELOOP)
+    assert str(excinfo.value) == f"Cannot read the scenario file at {path}: {reason}."
+
+
+def test_a_path_through_a_regular_file_is_missing(tmp_path: Path) -> None:
+    """A path that goes through a file finds no scenario file there."""
+    through = tmp_path / "f"
+    through.write_text("x\n", encoding="utf-8")
+    path = through / "s.yaml"
+
+    with pytest.raises(ScenarioFileMissingError) as excinfo:
+        load_scenario(path)
+
+    assert str(excinfo.value) == f"No scenario file at {path}."
+
+
+def test_an_error_without_a_reason_is_reported_by_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ``OSError`` with no ``strerror`` gives its own text as the reason."""
+
+    def boom(*_args: object, **_kwargs: object) -> str:
+        raise OSError("boom")
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    path = tmp_path / "s.yaml"
+
+    with pytest.raises(ScenarioFileUnreadableError) as excinfo:
+        load_scenario(path)
+
+    assert str(excinfo.value) == f"Cannot read the scenario file at {path}: boom."
+
+
+def test_the_unreadable_error_is_a_scenario_error_but_not_a_missing_one() -> None:
+    """It sits beside the missing error under ``ScenarioError`` and is exported."""
+    assert issubclass(ScenarioFileUnreadableError, ScenarioError)
+    assert not issubclass(ScenarioFileUnreadableError, ScenarioFileMissingError)
+    assert engine.scenario.ScenarioFileUnreadableError is (
+        engine.scenario.load.ScenarioFileUnreadableError
+    )
 
 
 def test_a_directory_is_not_a_scenario(tmp_path: Path) -> None:

@@ -836,6 +836,31 @@ class TestScenarioRefusals:
         stderr = self.check_exit([str(tmp_path / "absent.yaml")], tmp_path, capsys, 2)
         assert "No scenario file at" in stderr
 
+    def test_a_scenario_file_of_mode_zero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], lock: Callable[[Path, int], None]
+    ) -> None:
+        path = tmp_path / "scenario.yaml"
+        shutil.copyfile(EXAMPLE, path)
+        lock(path, 0o000)
+        stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
+        reason = os.strerror(errno.EACCES)
+        assert stderr == f"northplan: error: Cannot read the scenario file at {path}: {reason}.\n"
+
+    def test_a_scenario_file_in_a_directory_of_mode_zero(
+        self,
+        tmp_path: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        capsys: pytest.CaptureFixture[str],
+        lock: Callable[[Path, int], None],
+    ) -> None:
+        directory = tmp_path_factory.mktemp("locked")
+        path = directory / "scenario.yaml"
+        shutil.copyfile(EXAMPLE, path)
+        lock(directory, 0o000)
+        stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
+        reason = os.strerror(errno.EACCES)
+        assert stderr == f"northplan: error: Cannot read the scenario file at {path}: {reason}.\n"
+
     def test_malformed_yaml(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         path = tmp_path / "scenario.yaml"
         path.write_text("name: [unclosed\n", encoding="utf-8")

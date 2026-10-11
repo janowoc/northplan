@@ -18,6 +18,7 @@ in use. On SIGTERM the process ends by the signal.
 from __future__ import annotations
 
 import argparse
+import stat
 import sys
 from pathlib import Path
 
@@ -41,6 +42,30 @@ def _port(text: str) -> int:
     return value
 
 
+def _check_example(parser: argparse.ArgumentParser, path: Path) -> None:
+    """Return if ``path`` is a regular file that can be opened for reading; else exit 2.
+
+    Exits through ``parser.error``: "is not a file" when the lookup of ``path`` fails with
+    ENOENT or ENOTDIR or finds something other than a regular file; "cannot be read" when
+    the lookup fails with any other ``OSError`` or the open does, with the operating
+    system's reason, or the exception's own text when it carries none. Reads nothing from
+    the file.
+    """
+    try:
+        mode = path.stat().st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        parser.error(f"--example {str(path)!r} is not a file.")
+    except OSError as exc:
+        parser.error(f"--example {str(path)!r} cannot be read: {exc.strerror or exc}.")
+    if not stat.S_ISREG(mode):
+        parser.error(f"--example {str(path)!r} is not a file.")
+    try:
+        with path.open("rb"):
+            pass
+    except OSError as exc:
+        parser.error(f"--example {str(path)!r} cannot be read: {exc.strerror or exc}.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point.
 
@@ -57,8 +82,9 @@ def main(argv: list[str] | None = None) -> int:
 
     Raises:
         SystemExit: With code 2, on a usage error (argparse's own, a port outside 1 to
-            65535, or an ``--example`` that is not a file). With code 3, from uvicorn,
-            when the server cannot start, for instance because the port is in use.
+            65535, or an ``--example`` that is not a regular file or cannot be read). With
+            code 3, from uvicorn, when the server cannot start, for instance because the
+            port is in use.
     """
     parser = argparse.ArgumentParser(
         prog="northplan-serve",
@@ -108,8 +134,8 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         return 1
-    if args.example is not None and not args.example.is_file():
-        parser.error(f"--example {str(args.example)!r} is not a file.")
+    if args.example is not None:
+        _check_example(parser, args.example)
 
     if args.params is not None:
         api.main.PARAMS_ROOT = args.params
