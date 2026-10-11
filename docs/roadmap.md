@@ -106,6 +106,7 @@ belongs. `--standalone` writes a full document for a browser.
 | 84 | Run the engine in the browser: a static Pyodide build of the web page | agent, human | — | a push to `main` deploys a page that runs the example scenario in the browser; its document equals the API's |
 | 85 | A parameters directory the loader cannot read is a traceback or a misleading message, not a parameter error | agent | 80 | an unreadable root or year directory is exit 1 and a 400 naming it, never a traceback or a 500 |
 | 86 | An unreadable scenario file is a traceback or a 500, not a scenario error | agent | 80 | an unreadable scenario or example file is a one-line refusal naming it from the CLI, the API and `northplan-serve`, never a traceback or a 500 |
+| 88 | A push to a pull request's branch runs the test suite twice | agent | 79 | a push to a pull request's branch in this repository runs each job once; forks, `main` and tags run as before |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -475,6 +476,13 @@ command line, by `GET /api/example`, and by `northplan-serve --example`. It
 lay outside 85's area, so it is an issue of its own. It sits right after 85,
 whose decisions it can follow, depends on 80, which added `--example`, and
 blocks nothing.
+
+88 came from the first Dependabot pull request, 87, which 81 turned on. A
+push to a branch of this repository that has a pull request runs the workflow
+for both the `push` and the `pull_request` event, so the suite runs twice; the
+triggers are 79's. It sits right after 81, whose monthly pull requests make it
+frequent, depends on 79, and blocks nothing. 87 is not an issue: it is that
+pull request.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
