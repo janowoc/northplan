@@ -25,6 +25,7 @@ dev = [
     "httpx2>=2.13",
     "ruff==0.16.4",
     "setuptools>=77",
+    "pip>=24",
 ]
 
 [project.scripts]
@@ -55,6 +56,11 @@ packages = [
 
 [tool.setuptools.package-data]
 "api.web" = ["*"]
+
+[tool.uv]
+# The build backend uv builds this project with, held at the setuptools that
+# uv.lock pins for the dev extra; tests/test_pins.py checks the two agree.
+build-constraint-dependencies = ["setuptools==84.0.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

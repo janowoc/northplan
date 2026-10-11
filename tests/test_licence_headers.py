@@ -42,7 +42,10 @@ IN_SCOPE_NAMES = frozenset({"Dockerfile"})
 #: exempt for the same reason: a list of commit hashes for ``git blame``, not
 #: source. The golden source workbook is an ODF package — a zip — and any text
 #: prepended to it stops it being one; its licence travels with the repository
-#: it is only ever read from.
+#: it is only ever read from. ``uv.lock`` is written by uv, which rewrites the
+#: whole file whenever the lock changes and drops anything added to it.
+#: ``.python-version`` is a one-line tool file holding the Python version, which
+#: tests/test_pins.py compares whole.
 EXEMPT = frozenset(
     {
         "LICENSE",
@@ -51,6 +54,8 @@ EXEMPT = frozenset(
         ".git-blame-ignore-revs",
         "tests/characterization/.gitkeep",
         "tests/golden/sources/2026.ods",
+        ".python-version",
+        "uv.lock",
     }
 )
 
@@ -198,6 +203,8 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
         ".git-blame-ignore-revs",
         "tests/characterization/.gitkeep",
         "tests/golden/sources/2026.ods",
+        ".python-version",
+        "uv.lock",
     }
 
     assert agreed == EXEMPT, (

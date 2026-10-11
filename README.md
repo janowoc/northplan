@@ -214,12 +214,17 @@ it they belong to root.
 Locally, without Docker:
 
 ```sh
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --locked --extra dev
+. .venv/bin/activate
 pytest
 ruff check .
 ruff format .
 ```
+
+This needs [uv](https://docs.astral.sh/uv/). `uv sync --locked` installs the
+versions in `uv.lock` on the Python in `.python-version`, the ones the image
+and CI use. [docs/maintenance.md](docs/maintenance.md) says how each pinned
+version is updated.
 
 Run a scenario from the command line:
 

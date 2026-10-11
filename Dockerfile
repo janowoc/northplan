@@ -7,16 +7,20 @@
 # and silently ignored: no error, just the default frontend. There is no such
 # directive today.
 
+# uv installs the locked packages. It is a stage of its own so that its pin is a
+# FROM line, and it is mounted for the one RUN that uses it, so it is not in the
+# image.
+FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
+
 # One container: the API and the static files it serves.
-FROM python:3.12-slim
+FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY engine/ engine/
 COPY api/ api/
 COPY cli/ cli/
@@ -24,11 +28,14 @@ COPY report/ report/
 COPY params/ params/
 COPY scenarios/example.yaml scenarios/
 
-# Editable, so that the installed code is /app's: the `northplan` command and
+# The versions in uv.lock, into the image's own Python. The project goes in
+# editable, so that the installed code is /app's: the `northplan` command and
 # the server both default to /app/params, and the server to
 # /app/scenarios/example.yaml, the paths compose mounts over. A plain install
 # would put a second copy of the code in site-packages, where neither exists.
-RUN pip install --upgrade pip && pip install -e .
+RUN --mount=from=uv,source=/uv,target=/bin/uv \
+    UV_PROJECT_ENVIRONMENT=/usr/local UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
+    uv sync --locked --no-cache
 
 # The image carries params/ and scenarios/example.yaml (what /api/example
 # serves), so it runs without a checkout. docker-compose bind-mounts ./params

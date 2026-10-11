@@ -6,6 +6,7 @@
 # ghcr.io only from main and v* tags, after the tests pass. Uses GITHUB_TOKEN
 # and no other secret. Every action is pinned to a commit; the comment names
 # its release. The QEMU image, buildx and BuildKit are pinned too.
+# docs/maintenance.md says how each pin is updated.
 
 name: docker-image
 
@@ -33,9 +34,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.12"
+          version: "0.12.23"
+          enable-cache: false
+      # The Python version is the one in .python-version, the base image's
+      # patch.
+      - run: uv sync --locked --extra dev
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: The tag is v followed by the version in pyproject.toml
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -51,7 +57,6 @@ jobs:
           if tag != f"v{version}":
               sys.exit(f"tag {tag!r} does not match {version!r}, the version in pyproject.toml")
           PY
-      - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest
 
@@ -70,6 +75,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.23"
+          enable-cache: false
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
@@ -97,12 +106,21 @@ jobs:
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,mode=max,scope=arm64
       # From /, so that the import and the parameters resolve through the
-      # install rather than the working directory.
-      - name: Smoke test, each image imports the app and runs the example
+      # install rather than the working directory. Each image must hold the
+      # runtime packages in uv.lock and, besides the base image's pip, nothing
+      # else. The lock's environment markers are dropped, so a dependency it
+      # holds only for another platform makes this step fail.
+      - name: Smoke test, each image runs the example and holds the locked packages
         run: |
+          set -euo pipefail
+          norm() { sed 's/ *;.*//' | awk -F'==' 'NF==0 {next} NF!=2 {print "cannot read: " $0 > "/dev/stderr"; exit 1} {n=tolower($1); gsub(/[-_.]+/,"-",n); print n"=="$2}' | sort; }
+          uv export --locked --no-dev --no-hashes --no-emit-project --no-header --no-annotate --quiet | norm > "$RUNNER_TEMP/locked.txt"
+          test -s "$RUNNER_TEMP/locked.txt"
           for arch in amd64 arm64; do
             docker run --rm --platform "linux/$arch" "northplan:smoke-$arch" sh -c \
               'cd / && python -c "import api.main" && northplan simulate /app/scenarios/example.yaml --paths 10 --out /tmp/smoke.csv'
+            docker run --rm --platform "linux/$arch" "northplan:smoke-$arch" pip freeze --all --exclude-editable | grep -v '^pip==' | norm > "$RUNNER_TEMP/frozen-$arch.txt"
+            diff "$RUNNER_TEMP/locked.txt" "$RUNNER_TEMP/frozen-$arch.txt"
           done
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request'
@@ -126,8 +144,8 @@ jobs:
           # AGPL-3.0-or-later.
           labels: |
             org.opencontainers.image.licenses=AGPL-3.0-or-later
-      # Normally a rebuild from the smoke builds' cache; on a cache miss, a
-      # fresh build that was not smoke-tested.
+      # Normally a rebuild from the smoke builds' cache; on a cache miss, a fresh
+      # build from the same lock and base image that was not smoke-tested.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .

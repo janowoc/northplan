@@ -1312,7 +1312,9 @@ class TestConsoleScript:
     def test_installed_script_runs_the_example(self, tmp_path: Path) -> None:
         script = Path(sys.executable).parent / "northplan"
         if not script.exists():
-            pytest.fail(f"the console script {script} is missing; run `pip install -e .`.")
+            pytest.fail(
+                f"the console script {script} is missing; run `uv sync --locked --extra dev`."
+            )
         out = tmp_path / "x.csv"
         completed = subprocess.run(
             [
