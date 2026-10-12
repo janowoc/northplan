@@ -107,6 +107,8 @@ belongs. `--standalone` writes a full document for a browser.
 | 85 | A parameters directory the loader cannot read is a traceback or a misleading message, not a parameter error | agent | 80 | an unreadable root or year directory is exit 1 and a 400 naming it, never a traceback or a 500 |
 | 86 | An unreadable scenario file is a traceback or a 500, not a scenario error | agent | 80 | an unreadable scenario or example file is a one-line refusal naming it from the CLI, the API and `northplan-serve`, never a traceback or a 500 |
 | 88 | A push to a pull request's branch runs the test suite twice | agent | 79 | a push to a pull request's branch in this repository runs each job once; forks, `main` and tags run as before |
+| 89 | Retire the roadmap: archive this file and stop registering new issues | agent | — | this file is archived and not updated; `CLAUDE.md` no longer asks for a new issue to be registered anywhere |
+| 90 | Serve LAN clients that present a token; loopback stays token-free | agent, human | — | a LAN client is refused without the token and served with it; a loopback client with a loopback Host needs none |
 
 Parallel tracks: 1→2, 3, 4→5, 9, 10→11, 13 can all start at once. The human
 track is 1, 5, 6, 7, then 15, 17, 21. Everything in the engine funnels into
@@ -483,6 +485,15 @@ for both the `push` and the `pull_request` event, so the suite runs twice; the
 triggers are 79's. It sits right after 81, whose monthly pull requests make it
 frequent, depends on 79, and blocks nothing. 87 is not an issue: it is that
 pull request.
+
+89 and 90 came from the owner on 2026-10-11, after v0.1.0. 89 archives this
+file: with a first version published, the open issues can be worked in
+almost any order, and a new issue will say where it came from in its own
+body. 90 came from running the image on one computer and opening it from
+another on the same network, which the server's Host check refuses; it lets a
+client that presents a shared token in, and keeps the check for loopback.
+Serving HTTPS is still under discussion and has no issue. Both sit right after
+82, 89 first, and depend on and block nothing.
 
 The two rules behind 65 and 67 were checked against the statutes rather than
 inferred: CPP s.67(3.1), and OAS Act s.8(1) with the OAS Regulations s.5, for
