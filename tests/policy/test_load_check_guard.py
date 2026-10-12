@@ -6,10 +6,10 @@
 The refusal tests build through this module's own by-name import of
 ``build_initial_state``, the way most tests do; one test also builds through a
 module attribute, a ``functools.partial``, a class attribute and a default
-argument. The ``pytester`` tests run a copy of the guard in
-an inner session, in process, under the repository's ``pyproject.toml``. They
-opt out of the outer guard, so that the copy alone decides what the inner
-session checks.
+argument. The ``pytester`` tests run a copy of the guard in an inner session,
+in process, under the repository's ``pyproject.toml`` without pytest-xdist
+workers. They opt out of the outer guard, so that the copy alone decides what
+the inner session checks.
 """
 
 from __future__ import annotations
@@ -210,7 +210,8 @@ def _inner_session(
     """Run ``files`` (paths under ``tests/``) beside a copy of the guard, in process.
 
     The calling test must opt out of the outer guard; the outer guard's patch must be
-    the same object after the inner session as before it.
+    the same object after the inner session as before it. ``--numprocesses=0``
+    overrides the copied ``addopts``, which would hand the session to pytest-xdist.
     """
     assert request.node.get_closest_marker("unchecked_scenario") is not None
     outer_select = engine.core.build._select_policy
@@ -221,7 +222,11 @@ def _inner_session(
         path = tests / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    recorder = pytester.inline_run()
+    recorder = pytester.inline_run("--numprocesses=0")
+    inner = recorder.getcall("pytest_sessionstart").session.config
+    assert not inner.pluginmanager.hasplugin("dsession"), (
+        "the inner session ran under pytest-xdist; it must run in process"
+    )
     assert engine.core.build._select_policy is outer_select
     return recorder
 

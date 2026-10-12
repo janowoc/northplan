@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.8",
     "httpx2>=2.13",
     "ruff==0.16.4",
     "setuptools>=77",
@@ -65,10 +66,15 @@ build-constraint-dependencies = ["setuptools==84.0.0"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Runs on as many workers as -n auto picks, at most 8; pytest -n 0 runs
+# serially.
 addopts = [
     "--strict-markers",
     "--strict-config",
     "-ra",
+    "--numprocesses=auto",
+    "--maxprocesses=8",
+    "--dist=loadscope",
 ]
 markers = [
     "golden: expected values supplied by the human in tests/golden/cases. Never edit one to make a test pass.",

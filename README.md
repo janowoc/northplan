@@ -226,6 +226,10 @@ versions in `uv.lock` on the Python in `.python-version`, the ones the image
 and CI use. [docs/maintenance.md](docs/maintenance.md) says how each pinned
 version is updated.
 
+`pytest` runs the tests on as many worker processes as `-n auto` picks, at
+most eight; a larger `-n` also needs a larger `--maxprocesses`. `pytest -n 0`
+runs them serially.
+
 Run a scenario from the command line:
 
 ```sh
