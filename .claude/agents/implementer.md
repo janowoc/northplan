@@ -116,4 +116,5 @@ and it keeps you running after you have reported. So:
 - Household is a list of persons, always, even for a single-person scenario.
 - One logical change per commit; conventional commit messages.
 - Do not add dependencies without asking.
-- You may read and comment on GitHub issues via `gh`. You may NEVER close one.
+- You may read GitHub issues and pull requests via `gh`. You never open, post
+  to, close or merge one.

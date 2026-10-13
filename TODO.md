@@ -3,10 +3,10 @@
 
 # Outstanding work
 
-Planned work is tracked as GitHub issues, in the order given in
-`docs/roadmap.md`. Simplifications that are decided rather than pending are
-in `docs/limitations.md`. This file holds only what is neither: things known
-to be missing that are not scheduled and not accepted as permanent.
+Planned work is tracked as GitHub issues. Simplifications that are decided
+rather than pending are in `docs/limitations.md`. This file holds only what
+is neither: things known to be missing that are not scheduled and not
+accepted as permanent.
 
 Nothing here is a parameter value. Where a value is needed, the item says
 which source to check, never what the answer is.

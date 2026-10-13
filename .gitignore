@@ -226,6 +226,3 @@ __marimo__/
 #   Result exports
 *.results.json
 *.results.csv
-
-#   Generated roadmap page; regenerate with `python docs/roadmap_page.py`
-docs/roadmap.html

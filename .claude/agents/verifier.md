@@ -176,8 +176,9 @@ Review in this order, and grep aggressively rather than trusting a read:
    month, and the first and last simulated year, which are not the same
    boundaries.
 
-Run the test suite. A passing suite is not evidence of correctness — say so
-when the tests do not cover what you were checking.
+Run the test suite, unless the brief says the change comes from a fork: then
+run nothing. A passing suite is not evidence of correctness — say so when the
+tests do not cover what you were checking.
 
 ## Output format
 

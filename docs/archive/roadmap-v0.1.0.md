@@ -1,6 +1,20 @@
 <!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
+> **Archived on 2026-10-12, after v0.1.0.** This is the ordered plan that built
+> the first version, and it is not updated. The last issue it registers is 90.
+> Its table runs in issue-number order; the 82 issues closed by the time it was
+> archived were closed in this order: 1, 2, 3, 25, 4, 26, 5, 9, 27, 6, 28, 7,
+> 8, 10, 11, 12, 13, 30, 31, 37, 32, 38, 33, 29, 34, 14, 39, 16, 40, 41, 42,
+> 15, 43, 44, 46, 45, 47, 17, 48, 18, 49, 51, 52, 54, 58, 59, 53, 19, 50, 55,
+> 60, 35, 36, 57, 20, 61, 62, 63, 64, 70, 71, 72, 65, 73, 66, 74, 75, 67, 68,
+> 76, 77, 22, 23, 24, 78, 79, 80, 85, 86, 81, 82, 88. The six still open (21,
+> 56, 69, 84, 89 and 90) stay open in the tracker, with no order among them.
+> The script that rendered the plan as a page with the live issue text was
+> deleted when the roadmap was archived;
+> `git show 2abc12b:docs/roadmap_page.py` prints it. The planned order, which
+> differs for the closed issues, is `EXECUTION_ORDER` in that script.
+
 # Roadmap
 
 The ordered sequence of work toward a first end-to-end version. Each step is a

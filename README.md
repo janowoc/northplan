@@ -30,8 +30,9 @@ loader, the scenario schema and loader, and all of `engine/tax/`,
 `engine/policy/` and `engine/optimize/` are implemented, the monthly step, the
 run loop and the policy search included. `cli/` runs `northplan simulate` and
 `northplan optimize`, and `api/` serves both over HTTP, with a web page that
-runs a scenario and draws its fan chart. The build order is `docs/roadmap.md`;
-each step is a GitHub issue. Known simplifications are listed in
+runs a scenario and draws its fan chart. Planned work is tracked as GitHub
+issues; the ordered plan that built the first version is archived in
+`docs/archive/roadmap-v0.1.0.md`. Known simplifications are listed in
 `docs/limitations.md`, and a change that adds one adds its entry there.
 
 Still to do: checking the engine's figures by hand, in a spreadsheet of the
@@ -111,7 +112,8 @@ api/             FastAPI, thin. Serves api/web/ via StaticFiles; northplan-serve
   web/           plain HTML + Alpine.js + Plotly from CDN. No build step
 cli/             YAML scenario in, results out
 scenarios/       example.yaml is committed; *.local.yaml is gitignored
-docs/            roadmap.md (build order), limitations.md (every simplification)
+docs/            limitations.md (every simplification), maintenance.md (pins)
+  archive/       the roadmap that built v0.1.0, not updated
 tests/golden/    cases whose expected values the human supplied — sacred
 tests/character*/ behaviour snapshots, regenerated only on instruction
 tests/params/    structural and provenance tests over the real parameter files
@@ -246,10 +248,11 @@ pass `--params DIR`, the directory holding one subdirectory per tax year, to
 `northplan simulate`, `northplan optimize` and `northplan-serve`, and
 `--example FILE` to `northplan-serve` for the page's example scenario.
 
-## Build order
+## Development
 
-Engine first, UI last. The ordered list of steps, each a GitHub issue with
-its owner and success criteria, is `docs/roadmap.md`.
+Each piece of work is a GitHub issue or an open pull request. The first
+version was built engine first, UI last, in the order archived in
+`docs/archive/roadmap-v0.1.0.md`.
 
 **RESP sanity check:** contributions up to the CESG maximum should beat
 smaller ones whenever the plan is spent on education: a guaranteed match is

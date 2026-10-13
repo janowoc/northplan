@@ -56,9 +56,9 @@ from engine.tax.combined import household_assessment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The committed single-person example. Every later issue that does not need a
-#: second person runs against this file, so a change that stops it loading
-#: breaks the whole roadmap below issue 10, not just here.
+#: The committed single-person example. Tests of the engine, the CLI and the
+#: API run against this file, so a change that stops it loading breaks them
+#: too, not just here.
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
 
 #: The committed two-person fixture: the couple decumulation path, used

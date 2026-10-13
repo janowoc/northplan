@@ -37,8 +37,6 @@
   "in reality X; we model Y", with the direction of the error. A change that
   cuts a corner adds its entry there in the same commit. A change that removes
   a simplification deletes the entry. Cite entries from code as `L12`.
-- The sequence of work is `docs/roadmap.md`, and each step is a GitHub issue.
-  Do not start work that is not an issue.
 
 ## Conventions the engine holds everywhere
 - Real dollars are January dollars of the scenario's start year. The two
@@ -85,15 +83,17 @@
   `pyproject.toml`; a version bump is a commit of its own that reformats the
   tree.
 
-## Doing the work on an issue
-- When I ask for work on an issue, the default is that you dispatch the
-  `implementer` agent to write it and then the `verifier` agent to review it.
-  Do it yourself only when I say so. The patches come out better this way: the
-  main thread stays free to hold the design and to argue with the review,
-  instead of also being the hand that types.
+## Doing the work on an issue or a pull request
+- Each piece of work is a GitHub issue or an open pull request. Do not start
+  work that is neither.
+- When I ask for work on an issue or a pull request, the default is that you
+  dispatch the `implementer` agent to write it and then the `verifier` agent
+  to review it. Do it yourself only when I say so. The patches come out
+  better this way: the main thread stays free to hold the design and to argue
+  with the review, instead of also being the hand that types.
 - This is a standing authorisation that overrides the general instruction not
-  to reach for subagents. It covers these two agents, on issue work, and
-  nothing else.
+  to reach for subagents. It covers these two agents, on an issue or a pull
+  request, and nothing else.
 - Resolve the design gaps BEFORE dispatching. The implementer does not design
   and must not improvise: an issue that leaves a field list, a sentinel, a
   signature, or a default open is a decision for the two of us, and the
@@ -131,23 +131,27 @@
   or `Resolves` — those close the issue when the commit reaches the default
   branch, and closing an issue is mine alone. A commit that serves two issues
   names both.
-- A Dependabot pull request needs no issue and its merge carries no `Refs`
-  line; the `verifier` agent reviews its diff before I merge it, and a fix it
-  needs goes on the pull request's branch.
+- A pull request is worked as itself and needs no issue. The `verifier` agent
+  reviews its diff before I merge it. Unless it comes from a fork, a fix it
+  needs goes on its branch, and the fix's commit carries no `Refs` line.
+- A pull request from a fork is read and never run: no checkout, no test run
+  and no approval of its workflows until I have read it and say so. Nothing is
+  pushed to its branch; a change it needs is asked for in a review comment.
 
-## Issues
-- You may read and comment on GitHub issues via `gh`.
+## Issues and pull requests
+- You may read and comment on GitHub issues and pull requests via `gh`. Show
+  me the text of anything you post there first (a comment, an issue, a pull
+  request or a review), and post it only once I approve it; if I ask for a
+  change, show me the new text.
 - Read an issue's comments, not just its description:
   `gh issue view <n> --comments`. Plain `gh issue view` prints the body and a
   `comments: <count>` header line, never the comment bodies. Amendments and
   decisions from review land in comments, so an issue read without them is the
   issue as it stood before the review that changed it.
-- A new issue lands in three places in the same commit as its creation: the
-  table row in `docs/roadmap.md`, a paragraph in that file saying where the
-  issue came from where its place in the order is not self-evident, and its
-  number in `EXECUTION_ORDER` in `docs/roadmap_page.py`, inserted where it
-  belongs rather than appended. `python docs/roadmap_page.py` refuses to render
-  when that list and the tracker disagree, so run it and check the issue reads
-  correctly on the page.
+- A new issue says where it came from in its own body. Nothing in the
+  repository registers it. `docs/archive/roadmap-v0.1.0.md` is the ordered
+  plan that built the first version and is not updated.
 - You may NEVER close an issue. Only the human closes issues, after
   verifying the output.
+- You may NEVER merge a pull request. Only the human merges, after seeing the
+  review.
