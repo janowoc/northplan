@@ -1,18 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Tests every branch push, v* tag and pull request. Builds the image for amd64
-# and arm64 on pull requests, pushes to main and v* tags, and publishes it to
-# ghcr.io only from main and v* tags, after the tests pass. Uses GITHUB_TOKEN
-# and no other secret. Every action is pinned to a commit; the comment names
-# its release. The QEMU image, buildx and BuildKit are pinned too.
-# docs/maintenance.md says how each pin is updated.
+# Runs for a pull request, a push to main and a v* tag. A push to any other
+# branch runs nothing of its own: the branch is tested only by a pull request
+# opened from it, which tests the branch merged with its base and runs nothing
+# while the two conflict. Every run tests and, once the tests pass, builds the
+# image for amd64 and arm64; only main and v* tags publish it to ghcr.io. Uses
+# GITHUB_TOKEN and no other secret. Every action is pinned to a commit; the
+# comment names its release. The QEMU image, buildx and BuildKit are pinned
+# too. docs/maintenance.md says how each pin is updated.
 
 name: docker-image
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
     tags: ["v*"]
   pull_request:
 
