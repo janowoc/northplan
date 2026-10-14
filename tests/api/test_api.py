@@ -43,6 +43,7 @@ from engine.params.loader import MissingParameterError, parse_yaml
 from engine.scenario.lifespan import LifespanNotRepresentableError
 from engine.scenario.load import load_scenario
 from engine.scenario.schema import Scenario
+from report import run as report_run
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
@@ -490,7 +491,7 @@ class TestUnprocessable:
         def refuse(*_args: object, **_kwargs: object) -> None:
             raise LifespanNotRepresentableError("a lifespan this run cannot represent")
 
-        monkeypatch.setattr(api.main, "prepare_run", refuse)
+        monkeypatch.setattr(report_run, "prepare_run", refuse)
         assert self.refused(client, example_text()) == "a lifespan this run cannot represent"
 
     def test_a_grid_value_the_schema_refuses(self, client: TestClient) -> None:
@@ -673,7 +674,7 @@ class TestRoutedParameterError:
         raise RoutedParameterError("x")
 
     def test_it_is_a_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(api.main, "prepare_run", self.raise_routed)
+        monkeypatch.setattr(report_run, "prepare_run", self.raise_routed)
         quiet = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
         response = quiet.post(
             "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
@@ -681,7 +682,7 @@ class TestRoutedParameterError:
         assert response.status_code == 500
 
     def test_it_propagates_to_the_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(api.main, "prepare_run", self.raise_routed)
+        monkeypatch.setattr(report_run, "prepare_run", self.raise_routed)
         with pytest.raises(RoutedParameterError):
             TestClient(app, base_url="http://localhost").post(
                 "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
@@ -698,7 +699,7 @@ class TestParameterErrorsAnywhereInTheRun:
         return client.post(path, content=example_text().encode(), headers=YAML)
 
     def test_simulate_evaluate_is_a_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(api.main, "evaluate", self.raise_missing)
+        monkeypatch.setattr(report_run, "evaluate", self.raise_missing)
         response = self.post("/api/simulate?paths=2")
         assert response.status_code == 400
         assert response.json()["detail"] == "missing for this test"
@@ -721,7 +722,7 @@ class TestParameterErrorsAnywhereInTheRun:
         def raise_routed(*_args: object, **_kwargs: object) -> None:
             raise RoutedParameterError("x")
 
-        monkeypatch.setattr(api.main, "evaluate", raise_routed)
+        monkeypatch.setattr(report_run, "evaluate", raise_routed)
         assert self.post("/api/simulate?paths=2", quiet=True).status_code == 500
 
 

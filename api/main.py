@@ -49,18 +49,22 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from api.schemas import OptimizeResponse, SimulationResponse
 from engine.core.indexation import RoutedParameterError
-from engine.mc.prepare import PreparedRun, evaluate, prepare_run
+from engine.mc.prepare import PreparedRun, evaluate
 from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamError
-from engine.scenario.load import ScenarioError, scenario_from_text, validation_message
 from engine.scenario.schema import Scenario
-from report.tables import RunReport, UnknownPolicyError, preference, select_policy
+from report.run import (
+    PATHS_WITH_DETERMINISTIC,
+    RunRefusedError,
+    open_run,
+    simulate_document,
+)
+from report.tables import RunReport, preference
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "example.yaml"
@@ -194,6 +198,15 @@ def _parameter_errors() -> Iterator[None]:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@contextmanager
+def _refusals() -> Iterator[None]:
+    """A RunRefusedError is an HTTPException with its status and detail."""
+    try:
+        yield
+    except RunRefusedError as error:
+        raise HTTPException(status_code=error.status, detail=error.detail) from error
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Liveness check. Does not touch the engine."""
@@ -220,10 +233,7 @@ def _check_query(
     if deterministic and paths is not None:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "paths and deterministic cannot both be given; "
-                "the deterministic run is always exactly one path."
-            ),
+            detail=PATHS_WITH_DETERMINISTIC,
         )
 
 
@@ -287,29 +297,25 @@ _RUN_BUSY = (
 )
 
 
-def _open_run(
-    body: bytes, syntax: Literal["yaml", "json"], paths: int | None, deterministic: bool
-) -> tuple[Scenario, PreparedRun]:
-    """Decode and load the body, then open the run; every refusal is an HTTPException."""
+def _decode(body: bytes) -> str:
+    """The body as UTF-8 text, or a 422."""
     try:
-        text = body.decode("utf-8")
+        return body.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise HTTPException(
             status_code=422, detail=f"request body is not valid UTF-8: {exc}. Send it as UTF-8."
         ) from exc
-    try:
-        scenario = scenario_from_text(text, "request body", syntax=syntax)
-    except ScenarioError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    try:
-        with _parameter_errors():
-            prepared = prepare_run(
-                scenario, n_paths=paths, deterministic=deterministic, params_root=PARAMS_ROOT
-            )
-    except (ValidationError, ScenarioError) as error:
-        detail = validation_message(error) if isinstance(error, ValidationError) else str(error)
-        raise HTTPException(status_code=422, detail=detail) from error
-    return scenario, prepared
+
+
+def _open_run(
+    body: bytes, syntax: Literal["yaml", "json"], paths: int | None, deterministic: bool
+) -> tuple[Scenario, PreparedRun]:
+    """Decode and load the body, then open the run; every refusal is an HTTPException."""
+    text = _decode(body)
+    with _refusals():
+        return open_run(
+            text, syntax, paths=paths, deterministic=deterministic, params_root=PARAMS_ROOT
+        )
 
 
 @app.post("/api/simulate", response_model=SimulationResponse, openapi_extra=_REQUEST_BODY)
@@ -339,22 +345,17 @@ async def simulate(
         if not _RUN_LOCK.acquire(blocking=False):
             raise HTTPException(status_code=429, detail=_RUN_BUSY)
         try:
-            scenario, prepared = _open_run(body, syntax, paths, deterministic)
-            try:
-                spec = select_policy(prepared, scenario, policy)
-            except UnknownPolicyError as error:
-                raise HTTPException(status_code=422, detail=str(error)) from error
-            with _parameter_errors():
-                result = evaluate(prepared, spec)
-            report = RunReport(
-                "simulate",
-                prepared.scenario.name,
-                prepared,
-                deterministic=deterministic,
-                nominal=nominal,
-                nominal_option="nominal=true",
-            )
-            return report.simulate_document(result, spec.name)
+            text = _decode(body)
+            with _refusals():
+                return simulate_document(
+                    text,
+                    syntax,
+                    policy=policy,
+                    paths=paths,
+                    deterministic=deterministic,
+                    nominal=nominal,
+                    params_root=PARAMS_ROOT,
+                )
         finally:
             _RUN_LOCK.release()
 
