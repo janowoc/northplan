@@ -23,10 +23,12 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: File extensions that must carry the header.
-IN_SCOPE_SUFFIXES = frozenset({".py", ".yaml", ".yml", ".md", ".toml", ".html"})
+IN_SCOPE_SUFFIXES = frozenset({".py", ".yaml", ".yml", ".md", ".toml", ".html", ".js", ".mjs"})
 
 #: Files that must carry the header but have no extension to recognise them by.
 IN_SCOPE_NAMES = frozenset({"Dockerfile"})
@@ -45,7 +47,10 @@ IN_SCOPE_NAMES = frozenset({"Dockerfile"})
 #: it is only ever read from. ``uv.lock`` is written by uv, which rewrites the
 #: whole file whenever the lock changes and drops anything added to it.
 #: ``.python-version`` is a one-line tool file holding the Python version, which
-#: tests/test_pins.py compares whole.
+#: tests/test_pins.py compares whole. ``tests/browser/package-lock.json`` is written by
+#: npm, which rewrites the whole file and drops anything added to it, as uv does
+#: ``uv.lock``. ``tests/browser/package.json`` is JSON, which has no comments; it states
+#: its licence in its own ``license`` field.
 EXEMPT = frozenset(
     {
         "LICENSE",
@@ -56,6 +61,8 @@ EXEMPT = frozenset(
         "tests/golden/sources/2026.ods",
         ".python-version",
         "uv.lock",
+        "tests/browser/package.json",
+        "tests/browser/package-lock.json",
     }
 )
 
@@ -74,9 +81,16 @@ EXEMPT = frozenset(
 #: and the licence are pinned: a header naming a different licence is a worse
 #: failure than a header that is absent, because it looks deliberate. Ruff
 #: checks neither, so these two patterns are the binding constraint on both.
+#:
+#: ``//`` is the only comment opener in ``.js`` and ``.mjs`` files, and is accepted nowhere
+#: else: ``#`` and ``<!--`` are not comments in a JavaScript module.
 _OPENER = r"^\s*(?:#|<!--)\s*"
+_SLASH_OPENER = r"^\s*//\s*"
 COPYRIGHT_RE = re.compile(_OPENER + r"SPDX-FileCopyrightText:\s*\d{4} Jan Owoc")
 LICENCE_RE = re.compile(_OPENER + r"SPDX-License-Identifier:\s*AGPL-3\.0-or-later")
+SLASH_COPYRIGHT_RE = re.compile(_SLASH_OPENER + r"SPDX-FileCopyrightText:\s*\d{4} Jan Owoc")
+SLASH_LICENCE_RE = re.compile(_SLASH_OPENER + r"SPDX-License-Identifier:\s*AGPL-3\.0-or-later")
+SLASH_SUFFIXES = frozenset({".js", ".mjs"})
 
 
 def tracked_files() -> list[str]:
@@ -122,7 +136,7 @@ def header_position(text: str) -> list[str]:
     return [line for line in lines[start:] if line.strip()][:2]
 
 
-def header_fields_missing_from(text: str) -> list[str]:
+def header_fields_missing_from(text: str, suffix: str = "") -> list[str]:
     """The SPDX fields absent from where a header must be in ``text``.
 
     The two lines are checked by position and in order, not searched for among
@@ -133,22 +147,30 @@ def header_fields_missing_from(text: str) -> list[str]:
     Takes the text rather than a path so that the anchoring and the patterns
     can be exercised directly against contrived input — a test that
     reimplemented either would go on passing if this function stopped doing it.
+
+    ``suffix`` is the file's extension: ``//`` opens a header only when it is ``.js`` or
+    ``.mjs``.
     """
     opening = header_position(text)
     first = opening[0] if opening else ""
     second = opening[1] if len(opening) > 1 else ""
 
+    slash = suffix in SLASH_SUFFIXES
+    copyright_re = SLASH_COPYRIGHT_RE if slash else COPYRIGHT_RE
+    licence_re = SLASH_LICENCE_RE if slash else LICENCE_RE
     absent = []
-    if not COPYRIGHT_RE.match(first):
+    if not copyright_re.match(first):
         absent.append("SPDX-FileCopyrightText")
-    if not LICENCE_RE.match(second):
+    if not licence_re.match(second):
         absent.append("SPDX-License-Identifier")
     return absent
 
 
 def missing_header_fields(relative_path: str) -> list[str]:
     """The SPDX fields absent from the opening of the file at ``relative_path``."""
-    return header_fields_missing_from((REPO_ROOT / relative_path).read_text(encoding="utf-8"))
+    return header_fields_missing_from(
+        (REPO_ROOT / relative_path).read_text(encoding="utf-8"), Path(relative_path).suffix
+    )
 
 
 def test_the_file_enumeration_is_not_empty() -> None:
@@ -205,6 +227,8 @@ def test_the_exemption_list_is_exactly_the_files_agreed_to_be_exempt() -> None:
         "tests/golden/sources/2026.ods",
         ".python-version",
         "uv.lock",
+        "tests/browser/package.json",
+        "tests/browser/package-lock.json",
     }
 
     assert agreed == EXEMPT, (
@@ -334,6 +358,54 @@ def test_the_header_must_actually_be_a_comment() -> None:
         "SPDX-FileCopyrightText: 2026 Jan Owoc\nSPDX-License-Identifier: AGPL-3.0-or-later\n"
     )
     assert header_fields_missing_from(uncommented) == [
+        "SPDX-FileCopyrightText",
+        "SPDX-License-Identifier",
+    ]
+
+
+def test_a_slash_header_counts_in_a_js_or_mjs_file() -> None:
+    """``//`` is how JavaScript comments; the sweep accepts it for ``.js`` and ``.mjs``."""
+    slash = (
+        "// SPDX-FileCopyrightText: 2026 Jan Owoc\n// SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    )
+    assert header_fields_missing_from(slash, ".js") == []
+    assert header_fields_missing_from(slash, ".mjs") == []
+    assert ".js" in IN_SCOPE_SUFFIXES and ".mjs" in IN_SCOPE_SUFFIXES
+
+
+def test_a_slash_header_does_not_count_anywhere_else() -> None:
+    """In YAML ``//`` is not a comment, and no other kind of file takes it."""
+    slash = (
+        "// SPDX-FileCopyrightText: 2026 Jan Owoc\n// SPDX-License-Identifier: AGPL-3.0-or-later\n"
+    )
+    both = ["SPDX-FileCopyrightText", "SPDX-License-Identifier"]
+    for suffix in (".yaml", ".yml", ".py", ".md", ".toml", ".html", ""):
+        assert header_fields_missing_from(slash, suffix) == both, suffix
+    assert header_fields_missing_from(slash) == both
+
+
+def test_a_js_file_still_needs_the_licence_and_holder_to_be_right() -> None:
+    wrong_licence = "// SPDX-FileCopyrightText: 2026 Jan Owoc\n// SPDX-License-Identifier: MIT\n"
+    assert header_fields_missing_from(wrong_licence, ".js") == ["SPDX-License-Identifier"]
+    assert header_fields_missing_from("const x = 1;\n", ".mjs") == [
+        "SPDX-FileCopyrightText",
+        "SPDX-License-Identifier",
+    ]
+
+
+@pytest.mark.parametrize("suffix", [".js", ".mjs"])
+@pytest.mark.parametrize(
+    "header",
+    [
+        "# SPDX-FileCopyrightText: 2026 Jan Owoc\n# SPDX-License-Identifier: AGPL-3.0-or-later\n",
+        "<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->\n"
+        "<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->\n",
+    ],
+    ids=["hash", "html"],
+)
+def test_a_hash_or_html_header_does_not_count_in_a_js_or_mjs_file(header: str, suffix: str) -> None:
+    """Neither is a comment in a JavaScript module, so either would break the file."""
+    assert header_fields_missing_from(header, suffix) == [
         "SPDX-FileCopyrightText",
         "SPDX-License-Identifier",
     ]

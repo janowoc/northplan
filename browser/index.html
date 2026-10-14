@@ -1,0 +1,237 @@
+<!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>northplan</title>
+  <!-- No build step, no npm, no bundler. Two CDN scripts, a worker and this file. -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; line-height: 1.55;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    .sub { opacity: 0.7; margin-top: 0; }
+    .status { padding: 0.75rem 1rem; border-left: 3px solid currentColor; opacity: 0.85; }
+    .status p { margin: 0.25rem 0; }
+    #scenario {
+      width: 100%; box-sizing: border-box; margin-top: 1rem; padding: 0.5rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
+    }
+    button { margin-top: 0.5rem; padding: 0.4rem 1.2rem; font-size: 1rem; }
+    .error { margin-top: 1rem; padding: 0.75rem 1rem; border-left: 3px solid #c0392b; }
+    .error pre { white-space: pre-wrap; margin: 0.25rem 0 0; font-family: inherit; }
+    #chart { height: 24rem; margin-top: 1.5rem; }
+    .caption { opacity: 0.7; font-size: 0.85rem; }
+    .summary p { margin: 0.25rem 0; }
+    #disclaimer { margin-top: 2rem; font-size: 0.85rem; opacity: 0.85; }
+    #disclaimer p { margin: 0.5rem 0; }
+    .source { font-size: 0.85rem; opacity: 0.85; }
+    [x-cloak] { display: none !important; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body x-data="northplan()">
+
+  <h1>northplan</h1>
+  <p class="sub">Canadian household financial planning engine</p>
+
+  <div class="status">
+    <p x-text="status"></p>
+    <p x-show="years" x-cloak>Tax parameters: <strong x-text="years"></strong></p>
+  </div>
+
+  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario"></textarea>
+  <button type="button" :disabled="running || !ready" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
+
+  <div class="error" x-show="error" x-cloak>
+    <strong x-text="'Error ' + (error && error.status) + ':'"></strong>
+    <pre x-text="error && error.message"></pre>
+  </div>
+
+  <div id="chart"></div>
+  <p class="caption" x-show="summary" x-text="summary && summary.statistics"></p>
+
+  <div class="summary" x-show="summary" x-cloak>
+    <p x-text="summary && summary.estate"></p>
+    <p x-text="summary && summary.depletion"></p>
+    <p x-text="summary && summary.run"></p>
+  </div>
+
+  <p class="source">
+    Free software, licensed
+    <a :href="repository + '/blob/' + (revision || 'main') + '/LICENSE'">AGPL-3.0-or-later</a>;
+    <a :href="revision ? repository + '/tree/' + revision : repository"
+       x-text="revision ? 'the source of this build' : 'the source'">the source</a>.
+  </p>
+
+  <div id="disclaimer">
+    <p>northplan is a personal modelling tool. Nothing it produces, including projections, tax
+      estimates, withdrawal strategies or any other output, is financial, tax or legal advice,
+      and you should not rely on it as such. Consult a qualified professional before acting on
+      any result.</p>
+    <p><strong>Tax and benefit figures.</strong> All tax and benefit parameters (rates,
+      brackets, credits, thresholds and amounts) are 2026 figures entered by hand. They cover
+      Alberta only; other provinces and territories are not modelled. They have not been
+      independently verified and may contain errors or omissions. They will also go out of
+      date as legislation and indexation change. Check any figure that matters against the
+      Canada Revenue Agency, the Government of Alberta or another official source.</p>
+    <p><strong>Simplifications.</strong> The model simplifies many tax rules and real-world
+      conditions. These simplifications are listed in <a
+      href="https://github.com/janowoc/northplan/blob/main/docs/limitations.md">docs/limitations.md</a>.
+      Read it before interpreting any results.</p>
+    <p><strong>No warranty.</strong> This software is provided "as is", without warranty of any
+      kind, express or implied. The author accepts no liability for any loss arising from its
+      use. The full terms are in the <a
+      href="https://github.com/janowoc/northplan#license">License</a> section and in sections
+      15 (Disclaimer of Warranty) and 16 (Limitation of Liability) of the GNU Affero General
+      Public License v3 in <a
+      href="https://github.com/janowoc/northplan/blob/main/LICENSE">LICENSE</a>.</p>
+  </div>
+
+  <script>
+    function northplan() {
+      let worker = null;
+      return {
+        status: 'Loading the engine (about 11 MB on a first visit)…',
+        ready: false,
+        scenario: '',
+        running: false,
+        error: null,
+        summary: null,
+        years: '',
+        repository: 'https://github.com/janowoc/northplan',
+        revision: null,
+        async init() {
+          this.error = null;
+          this.startEngine();
+          try {
+            const r = await fetch('example.yaml');
+            if (r.ok) {
+              this.scenario = await r.text();
+            } else {
+              if (this.error === null) {
+                this.error = { status: r.status, message: `example.yaml: ${r.statusText}` };
+              }
+            }
+          } catch (e) {
+            if (this.error === null) {
+              this.error = { status: 'network', message: String(e) };
+            }
+          }
+          try {
+            const r = await fetch('build-info.json');
+            if (r.ok) {
+              const info = await r.json();
+              this.years = info.parameter_years.join(', ');
+              this.revision = info.commit;
+            }
+          } catch (e) {
+            this.years = '';
+          }
+          if (this.revision === null) {
+            this.years = 'unknown';
+          }
+        },
+        startEngine() {
+          try {
+            worker = new Worker(new URL('worker.js', location.href), { type: 'module' });
+          } catch (e) {
+            this.fail(String(e));
+            return;
+          }
+          worker.onmessage = (event) => this.receive(event.data);
+          worker.onerror = (event) => this.fail(event.message || 'the worker could not start');
+        },
+        fail(message) {
+          const stopped = this.ready;
+          this.status = stopped ? 'The engine stopped.' : 'The engine did not load.';
+          this.ready = false;
+          this.running = false;
+          this.error = { status: stopped ? 'error' : 'load', message };
+        },
+        receive(message) {
+          try {
+            if (message.type === 'ready') {
+              this.ready = true;
+              this.status = 'The engine is ready; it runs in this browser.';
+            } else if (message.type === 'failed') {
+              this.fail(message.detail);
+            } else if (message.type === 'result') {
+              const result = JSON.parse(message.payload);
+              if ('document' in result) {
+                this.show(result.document);
+              } else {
+                this.error = { status: result.status, message: result.detail };
+              }
+              this.running = false;
+            }
+          } catch (e) {
+            this.error = { status: 'client', message: String(e) };
+            this.running = false;
+          }
+        },
+        clear() {
+          this.error = null;
+          this.summary = null;
+          Plotly.purge('chart');
+        },
+        run() {
+          this.running = true;
+          try {
+            this.clear();
+            worker.postMessage({ text: this.scenario });
+          } catch (e) {
+            this.error = { status: 'client', message: String(e) };
+            this.running = false;
+          }
+        },
+        show(doc) {
+          const x = doc.years.map((row) => row.year);
+          const column = (name) => doc.years.map((row) => row[name]);
+          const traces = [
+            {
+              x, y: column('after_tax_net_worth_p10'), name: '10th percentile',
+              mode: 'lines', line: { width: 0 }, connectgaps: false,
+            },
+            {
+              x, y: column('after_tax_net_worth_p90'), name: '90th percentile',
+              mode: 'lines', line: { width: 0 }, fill: 'tonexty',
+              fillcolor: 'rgba(31, 119, 180, 0.25)', connectgaps: false,
+            },
+            {
+              x, y: column('after_tax_net_worth_p50'), name: 'Median',
+              mode: 'lines', line: { width: 2 }, connectgaps: false,
+            },
+          ];
+          const layout = {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: getComputedStyle(document.body).color },
+            xaxis: { title: { text: 'Year' } },
+            yaxis: { title: { text: doc.meta.dollars } },
+          };
+          Plotly.newPlot('chart', traces, layout, { responsive: true });
+          const grouped = new Intl.NumberFormat('en-CA', { maximumFractionDigits: 0 });
+          const last = doc.years[doc.years.length - 1];
+          const estate = grouped.format(Math.round(doc.final.estate_after_tax_p50));
+          const depletion = (last.depletion_probability * 100).toFixed(1);
+          this.summary = {
+            statistics: doc.meta.statistics,
+            estate: `Median after-tax estate: $${estate} (${doc.meta.estate_dollars})`,
+            depletion: `Depletion probability: ${depletion}% — the share of paths that run out of money at some point before the second death.`,
+            run: `Policy ${doc.meta.policy} · ${grouped.format(doc.meta.paths)} paths · seed ${doc.meta.seed}`,
+          };
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

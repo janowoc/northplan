@@ -107,9 +107,12 @@ engine/          pure Python, no FastAPI. MUST NOT import from api/, cli/ or rep
   mc/            monthly draws + the loop over months
   policy/        parameterized decision rules
   optimize/      objectives and the policy search
-report/          result tables shared by cli/ and api/, real or nominal
+report/          result tables shared by cli/ and api/, real or nominal; run.py, the
+                 simulate pipeline api/ and browser/ share
 api/             FastAPI, thin. Serves api/web/ via StaticFiles; northplan-serve
   web/           plain HTML + Alpine.js + Plotly from CDN. No build step
+browser/         the static page that runs the engine in the browser under
+                 Pyodide; built by browser/build.py
 cli/             YAML scenario in, results out
 scenarios/       example.yaml is committed; *.local.yaml is gitignored
 docs/            limitations.md (every simplification), maintenance.md (pins)
@@ -154,6 +157,23 @@ are the filing month and the indexation schedules. See `CLAUDE.md`.
   trace (`northplan simulate --trace-path`) for debugging. The engine steps
   monthly and aggregates to years at the boundary.
 - **No database.** A scenario is a file, or the body of an API request.
+
+## Run it in your browser
+
+https://janowoc.github.io/northplan/
+
+The page runs the engine inside the browser: Python compiled to WebAssembly,
+by Pyodide. The scenario never leaves your machine. The only requests the page
+makes are for its own files and for the pinned libraries from jsDelivr and
+cdn.plot.ly, none of which carry the scenario. The first visit downloads about
+11 MB. A run takes roughly two to three times as long as with the local
+install.
+
+A run is limited to 25,000 paths, because the browser gives WebAssembly at most
+4 GB; the local install allows 100,000. A run that still runs out of memory
+says so. `optimize` is not available in the browser; use the local install.
+The page simulates with the scenario's own options only: it has no controls
+for the policy, the number of paths, a deterministic run or nominal dollars.
 
 ## Running
 

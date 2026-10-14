@@ -18,6 +18,9 @@ moves.
 | GitHub Actions | the workflow's `uses:` commits | Dependabot (`github-actions`) |
 | setuptools, the build backend | `[tool.uv] build-constraint-dependencies` in `pyproject.toml` | by hand, with `uv.lock` |
 | ruff | `pyproject.toml` and `uv.lock` | by hand, in a commit of its own that reformats the tree |
+| Pyodide | `PYODIDE_VERSION` in `browser/worker.js`, and `tests/browser/package.json` with `package-lock.json` | by hand, all three together; `tests/browser/test_browser_page.py` fails when they differ. Dependabot does not watch npm |
+| Node in CI | `setup-node` `node-version` in the workflow | by hand |
+| Alpine.js and Plotly | the two `<script>` tags in `browser/index.html` | by hand, together with `api/web/index.html`; `tests/browser/test_browser_page.py` fails when they differ |
 | QEMU (binfmt), buildx, BuildKit | the image job's `with:` inputs | by hand, below |
 
 `tests/test_pins.py` fails when a pin updated by hand has not followed the one

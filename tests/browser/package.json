@@ -1,0 +1,9 @@
+{
+  "name": "northplan-browser-tests",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "dependencies": {
+    "pyodide": "314.0.7"
+  }
+}

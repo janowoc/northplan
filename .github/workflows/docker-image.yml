@@ -5,10 +5,12 @@
 # branch runs nothing of its own: the branch is tested only by a pull request
 # opened from it, which tests the branch merged with its base and runs nothing
 # while the two conflict. Every run tests and, once the tests pass, builds the
-# image for amd64 and arm64; only main and v* tags publish it to ghcr.io. Uses
-# GITHUB_TOKEN and no other secret. Every action is pinned to a commit; the
-# comment names its release. The QEMU image, buildx and BuildKit are pinned
-# too. docs/maintenance.md says how each pin is updated.
+# image for amd64 and arm64; only main and v* tags publish it to ghcr.io. A push
+# to main also builds the browser page and deploys it to GitHub Pages once the
+# tests pass; pull requests deploy nothing. Uses GITHUB_TOKEN and no other
+# secret. Every action is pinned to a commit; the comment names its release. The
+# QEMU image, buildx and BuildKit are pinned too. docs/maintenance.md says how
+# each pin is updated.
 
 name: docker-image
 
@@ -44,6 +46,12 @@ jobs:
       # patch.
       - run: uv sync --locked --extra dev
       - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+        working-directory: tests/browser
       - name: The tag is v followed by the version in pyproject.toml
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -61,6 +69,34 @@ jobs:
           PY
       - run: ruff check .
       - run: pytest
+        env:
+          NORTHPLAN_REQUIRE_NODE: "1"
+
+  pages:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 browser/build.py "$RUNNER_TEMP/site"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   image:
     needs: test

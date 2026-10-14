@@ -226,3 +226,6 @@ __marimo__/
 #   Result exports
 *.results.json
 *.results.csv
+
+#   npm packages for the browser tests (npm ci --ignore-scripts in tests/browser)
+node_modules/
