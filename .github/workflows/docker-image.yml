@@ -160,6 +160,37 @@ jobs:
             docker run --rm --platform "linux/$arch" "northplan:smoke-$arch" pip freeze --all --exclude-editable | grep -v '^pip==' | norm > "$RUNNER_TEMP/frozen-$arch.txt"
             diff "$RUNNER_TEMP/locked.txt" "$RUNNER_TEMP/frozen-$arch.txt"
           done
+      # The default command, as a container runs it: a client through a published
+      # port needs the token, a token that was set is not logged, and without one
+      # the server logs the one it generated.
+      - name: Smoke test, each image serves its default command behind the token
+        run: |
+          set -euo pipefail
+          token=synthetic-smoke-token-0123
+          for arch in amd64 arm64; do
+            cid=$(docker run -d --platform "linux/$arch" -p 127.0.0.1:18000:8000 -e NORTHPLAN_TOKEN="$token" "northplan:smoke-$arch")
+            code=000
+            for _ in $(seq 120); do
+              code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' -u ":$token" http://127.0.0.1:18000/health || true)
+              [ "$code" != 000 ] && break
+              sleep 1
+            done
+            logs=$(docker logs "$cid" 2>&1)
+            test "$code" = 200 || { echo "$logs"; echo "$arch: with the token, $code, not 200" >&2; exit 1; }
+            code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/health || true)
+            test "$code" = 401 || { echo "$arch: without the token, $code, not 401" >&2; exit 1; }
+            if grep -qF "$token" <<< "$logs"; then echo "$arch: the token that was set is in the log" >&2; exit 1; fi
+            docker rm -f "$cid" > /dev/null
+            cid=$(docker run -d --platform "linux/$arch" "northplan:smoke-$arch")
+            logs=
+            for _ in $(seq 120); do
+              logs=$(docker logs "$cid" 2>&1)
+              grep -q "Uvicorn running" <<< "$logs" && break
+              sleep 1
+            done
+            grep -qE "^northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is [A-Za-z0-9_-]{43}; it is new on every start\.$" <<< "$logs" || { echo "$logs"; echo "$arch: no generated token in the log" >&2; exit 1; }
+            docker rm -f "$cid" > /dev/null
+          done
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request'
         with:
