@@ -176,7 +176,7 @@ from fastapi.testclient import TestClient
 import api.main
 
 example, params = Path(sys.argv[1]), Path(sys.argv[2])
-client = TestClient(api.main.app, base_url="http://localhost")
+client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
 out = {}
 page = client.get("/")
 out["page"] = [page.status_code, "<html" in page.text]

@@ -3,21 +3,29 @@
 
 """``northplan-serve`` command: serve the API and the web page.
 
-Runs :data:`api.main.app` with uvicorn on 127.0.0.1 only. There is no host option,
-because the server has no authentication. ``--params`` and ``--example`` set
-``api.main.PARAMS_ROOT`` and ``api.main.EXAMPLE_PATH``; a flag not given leaves the
-module's own default. The parameters directory is checked before anything starts.
+Runs :data:`api.main.app` with uvicorn on ``--host`` (default 127.0.0.1) with proxy
+headers off, so the peer :mod:`api.main` checks is the socket's. ``NORTHPLAN_TOKEN``,
+when set, becomes ``api.main.TOKEN`` and must be at least 16 printable ASCII characters
+other than a space; when it is unset and ``--host`` is not a loopback address or
+``localhost``, a token is generated and written once to stderr, after every check has
+passed. ``--params`` and ``--example`` set ``api.main.PARAMS_ROOT`` and
+``api.main.EXAMPLE_PATH``; a flag not given leaves the module's own default. The
+parameters directory is checked before anything starts.
 
 Exit codes: 0 after the server stops on Ctrl-C; 1 on a parameters directory that does
 not exist, is not a directory, or is refused by
 :func:`~engine.params.loader.check_params_root`; 2 on a usage error, with the message on
-stderr; 3, from uvicorn, when the server cannot start, for instance because the port is
-in use. On SIGTERM the process ends by the signal.
+stderr, including a ``NORTHPLAN_TOKEN`` that breaks the rules, checked right after the
+command line is parsed, before the parameters directory; 3, from uvicorn, when the
+server cannot start, for instance because the port is in use. On SIGTERM the process
+ends by the signal.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import secrets
 import stat
 import sys
 from pathlib import Path
@@ -82,13 +90,15 @@ def main(argv: list[str] | None = None) -> int:
 
     Raises:
         SystemExit: With code 2, on a usage error (argparse's own, a port outside 1 to
-            65535, or an ``--example`` that is not a regular file or cannot be read). With
-            code 3, from uvicorn, when the server cannot start, for instance because the
-            port is in use.
+            65535, a ``NORTHPLAN_TOKEN`` that breaks the rules, checked right after
+            the command line is parsed, before the parameters directory, or an
+            ``--example`` that is not a regular file or cannot be read). With code 3,
+            from uvicorn, when the server cannot start, for instance because the port
+            is in use.
     """
     parser = argparse.ArgumentParser(
         prog="northplan-serve",
-        description="Serve the northplan API and web page on 127.0.0.1.",
+        description="Serve the northplan API and web page.",
     )
     parser.add_argument(
         "--params",
@@ -103,7 +113,14 @@ def main(argv: list[str] | None = None) -> int:
         type=_port,
         default=8000,
         metavar="N",
-        help="port on 127.0.0.1 (default: 8000)",
+        help="port to listen on (default: 8000)",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        metavar="ADDRESS",
+        help="address to listen on (default: 127.0.0.1); on any other than a loopback "
+        "address, a client on another machine must give the token",
     )
     parser.add_argument(
         "--example",
@@ -114,6 +131,15 @@ def main(argv: list[str] | None = None) -> int:
         "(default: scenarios/example.yaml beside the source tree)",
     )
     args = parser.parse_args(argv)
+
+    token = os.environ.get("NORTHPLAN_TOKEN")
+    if token is not None and not (len(token) >= 16 and all("!" <= c <= "~" for c in token)):
+        parser.exit(
+            2,
+            "northplan-serve: error: NORTHPLAN_TOKEN must be at least 16 characters, each a "
+            "printable ASCII character other than a space. To make one: python3 -c "
+            "'import secrets; print(secrets.token_urlsafe(32))'\n",
+        )
 
     root = args.params if args.params is not None else DEFAULT_PARAMS_ROOT
     try:
@@ -141,7 +167,17 @@ def main(argv: list[str] | None = None) -> int:
         api.main.PARAMS_ROOT = args.params
     if args.example is not None:
         api.main.EXAMPLE_PATH = args.example
-    uvicorn.run(api.main.app, host="127.0.0.1", port=args.port)
+    if token is None and not (
+        args.host.lower() == "localhost" or api.main.is_loopback_address(args.host)
+    ):
+        token = secrets.token_urlsafe(32)
+        print(
+            f"northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is {token}; "
+            "it is new on every start.",
+            file=sys.stderr,
+        )
+    api.main.TOKEN = token
+    uvicorn.run(api.main.app, host=args.host, port=args.port, proxy_headers=False)
     return 0
 
 

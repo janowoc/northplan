@@ -43,4 +43,7 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
 # request, without a rebuild.
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# northplan-serve runs uvicorn with proxy headers off, so the server sees each
+# connection's real peer. Unless NORTHPLAN_TOKEN is set it generates a token on
+# each start and writes it to the log; every client of a container needs it.
+CMD ["northplan-serve", "--host", "0.0.0.0"]

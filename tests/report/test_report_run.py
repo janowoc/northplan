@@ -208,7 +208,7 @@ def test_the_deterministic_and_paths_text_is_the_one_the_api_uses() -> None:
         "paths and deterministic cannot both be given; "
         "the deterministic run is always exactly one path."
     )
-    response = TestClient(app, base_url="http://localhost").post(
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).post(
         "/api/simulate?paths=2&deterministic=true", content=EXAMPLE.encode(), headers=YAML
     )
     assert response.json()["detail"] == PATHS_WITH_DETERMINISTIC
@@ -226,7 +226,7 @@ def test_the_document_equals_the_api_response(query: str, options: dict[str, obj
     document = simulate_document(
         EXAMPLE, "yaml", policy=None, nominal=False, params_root=DEFAULT_PARAMS_ROOT, **options
     )  # type: ignore[arg-type]
-    response = TestClient(app, base_url="http://localhost").post(
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).post(
         f"/api/simulate?{query}", content=EXAMPLE.encode(), headers=YAML
     )
     assert response.status_code == 200

@@ -17,27 +17,38 @@ Status codes: 422 for whatever the command line refuses with exit 2 (a body that
 not parse or validate, a scenario the load checks refuse, an unknown policy or query
 parameter, a missing preference, a bad option, a run over the engine's limits
 (:class:`~engine.mc.prepare.RunTooLargeError`)); 400 with the message for a
-:class:`~engine.params.loader.ParamError`, and for a Host other than loopback; 415 for a
-Content-Type that is neither JSON nor YAML, or a charset other than UTF-8; 413 for a
-body over ``MAX_BODY_BYTES``; 429 while another run is in progress. ``GET /api/example``
-answers 404 when no file is found at ``EXAMPLE_PATH`` (ENOENT or ENOTDIR) or what is
-there is not a regular file, and 503 when its lookup or read fails with any other
-``OSError``, such as EACCES. A :class:`~engine.core.indexation.RoutedParameterError`
-signals an engine bug and is not caught, so it surfaces as a 500. The engine work runs
-in a worker thread, off the event loop.
+:class:`~engine.params.loader.ParamError`, for a request with more than one Host header,
+and for a loopback client that names a Host other than loopback and carries no valid
+token; 401, with a Basic challenge, for any other client without the valid token, and
+403 instead when the server has no token; 415 for a Content-Type that is neither JSON
+nor YAML, or a charset other than UTF-8; 413 for a body over ``MAX_BODY_BYTES``; 429
+while another run is in progress. ``GET /api/example`` answers 404 when no file is found
+at ``EXAMPLE_PATH`` (ENOENT or ENOTDIR) or what is there is not a regular file, and 503
+when its lookup or read fails with any other ``OSError``, such as EACCES. A
+:class:`~engine.core.indexation.RoutedParameterError` signals an engine bug and is not
+caught, so it surfaces as a 500. The engine work runs in a worker thread, off the event
+loop.
 
-The server is for one user on this machine. It bounds what one request can cost (the
-body's size, the run's paths and candidates, one run at a time, and the scenario
-parser's caps on aliases, merge keys and text), so that a mistake cannot exhaust a
-laptop, and it answers only a loopback Host, so that a web page cannot reach it by DNS
-rebinding. It has no authentication: whoever can reach its port can run the engine, so
-it is served on loopback.
+The server is for one household. It bounds what one request can cost (the body's size,
+the run's paths and candidates, one run at a time, and the scenario parser's caps on
+aliases, merge keys and text), so that a mistake cannot exhaust a laptop. A request is
+served when its connection comes from a loopback address and its Host is localhost,
+127.0.0.1 or [::1], or when it carries ``TOKEN`` as the password of HTTP Basic
+authentication, under any user name and any Host. The Host condition stops a web page
+from reaching the server by DNS rebinding. The peer address is the socket's:
+``northplan-serve`` runs uvicorn with proxy headers off. ``TOKEN`` is None unless
+``northplan-serve`` set it, and then only a loopback client is served. Over plain HTTP
+the token and the scenario cross the network unencrypted.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hmac
 import importlib.metadata
 import inspect
+import ipaddress
 import stat
 import threading
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
@@ -69,10 +80,21 @@ from report.tables import RunReport, preference
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "example.yaml"
 PARAMS_ROOT: Path = DEFAULT_PARAMS_ROOT
+TOKEN: str | None = None
 
 MAX_BODY_BYTES = 1 << 20
 _ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
 _RUN_LOCK = threading.Lock()
+
+_CHALLENGE_DETAIL = (
+    "this server needs its token: send it as the password of HTTP Basic authentication, "
+    "with any user name. It is the NORTHPLAN_TOKEN the server was started with or, when "
+    "that was not set, the one it wrote to its log as it started."
+)
+_NO_TOKEN_DETAIL = (
+    "this server was started without a token, so it answers only a client on its own "
+    "machine that connects to localhost, 127.0.0.1 or [::1]."
+)
 
 _JSON_TYPES = frozenset({"application/json"})
 _YAML_TYPES = frozenset({"application/yaml", "application/x-yaml", "text/yaml"})
@@ -145,11 +167,64 @@ def _is_digits(text: str) -> bool:
     return bool(text) and text.isascii() and text.isdigit()
 
 
-class _LoopbackHostMiddleware:
-    """Answer 400 to an HTTP request whose Host header is not a loopback name.
+def is_loopback_address(text: str) -> bool:
+    """Whether ``text`` is an IP address in a loopback range.
 
-    Pure ASGI, so that it covers every route and the static files. The port is
-    ignored and the name is compared in lower case; other scope types pass through.
+    Takes the text of an address; returns False for text that is not one. All of
+    127.0.0.0/8, ``::1`` and an IPv4-mapped IPv6 address of 127.0.0.0/8 are loopback.
+    The mapped form is tested explicitly, because some Python 3.12 releases, 3.12.3
+    among them, answer False for it.
+    """
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped.is_loopback
+    return address.is_loopback
+
+
+def _peer_is_loopback(scope: MutableMapping[str, Any]) -> bool:
+    """Whether the socket's peer, ``scope["client"]``, is a loopback address.
+
+    A missing or None client is not loopback. No forwarded header is read.
+    """
+    client = scope.get("client")
+    return client is not None and is_loopback_address(client[0])
+
+
+def _carries_token(scope: MutableMapping[str, Any]) -> bool:
+    """Whether the request carries ``TOKEN`` as the password of HTTP Basic authentication.
+
+    False when ``TOKEN`` is None, when there is not exactly one Authorization header, or
+    when it is not a well-formed Basic credential. The user name is ignored; the password
+    is everything after the first colon.
+    """
+    if TOKEN is None:
+        return False
+    values = [value for name, value in scope["headers"] if name == b"authorization"]
+    if len(values) != 1:
+        return False
+    scheme, _, credentials = values[0].partition(b" ")
+    if scheme.lower() != b"basic":
+        return False
+    try:
+        decoded = base64.b64decode(credentials.strip(), validate=True)
+    except binascii.Error:
+        return False
+    _, colon, password = decoded.partition(b":")
+    return bool(colon) and hmac.compare_digest(password, TOKEN.encode("ascii"))
+
+
+class _AccessMiddleware:
+    """Serve an HTTP request from a loopback client naming a loopback Host, or carrying
+    the token; refuse the rest.
+
+    Pure ASGI, so that it covers every route and the static files; other scope types
+    pass through. Refusals, in order: 400 for more than one Host header; 400 for a
+    loopback client without a loopback Host or the token, with no challenge; 403 when
+    ``TOKEN`` is None; else 401 with ``WWW-Authenticate: Basic realm="northplan"``. The
+    Host port is ignored and the name is compared in lower case.
     """
 
     def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
@@ -165,26 +240,46 @@ class _LoopbackHostMiddleware:
             await self.app(scope, receive, send)
             return
         hosts = [value.decode("latin-1") for name, value in scope["headers"] if name == b"host"]
-        raw = hosts[0] if hosts else None
-        detail: str | None = None
+        refusal: JSONResponse | None = None
         if len(hosts) > 1:
-            detail = (
-                "the request carries more than one Host header; this server answers a "
-                "request with exactly one."
+            refusal = JSONResponse(
+                {
+                    "detail": "the request carries more than one Host header; this server "
+                    "answers a request with exactly one."
+                },
+                status_code=400,
             )
-        elif not hosts or _loopback_name(hosts[0]) not in _ALLOWED_HOSTS:
-            detail = (
-                f"host {raw!r} is not served: this server answers only localhost, "
-                "127.0.0.1 and [::1], because it is for this machine alone."
-            )
-        if detail is not None:
-            response = JSONResponse({"detail": detail}, status_code=400)
-            await response(scope, receive, send)
+        else:
+            loopback = _peer_is_loopback(scope)
+            served = (
+                loopback and len(hosts) == 1 and _loopback_name(hosts[0]) in _ALLOWED_HOSTS
+            ) or _carries_token(scope)
+            if served:
+                pass
+            elif loopback:
+                raw = hosts[0] if hosts else None
+                refusal = JSONResponse(
+                    {
+                        "detail": f"host {raw!r} is not served: this server answers only "
+                        "localhost, 127.0.0.1 and [::1], because it is for this machine alone."
+                    },
+                    status_code=400,
+                )
+            elif TOKEN is None:
+                refusal = JSONResponse({"detail": _NO_TOKEN_DETAIL}, status_code=403)
+            else:
+                refusal = JSONResponse(
+                    {"detail": _CHALLENGE_DETAIL},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="northplan"'},
+                )
+        if refusal is not None:
+            await refusal(scope, receive, send)
             return
         await self.app(scope, receive, send)
 
 
-app.add_middleware(_LoopbackHostMiddleware)
+app.add_middleware(_AccessMiddleware)
 
 
 @contextmanager

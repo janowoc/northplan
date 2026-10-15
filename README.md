@@ -187,21 +187,41 @@ the image it built last, however old. Only `params/` and `scenarios/` are
 mounted into the container, so a change anywhere else takes effect only after a
 rebuild.
 
-The server is for one user on this machine. It bounds what a request can cost, so that
-a mistake cannot exhaust a laptop: at most 100,000 paths, at most 1,000 candidate
-policies, at most 10,000,000 paths across all of them, a body of at most 1 MiB, and one
-run at a time. It answers only `localhost`, `127.0.0.1` and `[::1]`. It has no
-authentication, so the compose file binds it to loopback.
+The server is for one household. It bounds what a request can cost, so that a
+mistake cannot exhaust a laptop: at most 100,000 paths, at most 1,000 candidate
+policies, at most 10,000,000 paths across all of them, a body of at most 1 MiB,
+and one run at a time. A browser on the server's own machine that opens
+`localhost`, `127.0.0.1` or `[::1]` needs nothing more. Any other client must
+give the server's token: the browser asks for a user name and a password; the
+user name can be anything and the password is the token. `curl` takes it as
+`-u :TOKEN`. In a container every client is another, the Docker host's own
+browser included, because Docker forwards each connection from an address of its
+own.
+
+Unless `NORTHPLAN_TOKEN` is set, the server makes a new token each time it
+starts and writes it to its log, on the line that begins
+`northplan-serve: NORTHPLAN_TOKEN is not set`. `docker compose logs northplan`
+or `docker logs` shows it; Portainer shows it in the container's logs. To keep
+one token across restarts, set `NORTHPLAN_TOKEN` to at least 16 printable ASCII
+characters without spaces, such as the output of
+`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`; in Portainer,
+add it as an environment variable of the container. A token you set is never
+written to the log.
+
+The server speaks plain HTTP. Anywhere but on its own machine, the token and
+every scenario cross the network unencrypted, readable by anyone who can watch
+the traffic. Open it to other devices only on a network you trust.
 
 Open that address to run the example scenario and see its fan chart. The API
 takes a scenario as the request body, JSON or YAML, and the run's options as
 query parameters: `paths`, `deterministic` and `nominal` on both endpoints,
 `policy` on `/api/simulate`, and `objective` (required), `risk_aversion` and
 `estate_utility_shift` on `/api/optimize`. Each does what the command line's
-flag of that name does, with underscores for hyphens:
+flag of that name does, with underscores for hyphens. Under Compose, first set
+TOKEN in your shell to the server's token.
 
 ```sh
-curl -s -X POST 'http://localhost:8000/api/simulate?paths=200' \
+curl -s -u ":$TOKEN" -X POST 'http://localhost:8000/api/simulate?paths=200' \
   -H 'Content-Type: application/yaml' --data-binary @scenarios/example.yaml
 ```
 
@@ -214,12 +234,18 @@ docker run --rm -p 127.0.0.1:8000:8000 ghcr.io/janowoc/northplan:latest
 `latest` is the most recently published release, also tagged `X.Y.Z` and
 `X.Y`. `main` is the most recently published build of the main branch, and
 `sha-` followed by a 7-character commit hash is the build of the push to `main`
-that ended at that commit. Keep the `127.0.0.1:` prefix: without it Docker
-publishes the port on every network interface, and the server has no
-authentication. The image carries its own copies of `params/` and
-`scenarios/example.yaml`. Compose mounts `./params` and `./scenarios` over
-them, so there an edit to either takes effect on the next request, without a
-rebuild; `docker run` serves the image's copies.
+that ended at that commit. With the `127.0.0.1:` prefix only this machine can
+connect. To open it to other devices on the network, publish the port on every
+interface and choose the token:
+
+```sh
+docker run --rm -p 8123:8000 -e NORTHPLAN_TOKEN='your-token-here' ghcr.io/janowoc/northplan:latest
+```
+
+and open `http://<server>:8123` from the other device. The image carries its own
+copies of `params/` and `scenarios/example.yaml`. Compose mounts `./params` and
+`./scenarios` over them, so there an edit to either takes effect on the next
+request, without a rebuild; `docker run` serves the image's copies.
 
 The image also has the command line. Mount a directory for its output:
 
@@ -262,11 +288,13 @@ northplan optimize scenarios/example.yaml --objective median_estate_after_tax --
 `northplan simulate --help` and `northplan optimize --help` list the options.
 
 `northplan-serve` serves the API and the page on http://localhost:8000, as
-Compose does; `--port` changes the port. An editable install finds `params/`
-and `scenarios/example.yaml` in the checkout. Any other install has neither:
-pass `--params DIR`, the directory holding one subdirectory per tax year, to
-`northplan simulate`, `northplan optimize` and `northplan-serve`, and
-`--example FILE` to `northplan-serve` for the page's example scenario.
+Compose does; `--port` changes the port. `--host` changes the address it listens
+on; on any other than a loopback address, a client on another machine must give
+the token. An editable install finds `params/` and `scenarios/example.yaml` in
+the checkout. Any other install has neither: pass `--params DIR`, the directory
+holding one subdirectory per tax year, to `northplan simulate`,
+`northplan optimize` and `northplan-serve`, and `--example FILE` to
+`northplan-serve` for the page's example scenario.
 
 ## Development
 

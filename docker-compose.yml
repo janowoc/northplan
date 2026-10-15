@@ -4,8 +4,10 @@
 services:
   northplan:
     build: .
-    # Bound to loopback: this serves a household's complete financial position
-    # and has no authentication. Do not change to 0.0.0.0 without adding some.
+    # Bound to loopback, so only this machine can connect. The container sees
+    # every connection as coming from another machine, so the browser asks for
+    # the token the server writes to its log (see README). To serve other
+    # devices, drop the 127.0.0.1: prefix; the traffic is plain HTTP.
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

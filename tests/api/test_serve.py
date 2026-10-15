@@ -10,13 +10,18 @@ as the original does.
 
 from __future__ import annotations
 
+import asyncio
 import errno
+import json
+import logging
 import os
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 import api.main
@@ -34,10 +39,12 @@ DENIED = os.strerror(errno.EACCES)
 
 class Recorder:
     def __init__(self) -> None:
-        self.calls: list[tuple[object, str, int]] = []
+        self.calls: list[tuple[object, str, int, bool]] = []
+        self.kwargs: list[dict[str, object]] = []
 
-    def __call__(self, app: object, *, host: str, port: int) -> None:
-        self.calls.append((app, host, port))
+    def __call__(self, app: object, *, host: str, port: int, proxy_headers: bool) -> None:
+        self.calls.append((app, host, port, proxy_headers))
+        self.kwargs.append({"host": host, "port": port, "proxy_headers": proxy_headers})
 
 
 @pytest.fixture
@@ -46,6 +53,8 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
     monkeypatch.setattr(api.serve.uvicorn, "run", record)
     monkeypatch.setattr(api.main, "PARAMS_ROOT", api.main.PARAMS_ROOT)
     monkeypatch.setattr(api.main, "EXAMPLE_PATH", api.main.EXAMPLE_PATH)
+    monkeypatch.setattr(api.main, "TOKEN", api.main.TOKEN)
+    monkeypatch.delenv("NORTHPLAN_TOKEN", raising=False)
     return record
 
 
@@ -67,7 +76,7 @@ def run_serve(argv: list[str]) -> int:
 def test_no_flags_serves_on_loopback_8000_with_the_defaults(recorder: Recorder) -> None:
     example = api.main.EXAMPLE_PATH
     assert api.serve.main([]) == 0
-    assert recorder.calls == [(api.main.app, "127.0.0.1", 8000)]
+    assert recorder.calls == [(api.main.app, "127.0.0.1", 8000, False)]
     assert api.main.PARAMS_ROOT is DEFAULT_PARAMS_ROOT
     assert example == api.main.EXAMPLE_PATH
 
@@ -81,7 +90,7 @@ def test_flags_set_the_params_root_example_and_port(recorder: Recorder, tmp_path
     assert api.serve.main(argv) == 0
     assert params == api.main.PARAMS_ROOT
     assert example == api.main.EXAMPLE_PATH
-    assert recorder.calls == [(api.main.app, "127.0.0.1", 8123)]
+    assert recorder.calls == [(api.main.app, "127.0.0.1", 8123, False)]
 
 
 def test_a_given_params_directory_that_does_not_exist_refuses_to_start(
@@ -360,7 +369,7 @@ def test_port_bounds_refuse(
 @pytest.mark.parametrize("port", [1, 65535])
 def test_port_bounds_accept(recorder: Recorder, port: int) -> None:
     assert api.serve.main(["--port", str(port)]) == 0
-    assert recorder.calls == [(api.main.app, "127.0.0.1", port)]
+    assert recorder.calls == [(api.main.app, "127.0.0.1", port, False)]
 
 
 def _assert_refused_to_start(
@@ -470,7 +479,7 @@ def post(client: TestClient, scenario: Path, paths: int) -> object:
 
 
 def test_params_root_is_read_per_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client = TestClient(api.main.app, base_url="http://localhost")
+    client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
     absent = tmp_path / "absent"
     monkeypatch.setattr(api.main, "PARAMS_ROOT", absent)
     response = post(client, EXAMPLE, 10)
@@ -485,7 +494,7 @@ def test_an_unreadable_params_root_is_a_400(
     root = _copied_params(tmp_path)
     lock(root, 0o000)
     monkeypatch.setattr(api.main, "PARAMS_ROOT", root)
-    client = TestClient(api.main.app, base_url="http://localhost")
+    client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
     query = "paths=10" + ("&objective=median_estate_after_tax" if endpoint == "optimize" else "")
     response = client.post(
         f"/api/{endpoint}?{query}",
@@ -504,7 +513,7 @@ def test_an_unreadable_year_directory_is_a_400(
     root = _copied_params(tmp_path)
     lock(root / "2026", 0o000)
     monkeypatch.setattr(api.main, "PARAMS_ROOT", root)
-    client = TestClient(api.main.app, base_url="http://localhost")
+    client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
     response = post(client, EXAMPLE, 10)
     assert response.status_code == 400  # type: ignore[attr-defined]
     assert response.json()["detail"] == (  # type: ignore[attr-defined]
@@ -516,7 +525,7 @@ def test_an_unreadable_year_directory_is_a_400(
 def test_a_copied_params_root_gives_the_same_response(
     scenario: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = TestClient(api.main.app, base_url="http://localhost")
+    client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
     default = post(client, scenario, 50)
     assert default.status_code == 200  # type: ignore[attr-defined]
     copy = tmp_path / "params"
@@ -525,3 +534,187 @@ def test_a_copied_params_root_gives_the_same_response(
     copied = post(client, scenario, 50)
     assert copied.status_code == 200  # type: ignore[attr-defined]
     assert copied.json() == default.json()  # type: ignore[attr-defined]
+
+
+# =============================================================================
+# --host and the token
+# =============================================================================
+
+TOKEN_REFUSAL = (
+    "northplan-serve: error: NORTHPLAN_TOKEN must be at least 16 characters, each a "
+    "printable ASCII character other than a space. To make one: python3 -c "
+    "'import secrets; print(secrets.token_urlsafe(32))'\n"
+)
+
+
+def _generated_line(token: str) -> str:
+    return (
+        f"northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is {token}; "
+        "it is new on every start.\n"
+    )
+
+
+def test_host_is_passed_to_uvicorn(recorder: Recorder) -> None:
+    assert api.serve.main(["--host", "0.0.0.0"]) == 0
+    assert recorder.calls == [(api.main.app, "0.0.0.0", 8000, False)]
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "myhost.example", "[::1]"])
+@pytest.mark.usefixtures("recorder")
+def test_a_token_is_generated_for_a_host_other_than_loopback(
+    capsys: pytest.CaptureFixture[str], host: str
+) -> None:
+    assert api.serve.main(["--host", host]) == 0
+    token = api.main.TOKEN
+    assert isinstance(token, str)
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
+    captured = capsys.readouterr()
+    assert captured.err == _generated_line(token)
+    assert captured.out == ""
+
+
+@pytest.mark.usefixtures("recorder")
+def test_each_start_generates_a_new_token() -> None:
+    assert api.serve.main(["--host", "0.0.0.0"]) == 0
+    first = api.main.TOKEN
+    assert api.serve.main(["--host", "0.0.0.0"]) == 0
+    assert first is not None
+    assert api.main.TOKEN is not None
+    assert first != api.main.TOKEN
+
+
+@pytest.mark.parametrize("host", [None, "127.0.0.2", "::1", "localhost", "LOCALHOST"])
+@pytest.mark.usefixtures("recorder")
+def test_no_token_is_generated_for_a_loopback_host(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, host: str | None
+) -> None:
+    monkeypatch.setattr(api.main, "TOKEN", "stale-synthetic-token")
+    assert api.serve.main([] if host is None else ["--host", host]) == 0
+    assert api.main.TOKEN is None
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "0.0.0.0"])
+@pytest.mark.usefixtures("recorder")
+def test_a_set_token_is_used_and_never_written(
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    value = "synthetic-token-0123"
+    monkeypatch.setenv("NORTHPLAN_TOKEN", value)
+    caplog.set_level(logging.DEBUG)
+    assert api.serve.main(["--host", host]) == 0
+    assert value == api.main.TOKEN
+    captured = capsys.readouterr()
+    assert value not in captured.out
+    assert value not in captured.err
+    assert value not in caplog.text
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "x" * 15, "x" * 15 + " ", "x" * 15 + "\t", "x" * 16 + "\n", "x" * 15 + "\u00e9"],
+    ids=["empty", "short", "space", "tab", "newline", "non-ascii"],
+)
+def test_a_token_breaking_the_rules_refuses_to_start(
+    recorder: Recorder,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("NORTHPLAN_TOKEN", value)
+    assert run_serve([]) == 2
+    err = capsys.readouterr().err
+    assert err == TOKEN_REFUSAL
+    if value:
+        assert value not in err
+    assert recorder.calls == []
+    assert api.main.TOKEN is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["x" * 16, "".join(chr(code) for code in range(ord("!"), ord("~") + 1))],
+    ids=["sixteen", "every-printable"],
+)
+def test_a_token_at_the_bounds_is_accepted(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NORTHPLAN_TOKEN", value)
+    assert api.serve.main([]) == 0
+    assert len(recorder.calls) == 1
+    assert value == api.main.TOKEN
+
+
+@pytest.mark.usefixtures("recorder")
+def test_the_token_is_checked_before_the_params(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NORTHPLAN_TOKEN", "x" * 15)
+    assert run_serve(["--params", str(tmp_path / "absent")]) == 2
+    assert capsys.readouterr().err == TOKEN_REFUSAL
+
+
+@pytest.mark.usefixtures("recorder")
+def test_no_token_is_generated_when_the_start_fails(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert api.serve.main(["--host", "0.0.0.0", "--params", str(tmp_path / "absent")]) == 1
+    assert "NORTHPLAN_TOKEN is not set" not in capsys.readouterr().err
+    assert api.main.TOKEN is None
+
+
+def _forwarded_status(config_kwargs: dict[str, object]) -> int:
+    """Status of a LAN client claiming X-Forwarded-For 127.0.0.1, through uvicorn's stack."""
+    config = uvicorn.Config(api.main.app, log_config=None, **config_kwargs)  # type: ignore[arg-type]
+    config.load()
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/health",
+        "raw_path": b"/health",
+        "query_string": b"",
+        "headers": [(b"host", b"localhost"), (b"x-forwarded-for", b"127.0.0.1")],
+        "scheme": "http",
+        "http_version": "1.1",
+        "client": ("192.168.1.5", 40000),
+        "server": ("127.0.0.1", 8000),
+    }
+    assert config.loaded_app is not None
+    asyncio.run(config.loaded_app(scope, receive, send))
+    return sent[0]["status"]
+
+
+def test_forwarded_headers_cannot_make_a_lan_client_loopback(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
+    assert api.serve.main(["--host", "0.0.0.0"]) == 0
+    kwargs = recorder.kwargs[0]
+    monkeypatch.setattr(api.main, "TOKEN", "synthetic-token-0123")
+    assert _forwarded_status(kwargs) == 401
+    assert _forwarded_status({**kwargs, "proxy_headers": True}) == 200
+
+
+def test_the_image_runs_northplan_serve_on_every_interface() -> None:
+    dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
+    commands = [
+        line
+        for line in dockerfile.read_text(encoding="utf-8").splitlines()
+        if line.startswith("CMD ")
+    ]
+    assert len(commands) == 1
+    assert json.loads(commands[0][len("CMD ") :]) == ["northplan-serve", "--host", "0.0.0.0"]

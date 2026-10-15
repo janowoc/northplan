@@ -13,8 +13,10 @@ response models against the tables they mirror.
 from __future__ import annotations
 
 import asyncio
+import base64
 import errno
 import importlib.metadata
+import ipaddress
 import json
 import os
 import time
@@ -57,7 +59,7 @@ GRID_LINE = "elections.cpp_start_age_years.a: [60, 65, 70]"
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app, base_url="http://localhost")
+    return TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000))
 
 
 def example_text() -> str:
@@ -675,7 +677,12 @@ class TestRoutedParameterError:
 
     def test_it_is_a_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(report_run, "prepare_run", self.raise_routed)
-        quiet = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
+        quiet = TestClient(
+            app,
+            base_url="http://localhost",
+            client=("127.0.0.1", 50000),
+            raise_server_exceptions=False,
+        )
         response = quiet.post(
             "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
         )
@@ -684,7 +691,7 @@ class TestRoutedParameterError:
     def test_it_propagates_to_the_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(report_run, "prepare_run", self.raise_routed)
         with pytest.raises(RoutedParameterError):
-            TestClient(app, base_url="http://localhost").post(
+            TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).post(
                 "/api/simulate?paths=2", content=example_text().encode(), headers=YAML
             )
 
@@ -695,7 +702,12 @@ class TestParameterErrorsAnywhereInTheRun:
         raise MissingParameterError("missing for this test")
 
     def post(self, path: str, quiet: bool = False):
-        client = TestClient(app, base_url="http://localhost", raise_server_exceptions=not quiet)
+        client = TestClient(
+            app,
+            base_url="http://localhost",
+            client=("127.0.0.1", 50000),
+            raise_server_exceptions=not quiet,
+        )
         return client.post(path, content=example_text().encode(), headers=YAML)
 
     def test_simulate_evaluate_is_a_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -943,7 +955,13 @@ REPEATED_HOST = (
 )
 
 
-def _drive(headers: list[tuple[bytes, bytes]], path: str = "/health") -> tuple[int, dict]:
+def _drive(
+    headers: list[tuple[bytes, bytes]],
+    path: str = "/health",
+    *,
+    client: tuple[str, int] | None = ("127.0.0.1", 50000),
+    with_client: bool = True,
+) -> tuple[int, dict]:
     """Call the ASGI app with exactly these headers; the status and the JSON body."""
     sent: list[dict] = []
 
@@ -963,6 +981,8 @@ def _drive(headers: list[tuple[bytes, bytes]], path: str = "/health") -> tuple[i
         "scheme": "http",
         "http_version": "1.1",
     }
+    if with_client:
+        scope["client"] = client
     asyncio.run(app(scope, receive, send))
     body = b"".join(m.get("body", b"") for m in sent[1:])
     return sent[0]["status"], json.loads(body)
@@ -1015,12 +1035,280 @@ def test_host_check_refuses_a_missing_host() -> None:
         "headers": [],
         "scheme": "http",
         "http_version": "1.1",
+        "client": ("127.0.0.1", 50000),
     }
     asyncio.run(app(scope, receive, send))
 
     assert sent[0]["status"] == 400
     body = b"".join(m.get("body", b"") for m in sent[1:])
     assert json.loads(body)["detail"].startswith("host None is not served")
+
+
+# =============================================================================
+# The token: a client that is not on this machine
+# =============================================================================
+
+SYNTHETIC_TOKEN = "synthetic-token-0123"
+LAN_PEER = ("192.168.1.5", 40000)
+CHALLENGE = (
+    "this server needs its token: send it as the password of HTTP Basic authentication, "
+    "with any user name. It is the NORTHPLAN_TOKEN the server was started with or, when "
+    "that was not set, the one it wrote to its log as it started."
+)
+NO_TOKEN = (
+    "this server was started without a token, so it answers only a client on its own "
+    "machine that connects to localhost, 127.0.0.1 or [::1]."
+)
+
+
+def _basic(user: str, password: str) -> dict[str, str]:
+    raw = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {raw}"}
+
+
+def _lan_client(peer: tuple[str, int] = LAN_PEER) -> TestClient:
+    return TestClient(app, base_url="http://localhost", client=peer)
+
+
+@pytest.fixture
+def token(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setattr(api.main, "TOKEN", SYNTHETIC_TOKEN)
+    return SYNTHETIC_TOKEN
+
+
+@pytest.mark.parametrize(
+    ("method", "path"), [("get", "/health"), ("get", "/"), ("post", "/api/simulate")]
+)
+@pytest.mark.usefixtures("token")
+def test_a_lan_client_without_the_token_is_challenged(method: str, path: str) -> None:
+    response = getattr(_lan_client(), method)(path)
+    assert response.status_code == 401
+    assert response.json() == {"detail": CHALLENGE}
+    assert response.headers["www-authenticate"] == 'Basic realm="northplan"'
+
+
+@pytest.mark.usefixtures("token")
+def test_a_lan_client_with_a_wrong_token_is_challenged() -> None:
+    response = _lan_client().get("/health", headers=_basic("u", "wrong-token-0123456"))
+    assert response.status_code == 401
+    assert response.json() == {"detail": CHALLENGE}
+    assert response.headers["www-authenticate"] == 'Basic realm="northplan"'
+
+
+@pytest.mark.parametrize(
+    "host", ["localhost", "evil.example:8000", "192.168.1.5:8123", "testserver"]
+)
+def test_a_lan_client_with_the_token_is_served_under_any_host(token: str, host: str) -> None:
+    response = _lan_client().get("/health", headers={"Host": host, **_basic("u", token)})
+    assert response.status_code == 200
+
+
+def test_a_lan_client_with_the_token_is_served_with_no_host(token: str) -> None:
+    status, body = _drive(
+        [(b"authorization", _basic("u", token)["Authorization"].encode())], client=LAN_PEER
+    )
+    assert status == 200
+    assert body == {"status": "ok"}
+
+
+def test_a_lan_client_with_the_token_can_run_a_simulation(token: str) -> None:
+    response = _lan_client().post(
+        "/api/simulate?paths=2",
+        content=example_text().encode(),
+        headers={**YAML, **_basic("u", token)},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("user", ["", "alice"])
+def test_any_user_name_is_accepted(token: str, user: str) -> None:
+    response = _lan_client().get("/health", headers=_basic(user, token))
+    assert response.status_code == 200
+
+
+def test_a_token_may_contain_a_colon(monkeypatch: pytest.MonkeyPatch) -> None:
+    colon_token = "colon:in:the:token-0"
+    monkeypatch.setattr(api.main, "TOKEN", colon_token)
+    served = _lan_client().get("/health", headers=_basic("u", colon_token))
+    assert served.status_code == 200
+    # Without a user name the first colon splits the token itself: user "colon".
+    raw = base64.b64encode(colon_token.encode()).decode()
+    refused = _lan_client().get("/health", headers={"Authorization": f"Basic {raw}"})
+    assert refused.status_code == 401
+
+
+def _b64(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        f"Bearer {_b64('u:' + SYNTHETIC_TOKEN)}",
+        "Basic",
+        "Basic !!!",
+        f"Basic {_b64(SYNTHETIC_TOKEN)}",
+        f"Basic {_b64(SYNTHETIC_TOKEN + ':')}",
+    ],
+)
+@pytest.mark.usefixtures("token")
+def test_a_malformed_authorization_is_no_token(authorization: str) -> None:
+    response = _lan_client().get("/health", headers={"Authorization": authorization})
+    assert response.status_code == 401
+
+
+def test_two_authorization_headers_are_no_token(token: str) -> None:
+    valid = _basic("u", token)["Authorization"].encode()
+    status, body = _drive([(b"authorization", valid), (b"authorization", valid)], client=LAN_PEER)
+    assert status == 401
+    assert body == {"detail": CHALLENGE}
+
+
+@pytest.mark.parametrize("scheme", ["basic", "BASIC"])
+def test_the_basic_scheme_is_case_insensitive(token: str, scheme: str) -> None:
+    raw = _b64(f"u:{token}")
+    response = _lan_client().get("/health", headers={"Authorization": f"{scheme} {raw}"})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_a_lan_client_is_forbidden_when_the_server_has_no_token(
+    monkeypatch: pytest.MonkeyPatch, authorized: bool
+) -> None:
+    monkeypatch.setattr(api.main, "TOKEN", None)
+    headers = _basic("u", SYNTHETIC_TOKEN) if authorized else {}
+    response = _lan_client().get("/health", headers=headers)
+    assert response.status_code == 403
+    assert response.json() == {"detail": NO_TOKEN}
+    assert "www-authenticate" not in response.headers
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+@pytest.mark.usefixtures("token")
+def test_a_rebinding_request_is_refused_without_a_challenge(authorized: bool) -> None:
+    headers = {"Host": "evil.example"}
+    if authorized:
+        headers.update(_basic("u", "wrong-token-0123456"))
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).get(
+        "/health", headers=headers
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "host 'evil.example' is not served: this server answers only localhost, "
+        "127.0.0.1 and [::1], because it is for this machine alone."
+    )
+    assert "www-authenticate" not in response.headers
+
+
+def test_a_loopback_client_with_a_foreign_host_and_the_token_is_served(token: str) -> None:
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).get(
+        "/health", headers={"Host": "evil.example", **_basic("u", token)}
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("has_token", [False, True])
+def test_a_loopback_client_needs_no_token(monkeypatch: pytest.MonkeyPatch, has_token: bool) -> None:
+    monkeypatch.setattr(api.main, "TOKEN", SYNTHETIC_TOKEN if has_token else None)
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).get(
+        "/health"
+    )
+    assert response.status_code == 200
+
+
+def test_a_repeated_host_is_refused_before_the_token(token: str) -> None:
+    status, body = _drive(
+        [
+            (b"host", b"localhost"),
+            (b"host", b"localhost"),
+            (b"authorization", _basic("u", token)["Authorization"].encode()),
+        ],
+        client=LAN_PEER,
+    )
+    assert status == 400
+    assert body["detail"] == REPEATED_HOST
+
+
+@pytest.mark.parametrize("peer", ["127.0.0.1", "127.5.5.5", "::1", "::ffff:127.0.0.1"])
+@pytest.mark.usefixtures("token")
+def test_loopback_peers_need_no_token(peer: str) -> None:
+    assert _lan_client((peer, 40000)).get("/health").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "peer",
+    ["172.17.0.1", "::ffff:172.17.0.1", "::2", "192.168.1.209", "testclient", "localhost"],
+)
+@pytest.mark.usefixtures("token")
+def test_other_peers_need_the_token(peer: str) -> None:
+    assert _lan_client((peer, 40000)).get("/health").status_code == 401
+
+
+@pytest.mark.usefixtures("token")
+def test_a_scope_with_no_client_needs_the_token() -> None:
+    status, _ = _drive([(b"host", b"localhost")], client=None)
+    assert status == 401
+    status, _ = _drive([(b"host", b"localhost")], with_client=False)
+    assert status == 401
+
+
+@pytest.mark.parametrize(
+    "text", ["127.0.0.1", "127.255.255.255", "::1", "::ffff:127.0.0.1", "::ffff:127.9.9.9"]
+)
+def test_is_loopback_address_true(text: str) -> None:
+    assert api.main.is_loopback_address(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "testclient",
+        "localhost",
+        "172.17.0.1",
+        "::ffff:172.17.0.1",
+        "::2",
+        "192.168.1.209",
+        "",
+        "not an address",
+    ],
+)
+def test_is_loopback_address_false(text: str) -> None:
+    assert api.main.is_loopback_address(text) is False
+
+
+def test_a_mapped_loopback_address_is_loopback_where_python_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_loopback", property(lambda _self: False))
+    assert api.main.is_loopback_address("::ffff:127.0.0.1") is True
+    assert api.main.is_loopback_address("::ffff:172.17.0.1") is False
+
+
+@pytest.mark.usefixtures("token")
+def test_a_non_ascii_authorization_is_no_token() -> None:
+    status, body = _drive(
+        [(b"host", b"localhost"), (b"authorization", b"Basic \xe9")], client=LAN_PEER
+    )
+    assert status == 401
+    assert body == {"detail": CHALLENGE}
+
+
+@pytest.mark.usefixtures("token")
+def test_a_non_ascii_authorization_on_a_rebinding_request_is_a_400() -> None:
+    status, body = _drive([(b"host", b"evil.example"), (b"authorization", b"Basic \xe9")])
+    assert status == 400
+    assert body == {
+        "detail": "host 'evil.example' is not served: this server answers only localhost, "
+        "127.0.0.1 and [::1], because it is for this machine alone."
+    }
+
+
+@pytest.mark.usefixtures("token")
+def test_a_lan_client_is_checked_before_the_query() -> None:
+    response = _lan_client().post(
+        "/api/simulate?nominl=1", content=example_text().encode(), headers=YAML
+    )
+    assert response.status_code == 401
 
 
 OVERSIZE = "request body is larger than 1,048,576 bytes; a scenario is a few kilobytes."
@@ -1100,6 +1388,7 @@ def test_content_length_with_thousands_of_digits_is_413() -> None:
         ],
         "scheme": "http",
         "http_version": "1.1",
+        "client": ("127.0.0.1", 50000),
     }
     asyncio.run(app(scope, receive, send))
     assert sent[0]["status"] == 413
@@ -1220,6 +1509,7 @@ def test_content_length_with_leading_zeros_within_the_limit_is_read() -> None:
         ],
         "scheme": "http",
         "http_version": "1.1",
+        "client": ("127.0.0.1", 50000),
     }
     asyncio.run(app(scope, receive, send))
     assert sent[0]["status"] == 422

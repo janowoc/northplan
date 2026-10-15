@@ -369,7 +369,7 @@ class Outcome:
 
 
 def api_answer(case: Case) -> tuple[int, object]:
-    response = TestClient(app, base_url="http://localhost").post(
+    response = TestClient(app, base_url="http://localhost", client=("127.0.0.1", 50000)).post(
         "/api/simulate", params=case.query, content=case.text.encode(), headers=YAML
     )
     return response.status_code, response.json()
