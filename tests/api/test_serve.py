@@ -543,14 +543,14 @@ def test_a_copied_params_root_gives_the_same_response(
 TOKEN_REFUSAL = (
     "northplan-serve: error: NORTHPLAN_TOKEN must be at least 16 characters, each a "
     "printable ASCII character other than a space. To make one: python3 -c "
-    "'import secrets; print(secrets.token_urlsafe(32))'\n"
+    "'import secrets; print(secrets.token_hex(16))'\n"
 )
 
 
 def _generated_line(token: str) -> str:
     return (
-        f"northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is {token}; "
-        "it is new on every start.\n"
+        "northplan-serve: NORTHPLAN_TOKEN is not set; "
+        f"this run's token, new on every start, is {token}\n"
     )
 
 
@@ -567,7 +567,7 @@ def test_a_token_is_generated_for_a_host_other_than_loopback(
     assert api.serve.main(["--host", host]) == 0
     token = api.main.TOKEN
     assert isinstance(token, str)
-    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
+    assert re.fullmatch(r"[0-9a-f]{32}", token)
     captured = capsys.readouterr()
     assert captured.err == _generated_line(token)
     assert captured.out == ""

@@ -188,7 +188,7 @@ jobs:
               grep -q "Uvicorn running" <<< "$logs" && break
               sleep 1
             done
-            grep -qE "^northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is [A-Za-z0-9_-]{43}; it is new on every start\.$" <<< "$logs" || { echo "$logs"; echo "$arch: no generated token in the log" >&2; exit 1; }
+            grep -qE "^northplan-serve: NORTHPLAN_TOKEN is not set; this run's token, new on every start, is [0-9a-f]{32}$" <<< "$logs" || { echo "$logs"; echo "$arch: no generated token in the log" >&2; exit 1; }
             docker rm -f "$cid" > /dev/null
           done
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

@@ -204,7 +204,7 @@ starts and writes it to its log, on the line that begins
 or `docker logs` shows it; Portainer shows it in the container's logs. To keep
 one token across restarts, set `NORTHPLAN_TOKEN` to at least 16 printable ASCII
 characters without spaces, such as the output of
-`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`; in Portainer,
+`python3 -c 'import secrets; print(secrets.token_hex(16))'`; in Portainer,
 add it as an environment variable of the container. A token you set is never
 written to the log.
 

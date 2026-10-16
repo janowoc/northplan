@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             2,
             "northplan-serve: error: NORTHPLAN_TOKEN must be at least 16 characters, each a "
             "printable ASCII character other than a space. To make one: python3 -c "
-            "'import secrets; print(secrets.token_urlsafe(32))'\n",
+            "'import secrets; print(secrets.token_hex(16))'\n",
         )
 
     root = args.params if args.params is not None else DEFAULT_PARAMS_ROOT
@@ -170,10 +170,10 @@ def main(argv: list[str] | None = None) -> int:
     if token is None and not (
         args.host.lower() == "localhost" or api.main.is_loopback_address(args.host)
     ):
-        token = secrets.token_urlsafe(32)
+        token = secrets.token_hex(16)
         print(
-            f"northplan-serve: NORTHPLAN_TOKEN is not set, so this run's token is {token}; "
-            "it is new on every start.",
+            "northplan-serve: NORTHPLAN_TOKEN is not set; "
+            f"this run's token, new on every start, is {token}",
             file=sys.stderr,
         )
     api.main.TOKEN = token
