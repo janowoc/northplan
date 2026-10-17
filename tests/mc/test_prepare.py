@@ -12,12 +12,16 @@ committed scenarios; each mutation below starts from a fresh
 from __future__ import annotations
 
 import dataclasses
+import functools
 import re
 import shutil
+import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pydantic
 import pytest
 import yaml
 
@@ -34,14 +38,22 @@ from engine.core.indexation import real_year
 from engine.core.timeline import MONTHS_PER_YEAR
 from engine.mc.prepare import (
     MAX_CANDIDATE_PATHS,
+    MAX_CANDIDATES,
     MAX_PATHS,
     PreparedRun,
     RunTooLargeError,
+    check_scenario,
     evaluate,
     prepare_run,
 )
 from engine.mc.simulate import SimulationResult, run
-from engine.params.loader import DEFAULT_PARAMS_ROOT, load_year
+from engine.params.loader import (
+    DEFAULT_PARAMS_ROOT,
+    MissingParameterError,
+    ParamError,
+    ParamYear,
+    load_year,
+)
 from engine.policy.build import build_policy, expand_grid
 from engine.scenario import (
     LifespanNotRepresentableError,
@@ -558,3 +570,189 @@ def test_prepare_run_refuses_before_expanding_or_drawing(
 
     with pytest.raises(RunTooLargeError, match="110 candidate policies"):
         prepare_run(_sized(MAX_PATHS, _WIDE_GRID))
+
+
+# =============================================================================
+# check_scenario: the checks prepare_run makes for the scenario's own sake
+# =============================================================================
+
+
+def _recording_loader() -> tuple[list[int], list[ParamYear], Callable[[int], ParamYear]]:
+    """A loader wrapping ``load_year`` that records its years and what it returned."""
+    calls: list[int] = []
+    returned: list[ParamYear] = []
+
+    def load(year: int) -> ParamYear:
+        calls.append(year)
+        params = load_year(year)
+        returned.append(params)
+        return params
+
+    return calls, returned, load
+
+
+def _forbidden_loader(_year: int) -> ParamYear:
+    raise AssertionError("loaded the parameter year before the size check")
+
+
+def test_check_scenario_returns_the_expanded_scenario_and_what_load_params_returned() -> None:
+    values = _values(EXAMPLE)
+    values["grid"] = {"elections.cpp_start_age_years.a": [60, 65]}
+    scenario = Scenario.model_validate(values)
+    _calls, returned, load = _recording_loader()
+
+    expanded, params = check_scenario(scenario, paths=None, load_params=load)
+
+    assert expanded == prepare_run(scenario).scenario
+    assert not expanded.grid
+    assert len(returned) == 1
+    assert params is returned[0]
+
+
+def test_check_scenario_calls_load_params_once_with_the_expanded_start_year() -> None:
+    scenario = Scenario.model_validate(_values(EXAMPLE))
+    calls, _returned, load = _recording_loader()
+    check_scenario(scenario, paths=None, load_params=load)
+    assert calls == [scenario.start_year]
+
+
+def test_check_scenario_paths_none_counts_the_scenarios_n_paths() -> None:
+    with pytest.raises(RunTooLargeError, match="100,001 paths"):
+        check_scenario(_sized(MAX_PATHS + 1), paths=None, load_params=_forbidden_loader)
+
+
+def test_check_scenario_counts_the_given_paths_not_the_scenarios() -> None:
+    expanded, _params = check_scenario(_sized(MAX_PATHS + 1), paths=1, load_params=load_year)
+    assert expanded.n_paths == MAX_PATHS + 1
+
+
+def test_check_scenario_refuses_paths_over_the_limit() -> None:
+    with pytest.raises(RunTooLargeError, match="100,001 paths"):
+        check_scenario(_sized(10), paths=MAX_PATHS + 1, load_params=_forbidden_loader)
+
+
+def test_check_scenario_refuses_candidates_over_the_limit() -> None:
+    scenario = _sized(10, _MANY_CANDIDATES_GRID)
+    assert MAX_CANDIDATES < 1_331
+    assert MAX_CANDIDATE_PATHS >= 1_331 * 1
+    with pytest.raises(RunTooLargeError, match="the run has 1,331 candidate policies, and"):
+        check_scenario(scenario, paths=1, load_params=_forbidden_loader)
+
+
+def test_check_scenario_refuses_candidates_times_paths_over_the_limit() -> None:
+    scenario = _sized(MAX_PATHS, _WIDE_GRID)
+    assert 11 * 10 * MAX_PATHS > MAX_CANDIDATE_PATHS
+    with pytest.raises(RunTooLargeError) as excinfo:
+        check_scenario(scenario, paths=None, load_params=_forbidden_loader)
+    message = str(excinfo.value)
+    assert "the run has 110 candidate policies on 100,000 paths each" in message
+    assert "11,000,000 in all" in message
+
+
+def test_check_scenario_refuses_before_expanding_or_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("expanded before the size check")
+
+    monkeypatch.setattr(prepare_module, "expand_grid", forbidden)
+
+    with pytest.raises(RunTooLargeError, match="100,001 paths"):
+        check_scenario(_sized(MAX_PATHS + 1), paths=None, load_params=_forbidden_loader)
+    with pytest.raises(RunTooLargeError, match="110 candidate policies"):
+        check_scenario(_sized(MAX_PATHS, _WIDE_GRID), paths=None, load_params=_forbidden_loader)
+
+
+def test_check_scenario_refuses_a_grid_value_the_schema_refuses() -> None:
+    values = _values(EXAMPLE)
+    values["grid"] = {"elections.rrif_conversion.fraction": [0.5, 1.5]}
+    scenario = Scenario.model_validate(values)
+    calls, _returned, load = _recording_loader()
+
+    with pytest.raises(
+        pydantic.ValidationError, match=re.escape("rrif_conversion.fraction")
+    ) as excinfo:
+        check_scenario(scenario, paths=None, load_params=load)
+
+    assert "input_value=1.5" in str(excinfo.value)
+    assert calls == []
+
+
+def test_check_scenario_lets_the_loaders_error_through(tmp_path: Path) -> None:
+    scenario = Scenario.model_validate(_values(EXAMPLE))
+    with pytest.raises(ParamError):
+        check_scenario(
+            scenario, paths=None, load_params=functools.partial(load_year, root=tmp_path)
+        )
+
+
+def test_check_scenario_lets_a_guards_parameter_error_through() -> None:
+    def without_earliest(year: int) -> ParamYear:
+        loaded = load_year(year)
+        start_age = {
+            k: v for k, v in loaded.cpp.values["start_age"].items() if k != "earliest_months"
+        }
+        values = types.MappingProxyType(
+            {**loaded.cpp.values, "start_age": types.MappingProxyType(start_age)}
+        )
+        cpp = dataclasses.replace(loaded.cpp, values=values)
+        return dataclasses.replace(loaded, sets=types.MappingProxyType({**loaded.sets, "cpp": cpp}))
+
+    scenario = Scenario.model_validate(_values(EXAMPLE))
+    with pytest.raises(
+        MissingParameterError, match=re.escape("cpp.yaml[start_age.earliest_months]")
+    ):
+        check_scenario(scenario, paths=None, load_params=without_earliest)
+
+
+def test_check_scenario_refuses_a_parameter_year_for_another_year() -> None:
+    def wrong_year(year: int) -> ParamYear:
+        return dataclasses.replace(load_year(year), year=year + 1)
+
+    scenario = Scenario.model_validate(_values(EXAMPLE))
+    with pytest.raises(ValueError, match=re.escape("params is for tax year 2027")) as excinfo:
+        check_scenario(scenario, paths=None, load_params=wrong_year)
+    assert type(excinfo.value) is ValueError
+
+
+def test_check_scenario_refuses_a_start_age_the_year_does_not_allow() -> None:
+    params = load_year(2026)
+    assert params.cpp.number("start_age.earliest_months") > 50 * MONTHS_PER_YEAR
+
+    values = _values(EXAMPLE)
+    values["grid"] = {"elections.cpp_start_age_years.a": [50, 65]}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
+        check_scenario(scenario, paths=None, load_params=load_year)
+
+
+def test_check_scenario_refuses_a_person_past_the_life_table() -> None:
+    params = load_year(2026)
+    terminal_age_years = int(params["mortality"].number("terminal_age_years"))
+
+    values = _values(EXAMPLE)
+    age_months = (terminal_age_years + 1) * MONTHS_PER_YEAR
+    birth_year, birth_month = _birth_for_age_at_open(values["start_year"], age_months)
+    _append_minimal_person(values, "b", birth_year, birth_month)
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(LifespanNotRepresentableError) as excinfo:
+        check_scenario(scenario, paths=None, load_params=load_year)
+
+    assert "'b'" in str(excinfo.value)
+
+
+def test_check_scenario_runs_start_ages_before_lifespan() -> None:
+    params = load_year(2026)
+    terminal_age_years = int(params["mortality"].number("terminal_age_years"))
+
+    values = _values(EXAMPLE)
+    age_months = (terminal_age_years + 1) * MONTHS_PER_YEAR
+    birth_year, birth_month = _birth_for_age_at_open(values["start_year"], age_months)
+    _append_minimal_person(values, "b", birth_year, birth_month)
+    values["grid"] = {"elections.cpp_start_age_years.a": [50, 65]}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
+        check_scenario(scenario, paths=None, load_params=load_year)

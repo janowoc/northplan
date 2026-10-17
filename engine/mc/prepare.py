@@ -5,13 +5,16 @@
 
 :func:`prepare_run` is the one entry point that turns a
 :class:`~engine.scenario.schema.Scenario` into a :class:`PreparedRun`: it
-expands the grid, loads the parameter year, runs the load-time guards
+runs :func:`check_scenario`, which checks the run's size, expands the grid,
+loads the parameter year and runs the load-time guards
 (:func:`~engine.scenario.start_ages.check_start_ages`,
-:func:`~engine.scenario.lifespan.check_lifespan`) on the expansion, checks the
-parameter year's shape -- ``resp``'s reach-back, via
+:func:`~engine.scenario.lifespan.check_lifespan`) on the expansion; then it
+checks the parameter year's shape -- ``resp``'s reach-back, via
 :func:`~engine.accounts.resp.governing_income_year_offset` -- and builds the
 market inputs and the common random numbers every candidate policy shares.
 :func:`evaluate` then runs one candidate spec against a :class:`PreparedRun`.
+A caller that only needs to know whether a run would refuse a scenario calls
+:func:`check_scenario` alone.
 
 Invariant: every spec :func:`evaluate` runs has passed the guards, because it
 must be one of ``prepared.scenario.policies`` -- the grid-expanded, guard-passed
@@ -27,8 +30,9 @@ what this module is a convenience over, not a replacement for.
 
 from __future__ import annotations
 
+import functools
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +62,7 @@ __all__ = [
     "MAX_PATHS",
     "PreparedRun",
     "RunTooLargeError",
+    "check_scenario",
     "evaluate",
     "prepare_run",
 ]
@@ -102,6 +107,69 @@ class PreparedRun:
     draws: RandomDraws
 
 
+def check_scenario(
+    scenario: Scenario, *, paths: int | None, load_params: Callable[[int], ParamYear]
+) -> tuple[Scenario, ParamYear]:
+    """Check a scenario as :func:`prepare_run` does, before anything is built.
+
+    Raises on the first failure, in this order: the run's size, before the grid is
+    expanded; the grid's expansion; ``load_params``; the start ages; the lifespan. A
+    guard's lookups in the parameter year, and its check of that year against
+    ``start_year``, fail within the guard's own step.
+
+    Args:
+        scenario: The scenario as loaded (grid may be non-empty).
+        paths: The paths the run would draw; ``None`` counts ``scenario.n_paths``.
+        load_params: Returns the parameter year for a start year. Called once, with the
+            expanded scenario's ``start_year``, after the size checks and the grid's
+            expansion pass.
+
+    Returns:
+        ``(expanded, params)``: the grid-expanded scenario (``grid`` empty) and what
+        ``load_params`` returned for its start year.
+
+    Raises:
+        RunTooLargeError: More than ``MAX_PATHS`` paths, more than ``MAX_CANDIDATES``
+            candidate policies, or more than ``MAX_CANDIDATE_PATHS`` candidate policies
+            times paths.
+        pydantic.ValidationError: A ``ValueError`` subclass, raised by
+            :func:`~engine.policy.build.expand_grid` for a grid value the schema refuses.
+        ValueError: ``load_params`` returned a parameter year for a year other than the
+            expanded scenario's ``start_year``.
+        engine.params.loader.ParamError: A subclass, from ``load_params`` when it is
+            ``load_year`` or wraps it, or from a guard's lookup in the parameter year it
+            returned; any other loader's exception passes through.
+        engine.scenario.start_ages.StartAgeNotAllowedError: A CPP, OAS, or RRIF
+            conversion age the parameter year does not allow.
+        engine.scenario.lifespan.LifespanNotRepresentableError: A person or household
+            the life table cannot represent.
+    """
+    paths = paths if paths is not None else scenario.n_paths
+    candidates = len(scenario.policies) * math.prod(len(v) for v in scenario.grid.values())
+    if paths > MAX_PATHS:
+        raise RunTooLargeError(
+            f"the run asks for {paths:,} paths, and a run may have at most {MAX_PATHS:,}. "
+            "Lower n_paths, or the paths given for this run."
+        )
+    if candidates > MAX_CANDIDATES:
+        raise RunTooLargeError(
+            f"the run has {candidates:,} candidate policies, and a run may have at most "
+            f"{MAX_CANDIDATES:,}. Fewer policies or grid values bring it under."
+        )
+    if candidates * paths > MAX_CANDIDATE_PATHS:
+        raise RunTooLargeError(
+            f"the run has {candidates:,} candidate policies on {paths:,} paths each, "
+            f"{candidates * paths:,} in all, and a run may have at most "
+            f"{MAX_CANDIDATE_PATHS:,}. Fewer policies, grid values or paths bring it under."
+        )
+
+    expanded = expand_grid(scenario)
+    params = load_params(expanded.start_year)
+    check_start_ages(expanded, params)
+    check_lifespan(expanded, params)
+    return expanded, params
+
+
 def prepare_run(
     scenario: Scenario,
     *,
@@ -132,7 +200,8 @@ def prepare_run(
         pydantic.ValidationError: A ``ValueError`` subclass, raised by
             :func:`~engine.policy.build.expand_grid` for a grid value the
             schema refuses.
-        engine.params.loader.ParamError: A subclass, from ``load_year``.
+        engine.params.loader.ParamError: A subclass, from ``load_year`` or from a
+            lookup in the parameter year it loaded.
         engine.scenario.start_ages.StartAgeNotAllowedError: A CPP, OAS, or
             RRIF conversion age the parameter year does not allow, including
             a CPP or OAS pension in pay for someone too young to receive it.
@@ -149,29 +218,10 @@ def prepare_run(
             "the deterministic run is always exactly one path."
         )
 
-    paths = 1 if deterministic else n_paths if n_paths is not None else scenario.n_paths
-    candidates = len(scenario.policies) * math.prod(len(v) for v in scenario.grid.values())
-    if paths > MAX_PATHS:
-        raise RunTooLargeError(
-            f"the run asks for {paths:,} paths, and a run may have at most {MAX_PATHS:,}. "
-            "Lower n_paths, or the paths given for this run."
-        )
-    if candidates > MAX_CANDIDATES:
-        raise RunTooLargeError(
-            f"the run has {candidates:,} candidate policies, and a run may have at most "
-            f"{MAX_CANDIDATES:,}. Fewer policies or grid values bring it under."
-        )
-    if candidates * paths > MAX_CANDIDATE_PATHS:
-        raise RunTooLargeError(
-            f"the run has {candidates:,} candidate policies on {paths:,} paths each, "
-            f"{candidates * paths:,} in all, and a run may have at most "
-            f"{MAX_CANDIDATE_PATHS:,}. Fewer policies, grid values or paths bring it under."
-        )
-
-    expanded = expand_grid(scenario)
-    params = load_year(expanded.start_year, params_root)
-    check_start_ages(expanded, params)
-    check_lifespan(expanded, params)
+    paths = 1 if deterministic else n_paths
+    expanded, params = check_scenario(
+        scenario, paths=paths, load_params=functools.partial(load_year, root=params_root)
+    )
     real_params = real_year(params, expanded.assumptions.inflation)
     resp.governing_income_year_offset(real_params.resp)
     market = build_market_inputs(expanded.assumptions)
