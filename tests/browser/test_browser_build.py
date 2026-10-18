@@ -16,7 +16,14 @@ from types import ModuleType
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SITE_FILES = {"index.html", "worker.js", "northplan.zip", "example.yaml", "build-info.json"}
+SITE_FILES = {
+    "index.html",
+    "worker.js",
+    "northplan.zip",
+    "example.yaml",
+    "minimal.yaml",
+    "build-info.json",
+}
 
 
 def load_build() -> ModuleType:
@@ -52,7 +59,7 @@ def site(tmp_path_factory: pytest.TempPathFactory, build_module: ModuleType) -> 
     return out
 
 
-def test_the_site_holds_exactly_the_five_files(site: Path) -> None:
+def test_the_site_holds_exactly_its_files(site: Path) -> None:
     assert {path.name for path in site.iterdir()} == SITE_FILES
     assert all(path.is_file() for path in site.iterdir())
 
@@ -63,6 +70,17 @@ def test_the_pages_files_are_byte_copies(site: Path) -> None:
     assert (site / "example.yaml").read_bytes() == (
         REPO_ROOT / "scenarios" / "example.yaml"
     ).read_bytes()
+
+
+def test_the_minimal_scenario_is_a_byte_copy(site: Path) -> None:
+    assert (site / "minimal.yaml").read_bytes() == (
+        REPO_ROOT / "scenarios" / "minimal.yaml"
+    ).read_bytes()
+
+
+def test_the_archive_ships_the_editors_calls(site: Path) -> None:
+    with zipfile.ZipFile(site / "northplan.zip") as archive:
+        assert "report/editor_calls.py" in archive.namelist()
 
 
 def test_the_archive_holds_the_listed_files_and_the_entry_point_only(site: Path) -> None:
@@ -141,6 +159,7 @@ def make_repository(root: Path) -> None:
         "browser/worker.js": "// worker\n",
         "browser/northplan_browser.py": "# entry\n",
         "scenarios/example.yaml": "name: x\n",
+        "scenarios/minimal.yaml": "name: y\n",
         "README.md": "readme\n",
     }.items():
         path = root / relative

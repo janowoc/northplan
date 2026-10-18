@@ -14,5 +14,6 @@ tests/
 docs/
 scenarios/
 !scenarios/example.yaml
+!scenarios/minimal.yaml
 *.local.yaml
 *.local.yml

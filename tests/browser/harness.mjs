@@ -4,9 +4,11 @@
 // node harness.mjs SITE_DIR OUT_FILE < corpus.json
 //
 // Runs the browser entry point under Pyodide in Node, as browser/worker.js runs it in a
-// page. The corpus is a JSON array of {text, options}; OUT_FILE receives a JSON array of
-// the strings northplan_browser.simulate returned, untouched: Python's JSON must not pass
-// through JavaScript's JSON.parse, which turns 80000.0 into 80000.
+// page. The corpus is a JSON array of {text, options}, run with simulate, or of
+// {call, arguments}, run with editor_call (arguments is the JSON text, passed as it is);
+// OUT_FILE receives a JSON array of the strings northplan_browser returned, untouched:
+// Python's JSON must not pass through JavaScript's JSON.parse, which turns 80000.0 into
+// 80000.
 
 import { loadPyodide } from "pyodide";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -26,7 +28,11 @@ pyodide.runPython("import sys\nsys.path.insert(0, '/northplan')\nimport northpla
 const entry = pyodide.pyimport("northplan_browser");
 
 const results = [];
-for (const { text, options } of corpus) {
-  results.push(entry.simulate(text, JSON.stringify(options)));
+for (const item of corpus) {
+  results.push(
+    "call" in item
+      ? entry.editor_call(item.call, item.arguments)
+      : entry.simulate(item.text, JSON.stringify(item.options)),
+  );
 }
 writeFileSync(outFile, JSON.stringify(results));

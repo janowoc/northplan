@@ -108,13 +108,15 @@ engine/          pure Python, no FastAPI. MUST NOT import from api/, cli/ or rep
   policy/        parameterized decision rules
   optimize/      objectives and the policy search
 report/          result tables shared by cli/ and api/, real or nominal; run.py, the
-                 simulate pipeline api/ and browser/ share
+                 simulate pipeline api/ and browser/ share; editor.py and
+                 editor_calls.py, the scenario editor's logic and calls they share
 api/             FastAPI, thin. Serves api/web/ via StaticFiles; northplan-serve
   web/           plain HTML + Alpine.js + Plotly from CDN. No build step
 browser/         the static page that runs the engine in the browser under
                  Pyodide; built by browser/build.py
 cli/             YAML scenario in, results out
-scenarios/       example.yaml is committed; *.local.yaml is gitignored
+scenarios/       example.yaml, late_life_couple.yaml and minimal.yaml are committed;
+                 *.local.yaml is gitignored
 docs/            limitations.md (every simplification), maintenance.md (pins)
   archive/       the roadmap that built v0.1.0, not updated
 tests/golden/    cases whose expected values the human supplied — sacred
@@ -225,6 +227,14 @@ curl -s -u ":$TOKEN" -X POST 'http://localhost:8000/api/simulate?paths=200' \
   -H 'Content-Type: application/yaml' --data-binary @scenarios/example.yaml
 ```
 
+`GET /api/example` returns the example scenario and `GET /api/minimal` returns
+`scenarios/minimal.yaml`, a small scenario that runs. `POST /api/editor/{call}`
+answers the scenario editor's calls, such as `parse` and `check`, with the
+arguments as a JSON object. Those calls load each tax year's parameters the
+first time they need it and keep it until the server restarts, so an edit under
+`params/` reaches them only after a restart; runs read the parameters on each
+request.
+
 To run the published image without cloning the repository:
 
 ```sh
@@ -243,9 +253,11 @@ docker run --rm -p 8123:8000 -e NORTHPLAN_TOKEN='your-token-here' ghcr.io/janowo
 ```
 
 and open `http://<server>:8123` from the other device. The image carries its own
-copies of `params/` and `scenarios/example.yaml`. Compose mounts `./params` and
-`./scenarios` over them, so there an edit to either takes effect on the next
-request, without a rebuild; `docker run` serves the image's copies.
+copies of `params/`, `scenarios/example.yaml` and `scenarios/minimal.yaml`.
+Compose mounts `./params` and `./scenarios` over them, so there an edit takes
+effect on the next request, without a rebuild, except that the editor's calls
+keep the parameters they have already loaded until a restart; `docker run`
+serves the image's copies.
 
 The image also has the command line. Mount a directory for its output:
 
@@ -290,11 +302,13 @@ northplan optimize scenarios/example.yaml --objective median_estate_after_tax --
 `northplan-serve` serves the API and the page on http://localhost:8000, as
 Compose does; `--port` changes the port. `--host` changes the address it listens
 on; on any other than a loopback address, a client on another machine must give
-the token. An editable install finds `params/` and `scenarios/example.yaml` in
-the checkout. Any other install has neither: pass `--params DIR`, the directory
-holding one subdirectory per tax year, to `northplan simulate`,
-`northplan optimize` and `northplan-serve`, and `--example FILE` to
-`northplan-serve` for the page's example scenario.
+the token. An editable install finds `params/`, `scenarios/example.yaml` and
+`scenarios/minimal.yaml` in the checkout. Any other install has none of them:
+pass `--params DIR`, the directory holding one subdirectory per tax year, to
+`northplan simulate`, `northplan optimize` and `northplan-serve`, and
+`--example FILE` to `northplan-serve` for the page's example scenario. No flag
+supplies `scenarios/minimal.yaml`, so such an install answers 404 at
+`/api/minimal`.
 
 ## Development
 

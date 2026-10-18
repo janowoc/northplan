@@ -14,6 +14,8 @@ import pytest
 
 from engine.core.indexation import RoutedParameterError
 from engine.params.loader import DEFAULT_PARAMS_ROOT
+from report import editor
+from report.editor_calls import answer
 from report.run import PATHS_WITH_DETERMINISTIC, simulate_document
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -208,3 +210,37 @@ def test_an_empty_options_object_runs_with_the_scenarios_own_options(entry: Modu
     text = EXAMPLE.replace("n_paths: 10000", "n_paths: 3")
     assert text != EXAMPLE
     assert parsed(entry.simulate(text, "{}"))["document"]["meta"]["paths"] == 3
+
+
+@pytest.mark.parametrize(
+    ("call", "arguments"),
+    [
+        ("schema", "{}"),
+        ("nope", "{}"),
+        ("remove", None),
+        ("parse", "[]"),
+    ],
+    ids=["200", "404", "409", "422"],
+)
+def test_editor_call_wraps_the_answer(entry: ModuleType, call: str, arguments: str | None) -> None:
+    if arguments is None:
+        mapping = editor.parse(EXAMPLE, params_root=DEFAULT_PARAMS_ROOT)["mapping"]
+        arguments = json.dumps({"mapping": mapping, "kind": "person", "name": "a"})
+    status, body = answer(call, arguments, params_root=DEFAULT_PARAMS_ROOT)
+    result = entry.editor_call(call, arguments)
+    assert result == f'{{"status": {status}, "body": {body}}}'
+    assert parsed(result)["status"] == status
+    assert status == {"schema": 200, "nope": 404, "remove": 409, "parse": 422}[call]
+
+
+def test_an_exception_in_an_editor_call_is_an_error_envelope(
+    entry: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        raise RoutedParameterError("boom")
+
+    monkeypatch.setattr(entry, "answer", boom)
+    assert parsed(entry.editor_call("schema", "{}")) == {
+        "status": "error",
+        "body": {"detail": "RoutedParameterError: boom"},
+    }

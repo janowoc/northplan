@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""The Python entry point of the browser page: run a scenario, answer one JSON string.
+"""The Python entry points of the browser page: run a scenario or answer an editor call, each as
+one JSON string.
 
 The page's worker calls :func:`simulate` under Pyodide; the archive ships this file at its
 top level. It owns the options check, the path cap and the mapping of every outcome to a
-JSON string. The scenario's syntax is always YAML, as the textarea holds it.
+JSON string. :func:`editor_call` wraps :func:`report.editor_calls.answer` in an envelope that
+carries the status. The scenario's syntax is always YAML, as the textarea holds it.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import json
 from typing import Final
 
 from engine.params.loader import DEFAULT_PARAMS_ROOT
+from report.editor_calls import answer
 from report.run import PATHS_WITH_DETERMINISTIC, RunRefusedError, simulate_document
 
 PATH_CAP: Final = 25_000
@@ -88,3 +91,20 @@ def simulate(text: str, options: str) -> str:
         return json.dumps({"status": "memory", "detail": OUT_OF_MEMORY})
     except Exception as error:
         return json.dumps({"status": "error", "detail": f"{type(error).__name__}: {error}"})
+
+
+def editor_call(call: str, arguments: str) -> str:
+    """Answer the editor call ``call`` on ``arguments``, a JSON object's text, as one JSON string.
+
+    Returns:
+        ``{"status": <int>, "body": <JSON>}``, the status and body
+        :func:`report.editor_calls.answer` gives, with the body's text written in unchanged; or
+        ``{"status": "error", "body": {"detail": <str>}}`` for any exception, with
+        ``"<ExceptionName>: <message>"`` as the detail.
+    """
+    try:
+        status, body = answer(call, arguments, params_root=DEFAULT_PARAMS_ROOT)
+    except Exception as error:
+        detail = f"{type(error).__name__}: {error}"
+        return json.dumps({"status": "error", "body": {"detail": detail}})
+    return f'{{"status": {status}, "body": {body}}}'

@@ -12,8 +12,10 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       # Hand-edited parameters take effect on the next request, without a
-      # rebuild.
+      # rebuild; the editor's calls keep the ones they have loaded until a
+      # restart.
       - ./params:/app/params:ro
-      # The example scenario, served at /api/example. There is no database.
+      # The example and minimal scenarios, served at /api/example and
+      # /api/minimal. There is no database.
       - ./scenarios:/app/scenarios
     restart: unless-stopped

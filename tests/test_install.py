@@ -201,3 +201,30 @@ print(json.dumps(out))
         "example_after": [200, True],
         "simulate": 200,
     }
+
+
+def test_the_installed_app_answers_the_editor_and_has_no_minimal_scenario(
+    install: Install,
+) -> None:
+    script = """
+import json, sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+import api.main
+
+example, params = Path(sys.argv[1]), Path(sys.argv[2])
+client = TestClient(api.main.app, base_url="http://localhost", client=("127.0.0.1", 50000))
+out = {}
+out["minimal"] = client.get("/api/minimal").status_code
+api.main.PARAMS_ROOT = params
+parsed = client.post(
+    "/api/editor/parse",
+    content=json.dumps({"text": example.read_text(encoding="utf-8")}).encode(),
+    headers={"Content-Type": "application/json"},
+)
+out["parse"] = [parsed.status_code, parsed.json()["mapping"] is not None]
+print(json.dumps(out))
+"""
+    completed = install.run([sys.executable, "-c", script, str(EXAMPLE), str(PARAMS)])
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"minimal": 404, "parse": [200, True]}

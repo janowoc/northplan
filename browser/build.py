@@ -6,7 +6,8 @@
 Standard library only, so that it runs on a CI runner's python3 as well as on the
 project's Python. OUT_DIR is created, and must not exist or must be empty. It receives
 exactly ``index.html`` and ``worker.js`` (copied from this directory), ``northplan.zip``,
-``example.yaml`` (a byte copy of ``scenarios/example.yaml``) and ``build-info.json``.
+``example.yaml`` and ``minimal.yaml`` (byte copies of those files under ``scenarios/``) and
+``build-info.json``.
 
 The archive holds the files ``git ls-files`` lists under ``engine``, ``report`` and
 ``params`` (tracked or intent-to-add, content read from the working tree) at their
@@ -89,7 +90,8 @@ def build(out_dir: Path, root: Path = ROOT) -> None:
     for name in ("index.html", "worker.js"):
         shutil.copyfile(root / "browser" / name, out_dir / name)
     write_archive(members, out_dir / "northplan.zip")
-    shutil.copyfile(root / "scenarios" / "example.yaml", out_dir / "example.yaml")
+    for name in ("example.yaml", "minimal.yaml"):
+        shutil.copyfile(root / "scenarios" / name, out_dir / name)
     info = {"parameter_years": years, "commit": commit}
     (out_dir / "build-info.json").write_text(json.dumps(info) + "\n", encoding="utf-8")
 

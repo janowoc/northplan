@@ -148,7 +148,7 @@ jobs:
       # runtime packages in uv.lock and, besides the base image's pip, nothing
       # else. The lock's environment markers are dropped, so a dependency it
       # holds only for another platform makes this step fail.
-      - name: Smoke test, each image runs the example and holds the locked packages
+      - name: Smoke test, each image runs the example, holds the minimal scenario and the locked packages
         run: |
           set -euo pipefail
           norm() { sed 's/ *;.*//' | awk -F'==' 'NF==0 {next} NF!=2 {print "cannot read: " $0 > "/dev/stderr"; exit 1} {n=tolower($1); gsub(/[-_.]+/,"-",n); print n"=="$2}' | sort; }
@@ -156,7 +156,7 @@ jobs:
           test -s "$RUNNER_TEMP/locked.txt"
           for arch in amd64 arm64; do
             docker run --rm --platform "linux/$arch" "northplan:smoke-$arch" sh -c \
-              'cd / && python -c "import api.main" && northplan simulate /app/scenarios/example.yaml --paths 10 --out /tmp/smoke.csv'
+              'cd / && python -c "import api.main" && test -s /app/scenarios/minimal.yaml && northplan simulate /app/scenarios/example.yaml --paths 10 --out /tmp/smoke.csv'
             docker run --rm --platform "linux/$arch" "northplan:smoke-$arch" pip freeze --all --exclude-editable | grep -v '^pip==' | norm > "$RUNNER_TEMP/frozen-$arch.txt"
             diff "$RUNNER_TEMP/locked.txt" "$RUNNER_TEMP/frozen-$arch.txt"
           done

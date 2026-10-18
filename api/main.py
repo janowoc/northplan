@@ -8,9 +8,14 @@ body, JSON or YAML, and the run's options in the query string, and return the
 document ``--out x.json`` writes, except that ``meta.scenario`` names the scenario
 alone and the notes name query parameters, not flags. ``GET /api/example``
 returns the file at ``EXAMPLE_PATH`` as it is on disk: ``scenarios/example.yaml``
-beside the source tree, unless ``northplan-serve`` was given ``--example``. Runs load
+beside the source tree, unless ``northplan-serve`` was given ``--example``.
+``GET /api/minimal`` returns the file at ``MINIMAL_PATH`` the same way:
+``scenarios/minimal.yaml`` beside the source tree, which no flag changes.
+``POST /api/editor/{call}`` takes the call's arguments as a JSON body and answers with
+the status and body :func:`report.editor_calls.answer` gives. Runs and the editor load
 their parameters from ``PARAMS_ROOT``, the engine's default unless ``northplan-serve``
-was given ``--params``; both are read per request. ``GET /health`` does not touch the
+was given ``--params``; the three paths are read per request, but the editor keeps each
+parameter year it has loaded until the process ends. ``GET /health`` does not touch the
 engine.
 
 Status codes: 422 for whatever the command line refuses with exit 2 (a body that does
@@ -21,10 +26,11 @@ parameter, a missing preference, a bad option, a run over the engine's limits
 and for a loopback client that names a Host other than loopback and carries no valid
 token; 401, with a Basic challenge, for any other client without the valid token, and
 403 instead when the server has no token; 415 for a Content-Type that is neither JSON
-nor YAML, or a charset other than UTF-8; 413 for a body over ``MAX_BODY_BYTES``; 429
-while another run is in progress. ``GET /api/example`` answers 404 when no file is found
-at ``EXAMPLE_PATH`` (ENOENT or ENOTDIR) or what is there is not a regular file, and 503
-when its lookup or read fails with any other ``OSError``, such as EACCES. A
+nor YAML, or a charset other than UTF-8, and on ``/api/editor/{call}`` for one that is
+not JSON; 413 for a body over ``MAX_BODY_BYTES``; 429 while another run is in progress.
+``GET /api/example`` and ``GET /api/minimal`` answer 404 when no file is found at their
+path (ENOENT or ENOTDIR) or what is there is not a regular file, and 503 when the lookup
+or the read fails with any other ``OSError``, such as EACCES. A
 :class:`~engine.core.indexation.RoutedParameterError` signals an engine bug and is not
 caught, so it surfaces as a 500. The engine work runs in a worker thread, off the event
 loop.
@@ -69,6 +75,7 @@ from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamError
 from engine.scenario.schema import Scenario
+from report.editor_calls import answer
 from report.run import (
     PATHS_WITH_DETERMINISTIC,
     RunRefusedError,
@@ -79,6 +86,7 @@ from report.tables import RunReport, preference
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "example.yaml"
+MINIMAL_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "minimal.yaml"
 PARAMS_ROOT: Path = DEFAULT_PARAMS_ROOT
 TOKEN: str | None = None
 
@@ -536,6 +544,32 @@ async def optimize(
 _OPTIMIZE_QUERY = _query_names(optimize)
 
 
+def _scenario_file(path: Path, name: str) -> Response:
+    """The file at ``path``, as it is on disk, for the ``name`` scenario's route.
+
+    Raises:
+        HTTPException: As :func:`example` documents, with ``name`` in place of "example"
+            where the detail names the scenario.
+    """
+    try:
+        mode = path.stat().st_mode
+        if stat.S_ISDIR(mode):
+            raise HTTPException(
+                status_code=404, detail=f"{path} is a directory, not a scenario file."
+            )
+        if not stat.S_ISREG(mode):
+            raise HTTPException(status_code=404, detail=f"{path} is not a regular file.")
+        content = path.read_bytes()
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=404, detail=f"no {name} scenario at {path}.") from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"cannot read the {name} scenario at {path}: {exc.strerror or exc}.",
+        ) from exc
+    return Response(content=content, media_type="application/yaml; charset=utf-8")
+
+
 @app.get("/api/example")
 def example() -> Response:
     """The file at ``EXAMPLE_PATH``, as it is on disk.
@@ -547,25 +581,45 @@ def example() -> Response:
             ELOOP or ENAMETOOLONG, with the operating system's reason in the detail, or the
             exception's own text when it carries none.
     """
+    return _scenario_file(EXAMPLE_PATH, "example")
+
+
+@app.get("/api/minimal")
+def minimal() -> Response:
+    """The file at ``MINIMAL_PATH``, as it is on disk; refused as :func:`example` refuses."""
+    return _scenario_file(MINIMAL_PATH, "minimal")
+
+
+@app.post("/api/editor/{call}")
+async def editor_call(request: Request, call: str) -> Response:
+    """Answer the scenario editor's call ``call`` on the JSON object in the request body.
+
+    Runs off the event loop and does not wait for a run in progress.
+
+    Returns:
+        The status and body :func:`report.editor_calls.answer` gives, as ``application/json``.
+
+    Raises:
+        HTTPException: 422 for any query parameter; 415 for a Content-Type other than JSON in
+            UTF-8; 413 for a body over ``MAX_BODY_BYTES``; 422 for a body that is not UTF-8.
+    """
+    _check_query(request, f"/api/editor/{call}", frozenset(), False, None)
+    content_type = request.headers.get("content-type")
     try:
-        mode = EXAMPLE_PATH.stat().st_mode
-        if stat.S_ISDIR(mode):
-            raise HTTPException(
-                status_code=404, detail=f"{EXAMPLE_PATH} is a directory, not a scenario file."
-            )
-        if not stat.S_ISREG(mode):
-            raise HTTPException(status_code=404, detail=f"{EXAMPLE_PATH} is not a regular file.")
-        content = EXAMPLE_PATH.read_bytes()
-    except (FileNotFoundError, NotADirectoryError) as exc:
+        syntax = _syntax(content_type)
+    except HTTPException:
+        syntax = None
+    if syntax != "json":
         raise HTTPException(
-            status_code=404, detail=f"no example scenario at {EXAMPLE_PATH}."
-        ) from exc
-    except OSError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"cannot read the example scenario at {EXAMPLE_PATH}: {exc.strerror or exc}.",
-        ) from exc
-    return Response(content=content, media_type="application/yaml; charset=utf-8")
+            status_code=415,
+            detail=(
+                f"unsupported Content-Type {content_type!r}; "
+                "send the arguments as application/json, in UTF-8."
+            ),
+        )
+    text = _decode(await _read_body(request))
+    status, body = await run_in_threadpool(lambda: answer(call, text, params_root=PARAMS_ROOT))
+    return Response(content=body, status_code=status, media_type="application/json")
 
 
 # Mounted last so that /health and /api/* win over any file of the same name.

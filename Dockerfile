@@ -26,21 +26,23 @@ COPY api/ api/
 COPY cli/ cli/
 COPY report/ report/
 COPY params/ params/
-COPY scenarios/example.yaml scenarios/
+COPY scenarios/example.yaml scenarios/minimal.yaml scenarios/
 
 # The versions in uv.lock, into the image's own Python. The project goes in
 # editable, so that the installed code is /app's: the `northplan` command and
 # the server both default to /app/params, and the server to
-# /app/scenarios/example.yaml, the paths compose mounts over. A plain install
-# would put a second copy of the code in site-packages, where neither exists.
+# /app/scenarios/example.yaml and /app/scenarios/minimal.yaml, the paths
+# compose mounts over. A plain install would put a second copy of the code in
+# site-packages, where none of them exists.
 RUN --mount=from=uv,source=/uv,target=/bin/uv \
     UV_PROJECT_ENVIRONMENT=/usr/local UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
     uv sync --locked --no-cache
 
-# The image carries params/ and scenarios/example.yaml (what /api/example
-# serves), so it runs without a checkout. docker-compose bind-mounts ./params
-# and ./scenarios over them: hand-edited files take effect on the next
-# request, without a rebuild.
+# The image carries params/, scenarios/example.yaml and scenarios/minimal.yaml
+# (what /api/example and /api/minimal serve), so it runs without a checkout.
+# docker-compose bind-mounts ./params and ./scenarios over them: hand-edited
+# files take effect on the next request, without a rebuild, except that the
+# editor's calls keep the parameters they have loaded until a restart.
 EXPOSE 8000
 
 # northplan-serve runs uvicorn with proxy headers off, so the server sees each

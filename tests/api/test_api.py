@@ -19,6 +19,7 @@ import importlib.metadata
 import ipaddress
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -45,7 +46,9 @@ from engine.params.loader import MissingParameterError, parse_yaml
 from engine.scenario.lifespan import LifespanNotRepresentableError
 from engine.scenario.load import load_scenario
 from engine.scenario.schema import Scenario
+from report import editor
 from report import run as report_run
+from report.editor_calls import answer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
@@ -1528,3 +1531,294 @@ def test_api_caps_a_validation_error_from_the_grid(client: TestClient) -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"].endswith("... and 10 more errors, not shown.")
+
+
+# =============================================================================
+# The scenario editor's calls and the minimal scenario
+# =============================================================================
+
+MINIMAL = REPO_ROOT / "scenarios" / "minimal.yaml"
+NOT_JSON = "unsupported Content-Type {header!r}; send the arguments as application/json, in UTF-8."
+
+
+def editor_mapping() -> dict:
+    return editor.parse(example_text(), params_root=api.main.PARAMS_ROOT)["mapping"]
+
+
+class TestEditor:
+    def test_it_answers_with_the_answers_status_and_body(self, client: TestClient) -> None:
+        text = json.dumps({"text": example_text()})
+        response = client.post("/api/editor/parse", content=text.encode(), headers=JSON)
+        expected = answer("parse", text, params_root=api.main.PARAMS_ROOT)
+        assert (response.status_code, response.text) == expected
+        assert expected[0] == 200
+        assert response.headers["content-type"] == "application/json"
+
+    def test_a_refused_edit_is_answered_with_its_409(self, client: TestClient) -> None:
+        text = json.dumps({"mapping": editor_mapping(), "kind": "person", "name": "a"})
+        response = client.post("/api/editor/remove", content=text.encode(), headers=JSON)
+        expected = answer("remove", text, params_root=api.main.PARAMS_ROOT)
+        assert (response.status_code, response.text) == expected
+        assert expected[0] == 409
+        assert response.headers["content-type"] == "application/json"
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"Content-Type": "application/yaml"},
+            {},
+            {"Content-Type": "application/json; charset=latin-1"},
+            {"Content-Type": "text/plain"},
+        ],
+        ids=["yaml", "none", "latin-1", "text-plain"],
+    )
+    def test_a_content_type_other_than_json_is_a_415(
+        self, client: TestClient, headers: dict[str, str]
+    ) -> None:
+        response = client.post("/api/editor/schema", content=b"{}", headers=headers)
+        assert response.status_code == 415
+        assert response.json()["detail"] == NOT_JSON.format(header=headers.get("Content-Type"))
+
+    def test_a_query_parameter_is_a_422(self, client: TestClient) -> None:
+        response = client.post("/api/editor/schema?x=1", content=b"{}", headers=JSON)
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "unknown query parameter 'x'; /api/editor/schema accepts []."
+        )
+
+    def test_a_body_over_the_limit_is_a_413(self, client: TestClient) -> None:
+        body = b" " * (api.main.MAX_BODY_BYTES + 1)
+        response = client.post("/api/editor/schema", content=body, headers=JSON)
+        assert response.status_code == 413
+        assert response.json()["detail"] == OVERSIZE
+
+    def test_a_body_that_is_not_utf8_is_a_422(self, client: TestClient) -> None:
+        response = client.post("/api/editor/parse", content=b'{"text": "\xff"}', headers=JSON)
+        assert response.status_code == 422
+        assert response.json()["detail"].startswith("request body is not valid UTF-8")
+
+    def test_it_answers_while_a_run_holds_the_lock(self, client: TestClient) -> None:
+        answered: list[int] = []
+
+        def request() -> None:
+            response = client.post("/api/editor/schema", content=b"{}", headers=JSON)
+            answered.append(response.status_code)
+
+        thread = threading.Thread(target=request, daemon=True)
+        assert api.main._RUN_LOCK.acquire(blocking=False)
+        try:
+            thread.start()
+            thread.join(timeout=30)
+            finished = not thread.is_alive()
+        finally:
+            api.main._RUN_LOCK.release()
+        thread.join()
+        assert finished
+        assert answered == [200]
+
+    def test_an_exception_in_the_call_is_a_500(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_args: object, **_kwargs: object) -> tuple[int, str]:
+            raise RoutedParameterError("boom")
+
+        monkeypatch.setattr(api.main, "answer", boom)
+        quiet = TestClient(
+            app,
+            base_url="http://localhost",
+            client=("127.0.0.1", 50000),
+            raise_server_exceptions=False,
+        )
+        response = quiet.post("/api/editor/schema", content=b"{}", headers=JSON)
+        assert response.status_code == 500
+
+    def test_it_reads_params_root_per_request(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api.main, "PARAMS_ROOT", tmp_path)
+        text = json.dumps({"text": example_text()})
+        response = client.post("/api/editor/parse", content=text.encode(), headers=JSON)
+        assert response.status_code == 200
+        errors = response.json()["errors"]
+        assert len(errors) == 1
+        assert str(tmp_path) in errors[0]["message"]
+
+    def test_check_reads_params_root_per_request(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mapping = editor_mapping()
+        monkeypatch.setattr(api.main, "PARAMS_ROOT", tmp_path)
+        text = json.dumps({"mapping": mapping})
+        response = client.post("/api/editor/check", content=text.encode(), headers=JSON)
+        assert response.status_code == 200
+        errors = response.json()["errors"]
+        assert len(errors) == 1
+        assert str(tmp_path) in errors[0]["message"]
+
+    @pytest.mark.parametrize(
+        ("path", "headers", "body", "status", "detail"),
+        [
+            (
+                "/api/editor/schema?x=1",
+                {"Content-Type": "application/yaml"},
+                b"{}",
+                422,
+                "unknown query parameter 'x'; /api/editor/schema accepts [].",
+            ),
+            (
+                "/api/editor/schema",
+                {"Content-Type": "application/yaml"},
+                b" " * (api.main.MAX_BODY_BYTES + 1),
+                415,
+                NOT_JSON.format(header="application/yaml"),
+            ),
+            (
+                "/api/editor/schema",
+                JSON,
+                b"\xff" * (api.main.MAX_BODY_BYTES + 1),
+                413,
+                OVERSIZE,
+            ),
+        ],
+        ids=["query-before-content-type", "content-type-before-body", "size-before-utf8"],
+    )
+    def test_the_refusals_come_in_order(
+        self,
+        client: TestClient,
+        path: str,
+        headers: dict[str, str],
+        body: bytes,
+        status: int,
+        detail: str,
+    ) -> None:
+        response = client.post(path, content=body, headers=headers)
+        assert response.status_code == status
+        assert response.json()["detail"] == detail
+
+    @pytest.mark.usefixtures("token")
+    def test_a_remote_client_without_the_token_is_refused(self) -> None:
+        response = _lan_client(("10.0.0.5", 5)).post(
+            "/api/editor/schema", content=b"{}", headers=JSON
+        )
+        assert response.status_code == 401
+
+    def test_a_remote_client_is_forbidden_when_the_server_has_no_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api.main, "TOKEN", None)
+        response = _lan_client(("10.0.0.5", 5)).post(
+            "/api/editor/schema", content=b"{}", headers=JSON
+        )
+        assert response.status_code == 403
+
+
+def _setup_absent(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    return tmp_path / "absent.yaml"
+
+
+def _setup_directory(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    return tmp_path
+
+
+def _setup_through_a_file(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    through = tmp_path / "f"
+    through.write_text("x\n", encoding="utf-8")
+    return through / "s.yaml"
+
+
+def _setup_loop(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    path = tmp_path / "loop.yaml"
+    path.symlink_to(path)
+    return path
+
+
+def _setup_mode_zero(tmp_path: Path, lock: Callable[[Path, int], None]) -> Path:
+    path = tmp_path / "s.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(path, 0o000)
+    return path
+
+
+def _setup_locked_directory(tmp_path: Path, lock: Callable[[Path, int], None]) -> Path:
+    directory = tmp_path / "d"
+    directory.mkdir()
+    path = directory / "s.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    lock(directory, 0o000)
+    return path
+
+
+def _setup_fifo(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    path = tmp_path / "s.yaml"
+    os.mkfifo(path)
+    return path
+
+
+def _setup_devnull(_tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    return Path(os.devnull)
+
+
+def _setup_regular(tmp_path: Path, _lock: Callable[[Path, int], None]) -> Path:
+    path = tmp_path / "s.yaml"
+    path.write_text("x: 1\n", encoding="utf-8")
+    return path
+
+
+MINIMAL_SETUPS = {
+    "absent": _setup_absent,
+    "directory": _setup_directory,
+    "through-a-file": _setup_through_a_file,
+    "symlink-to-itself": _setup_loop,
+    "mode-zero": _setup_mode_zero,
+    "directory-of-mode-zero": _setup_locked_directory,
+    "fifo": _setup_fifo,
+    "devnull": _setup_devnull,
+    "regular": _setup_regular,
+    "read-raises": _setup_regular,
+}
+
+
+class TestMinimal:
+    def test_it_serves_the_file_as_it_is(self, client: TestClient) -> None:
+        response = client.get("/api/minimal")
+        assert response.status_code == 200
+        assert response.content == MINIMAL.read_bytes()
+        assert response.headers["content-type"] == "application/yaml; charset=utf-8"
+
+    @pytest.mark.parametrize("setup", MINIMAL_SETUPS, ids=list(MINIMAL_SETUPS))
+    def test_it_answers_as_the_example_does(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+        setup: str,
+    ) -> None:
+        if setup in ("mode-zero", "directory-of-mode-zero"):
+            lock = request.getfixturevalue("lock")
+        else:
+
+            def lock(_path: Path, _mode: int) -> None:
+                pytest.fail("this setup locks nothing")
+
+        path = MINIMAL_SETUPS[setup](tmp_path, lock)
+        monkeypatch.setattr(api.main, "EXAMPLE_PATH", path)
+        monkeypatch.setattr(api.main, "MINIMAL_PATH", path)
+        if setup == "read-raises":
+
+            def boom(*_args: object, **_kwargs: object) -> bytes:
+                raise OSError("boom")
+
+            monkeypatch.setattr(Path, "read_bytes", boom)
+        example = client.get("/api/example")
+        minimal = client.get("/api/minimal")
+        assert minimal.status_code == example.status_code
+        if example.status_code == 200:
+            assert minimal.content == example.content
+            return
+        stated = example.json()["detail"]
+        if setup in ("absent", "through-a-file"):
+            assert "example scenario" in stated
+            assert example.status_code == 404
+        if setup in ("mode-zero", "directory-of-mode-zero", "symlink-to-itself", "read-raises"):
+            assert "example scenario" in stated
+            assert example.status_code == 503
+        assert minimal.json()["detail"] == stated.replace("example scenario", "minimal scenario")
