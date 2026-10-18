@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_FILES = {
     "index.html",
     "worker.js",
+    "editor.js",
     "northplan.zip",
     "example.yaml",
     "minimal.yaml",
@@ -69,6 +70,12 @@ def test_the_pages_files_are_byte_copies(site: Path) -> None:
         assert (site / name).read_bytes() == (REPO_ROOT / "browser" / name).read_bytes()
     assert (site / "example.yaml").read_bytes() == (
         REPO_ROOT / "scenarios" / "example.yaml"
+    ).read_bytes()
+
+
+def test_editor_js_is_a_byte_copy_in_the_site(site: Path) -> None:
+    assert (site / "editor.js").read_bytes() == (
+        REPO_ROOT / "api" / "web" / "editor.js"
     ).read_bytes()
 
 
@@ -158,6 +165,7 @@ def make_repository(root: Path) -> None:
         "browser/index.html": "<html></html>\n",
         "browser/worker.js": "// worker\n",
         "browser/northplan_browser.py": "# entry\n",
+        "api/web/editor.js": "// editor\n",
         "scenarios/example.yaml": "name: x\n",
         "scenarios/minimal.yaml": "name: y\n",
         "README.md": "readme\n",

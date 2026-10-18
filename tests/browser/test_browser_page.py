@@ -48,7 +48,7 @@ def show_function(text: str) -> str:
 
 
 def test_the_two_pages_load_the_same_scripts() -> None:
-    assert scripts(PAGE) == scripts(API_PAGE) == SCRIPT_URLS
+    assert scripts(PAGE) == scripts(API_PAGE) == [*SCRIPT_URLS, "editor.js"]
 
 
 def test_show_is_textually_identical_in_both_pages() -> None:
@@ -81,7 +81,7 @@ def test_it_has_a_scenario_textarea_a_run_button_an_error_box_and_a_chart() -> N
 
 
 def test_run_is_disabled_until_the_engine_is_ready() -> None:
-    assert ':disabled="running || !ready"' in PAGE
+    assert ':disabled="running || !ready || (formOpen && formYaml === null)"' in PAGE
     assert "Loading the engine (about 11 MB on a first visit)…" in PAGE
 
 
@@ -161,3 +161,41 @@ def test_the_disclaimer_is_the_readmes_section() -> None:
 def test_each_disclaimer_link_is_absolute(target: str, url: str) -> None:
     assert f"]({target})" in README
     assert re.search(rf'<a\s+href="{re.escape(url)}">', PAGE)
+
+
+def editor_block(text: str) -> str:
+    start = text.index("<!-- editor -->")
+    return text[start : text.index("<!-- /editor -->") + len("<!-- /editor -->")]
+
+
+def test_the_editor_block_is_textually_identical_in_both_pages() -> None:
+    assert editor_block(PAGE) == editor_block(API_PAGE)
+    assert editor_block(PAGE).count("\n") > 15
+
+
+def test_editor_js_makes_no_request() -> None:
+    text = (REPO_ROOT / "api" / "web" / "editor.js").read_text(encoding="utf-8")
+    for forbidden in (
+        "fetch(",
+        "XMLHttpRequest",
+        "import(",
+        "new Worker",
+        "new URL(",
+        "WebSocket",
+        "sendBeacon",
+        "http://",
+        "https://",
+    ):
+        assert forbidden not in text, forbidden
+
+
+def test_the_editor_files_are_named_relatively() -> None:
+    assert "fetch(name + '.yaml')" in PAGE
+    assert '<script src="editor.js"></script>' in PAGE
+    assert '<script src="editor.js"></script>' in API_PAGE
+
+
+def test_the_worker_answers_both_message_types() -> None:
+    assert 'type === "editor"' in WORKER
+    assert "entry.editor_call(event.data.call, event.data.arguments)" in WORKER
+    assert 'type: "reply"' in WORKER

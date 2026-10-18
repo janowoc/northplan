@@ -7,9 +7,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>northplan</title>
-  <!-- No build step, no npm, no bundler. Two CDN scripts and one file. -->
+  <!-- No build step, no npm, no bundler. Two CDN scripts, editor.js and this file. -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <script src="editor.js"></script>
   <style>
     :root { color-scheme: light dark; }
     body {
@@ -44,8 +45,32 @@
     </p>
   </div>
 
-  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario"></textarea>
-  <button type="button" :disabled="running" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
+  <!-- editor -->
+  <div class="editor-bar">
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openForm()">Edit in form</button>
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openFile('minimal')">New scenario</button>
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openFile('example')">Open example</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy || formYaml === null" @click="useYaml()">Back to YAML</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy || formYaml === null" @click="downloadYaml()">Download YAML</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy" @click="discardForm()">Discard form</button>
+  </div>
+  <p class="editor-state" x-show="formOpen || formBusy" x-cloak x-text="formStateText()"></p>
+  <div class="editor-problem" x-show="formProblem" x-cloak>
+    <p x-text="formProblem"></p>
+    <ul><template x-for="place in formReferences"><li x-text="place"></li></template></ul>
+  </div>
+  <ul class="editor-notices" x-show="formNotices.length" x-cloak>
+    <template x-for="notice in formNotices"><li x-text="notice"></li></template>
+  </ul>
+  <div class="editor-errors" x-show="formErrors.length" x-cloak>
+    <p x-show="!formOpen">The form cannot open this text:</p>
+    <ul><template x-for="line in formErrors"><li x-text="line"></li></template></ul>
+  </div>
+  <fieldset id="form" x-ref="form" x-show="formOpen" x-cloak :disabled="formBusy"></fieldset>
+  <!-- /editor -->
+
+  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario" x-show="!formOpen"></textarea>
+  <button type="button" id="run" :disabled="running || !ready || (formOpen && formYaml === null)" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
 
   <div class="error" x-show="error" x-cloak>
     <strong x-text="'Error ' + (error && error.status) + ':'"></strong>
@@ -63,12 +88,54 @@
 
   <script>
     function northplan() {
+      const editor = northplanEditor({
+        async call(name, argumentsText) {
+          let r;
+          let text;
+          try {
+            r = await fetch(`/api/editor/${name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: argumentsText,
+            });
+            text = await r.text();
+          } catch (e) {
+            return { status: 'network', body: String(e) };
+          }
+          let body;
+          try {
+            body = NorthplanJson.parse(text);
+          } catch (e) {
+            body = text;
+          }
+          return { status: r.status, body };
+        },
+        async file(name) {
+          const r = await fetch(`/api/${name}`);
+          const text = await r.text();
+          if (!r.ok) {
+            let message = text;
+            try {
+              const detail = JSON.parse(text).detail;
+              if (typeof detail === 'string') {
+                message = detail;
+              }
+            } catch (e) {
+              message = text;
+            }
+            throw new Error(`/api/${name}: ${r.status} ${message}`);
+          }
+          return text;
+        },
+      });
       return {
         health: 'checking…',
         scenario: '',
         running: false,
         error: null,
         summary: null,
+        ready: true,
+        ...editor,
         async init() {
           this.error = null;
           try {
@@ -112,6 +179,10 @@
           Plotly.purge('chart');
         },
         async run() {
+          const text = this.formOpen ? this.formYaml : this.scenario;
+          if (text === null) {
+            return;
+          }
           this.running = true;
           try {
             this.clear();
@@ -120,7 +191,7 @@
               r = await fetch('/api/simulate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/yaml' },
-                body: this.scenario,
+                body: text,
               });
             } catch (e) {
               this.error = { status: 'network', message: String(e) };

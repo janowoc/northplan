@@ -7,9 +7,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>northplan</title>
-  <!-- No build step, no npm, no bundler. Two CDN scripts, a worker and this file. -->
+  <!-- No build step, no npm, no bundler. Two CDN scripts, editor.js, a worker and this file. -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <script src="editor.js"></script>
   <style>
     :root { color-scheme: light dark; }
     body {
@@ -47,8 +48,32 @@
     <p x-show="years" x-cloak>Tax parameters: <strong x-text="years"></strong></p>
   </div>
 
-  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario"></textarea>
-  <button type="button" :disabled="running || !ready" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
+  <!-- editor -->
+  <div class="editor-bar">
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openForm()">Edit in form</button>
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openFile('minimal')">New scenario</button>
+    <button type="button" x-show="!formOpen" :disabled="formBusy || !ready" @click="openFile('example')">Open example</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy || formYaml === null" @click="useYaml()">Back to YAML</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy || formYaml === null" @click="downloadYaml()">Download YAML</button>
+    <button type="button" x-show="formOpen" x-cloak :disabled="formBusy" @click="discardForm()">Discard form</button>
+  </div>
+  <p class="editor-state" x-show="formOpen || formBusy" x-cloak x-text="formStateText()"></p>
+  <div class="editor-problem" x-show="formProblem" x-cloak>
+    <p x-text="formProblem"></p>
+    <ul><template x-for="place in formReferences"><li x-text="place"></li></template></ul>
+  </div>
+  <ul class="editor-notices" x-show="formNotices.length" x-cloak>
+    <template x-for="notice in formNotices"><li x-text="notice"></li></template>
+  </ul>
+  <div class="editor-errors" x-show="formErrors.length" x-cloak>
+    <p x-show="!formOpen">The form cannot open this text:</p>
+    <ul><template x-for="line in formErrors"><li x-text="line"></li></template></ul>
+  </div>
+  <fieldset id="form" x-ref="form" x-show="formOpen" x-cloak :disabled="formBusy"></fieldset>
+  <!-- /editor -->
+
+  <textarea id="scenario" rows="24" spellcheck="false" x-model="scenario" x-show="!formOpen"></textarea>
+  <button type="button" id="run" :disabled="running || !ready || (formOpen && formYaml === null)" @click="run()" x-text="running ? 'Running…' : 'Run'">Run</button>
 
   <div class="error" x-show="error" x-cloak>
     <strong x-text="'Error ' + (error && error.status) + ':'"></strong>
@@ -98,6 +123,37 @@
   <script>
     function northplan() {
       let worker = null;
+      let nextId = 1;
+      const pending = new Map();
+      const request = (message) => new Promise((resolve, reject) => {
+        const id = nextId;
+        nextId += 1;
+        worker.postMessage({ ...message, id });
+        pending.set(id, { resolve, reject });
+      });
+      const editor = northplanEditor({
+        async call(name, argumentsText) {
+          let payload;
+          try {
+            payload = await request({ type: 'editor', call: name, arguments: argumentsText });
+          } catch (e) {
+            return { status: 'error', body: e.message };
+          }
+          const envelope = NorthplanJson.parse(payload);
+          const status = envelope.get('status');
+          return {
+            status: status instanceof NorthplanJson.JsonNumber ? NorthplanJson.toNumber(status) : status,
+            body: envelope.get('body'),
+          };
+        },
+        async file(name) {
+          const r = await fetch(name + '.yaml');
+          if (!r.ok) {
+            throw new Error(`${name}.yaml: ${r.status} ${r.statusText}`);
+          }
+          return r.text();
+        },
+      });
       return {
         status: 'Loading the engine (about 11 MB on a first visit)…',
         ready: false,
@@ -108,6 +164,7 @@
         years: '',
         repository: 'https://github.com/janowoc/northplan',
         revision: null,
+        ...editor,
         async init() {
           this.error = null;
           this.startEngine();
@@ -155,26 +212,23 @@
           this.ready = false;
           this.running = false;
           this.error = { status: stopped ? 'error' : 'load', message };
+          for (const waiting of pending.values()) {
+            waiting.reject(new Error(message));
+          }
+          pending.clear();
         },
         receive(message) {
-          try {
-            if (message.type === 'ready') {
-              this.ready = true;
-              this.status = 'The engine is ready; it runs in this browser.';
-            } else if (message.type === 'failed') {
-              this.fail(message.detail);
-            } else if (message.type === 'result') {
-              const result = JSON.parse(message.payload);
-              if ('document' in result) {
-                this.show(result.document);
-              } else {
-                this.error = { status: result.status, message: result.detail };
-              }
-              this.running = false;
+          if (message.type === 'ready') {
+            this.ready = true;
+            this.status = 'The engine is ready; it runs in this browser.';
+          } else if (message.type === 'failed') {
+            this.fail(message.detail);
+          } else if (message.type === 'reply') {
+            const waiting = pending.get(message.id);
+            pending.delete(message.id);
+            if (waiting !== undefined) {
+              waiting.resolve(message.payload);
             }
-          } catch (e) {
-            this.error = { status: 'client', message: String(e) };
-            this.running = false;
           }
         },
         clear() {
@@ -182,13 +236,25 @@
           this.summary = null;
           Plotly.purge('chart');
         },
-        run() {
+        async run() {
+          const text = this.formOpen ? this.formYaml : this.scenario;
+          if (text === null) {
+            return;
+          }
           this.running = true;
           try {
             this.clear();
-            worker.postMessage({ text: this.scenario });
+            const result = JSON.parse(await request({ type: 'simulate', text }));
+            if ('document' in result) {
+              this.show(result.document);
+            } else {
+              this.error = { status: result.status, message: result.detail };
+            }
           } catch (e) {
-            this.error = { status: 'client', message: String(e) };
+            if (this.error === null) {
+              this.error = { status: 'client', message: String(e) };
+            }
+          } finally {
             this.running = false;
           }
         },

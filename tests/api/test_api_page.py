@@ -39,8 +39,8 @@ def test_it_has_a_scenario_textarea_and_a_run_button(page: tuple[str, str]) -> N
     assert re.search(r"<button[^>]*>\s*Run\s*</button>", html)
 
 
-def test_it_loads_exactly_the_two_pinned_scripts(page: tuple[str, str]) -> None:
-    assert re.findall(r'<script[^>]*\ssrc="([^"]*)"', page[1]) == SCRIPTS
+def test_it_loads_the_two_pinned_scripts_and_the_editor(page: tuple[str, str]) -> None:
+    assert re.findall(r'<script[^>]*\ssrc="([^"]*)"', page[1]) == [*SCRIPTS, "editor.js"]
 
 
 def test_it_calls_the_example_and_simulate_endpoints(page: tuple[str, str]) -> None:

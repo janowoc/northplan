@@ -111,9 +111,10 @@ report/          result tables shared by cli/ and api/, real or nominal; run.py,
                  simulate pipeline api/ and browser/ share; editor.py and
                  editor_calls.py, the scenario editor's logic and calls they share
 api/             FastAPI, thin. Serves api/web/ via StaticFiles; northplan-serve
-  web/           plain HTML + Alpine.js + Plotly from CDN. No build step
+  web/           plain HTML + Alpine.js + Plotly from CDN, and editor.js, the form
+                 both pages share. No build step
 browser/         the static page that runs the engine in the browser under
-                 Pyodide; built by browser/build.py
+                 Pyodide; browser/build.py builds it, with api/web/editor.js
 cli/             YAML scenario in, results out
 scenarios/       example.yaml, late_life_couple.yaml and minimal.yaml are committed;
                  *.local.yaml is gitignored
@@ -176,6 +177,17 @@ A run is limited to 25,000 paths, because the browser gives WebAssembly at most
 says so. `optimize` is not available in the browser; use the local install.
 The page simulates with the scenario's own options only: it has no controls
 for the policy, the number of paths, a deterministic run or nominal dollars.
+
+This page and the local install's both have a form for editing a scenario.
+**Edit in form** opens the text in the box; **New scenario** starts from
+`scenarios/minimal.yaml` and **Open example** from the example, without changing
+the box. The engine's own validation checks each change; every error is listed
+above the form, and shown beside the field or section it concerns when it
+concerns one. **Back to YAML**, **Download YAML** and **Run** take the form's
+scenario once it has no errors. The YAML the form writes keeps no comments,
+anchors or flow style, and puts each section's fields in the schema's order.
+Text that does not validate does not open in the form; its errors are listed
+instead.
 
 ## Running
 

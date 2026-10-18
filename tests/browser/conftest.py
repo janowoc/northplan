@@ -9,7 +9,10 @@ a test in such a module cannot call ``asyncio.run``; stopping it at the end of t
 module keeps every other module clear of it. ``pyodide_page`` and ``api_page`` each give
 a fresh page of that browser, with the :class:`offline.Offline` handler that it is
 routed by, as ``(page, offline)``. A request the handler refuses fails its test at
-teardown, unless the test cleared ``offline.refused`` after asserting it.
+teardown, unless the test cleared ``offline.refused`` after asserting it. ``form_page`` gives
+a routed page of either site, with the ids ``api`` and ``pyodide``, built the way ``api_page``
+and ``pyodide_page`` are and already at its site with the engine ready; ``api_form_page`` is
+``api_page`` at its site. The scenario form's tests use them.
 
 ``pyodide_site`` is the site that ``browser/build.py`` writes, served from a temporary
 directory under ``/northplan/`` as GitHub Pages serves a project site. Building it runs
@@ -33,6 +36,7 @@ from pathlib import Path
 import pytest
 import uvicorn
 from browser_gate import require_browser
+from form_helpers import goto_ready
 from node_gate import BROWSER_TESTS, require_node
 from offline import CDN_FILES, Offline, Site
 from playwright.sync_api import Browser, Page, sync_playwright
@@ -134,3 +138,20 @@ def pyodide_page(chromium: Browser, pyodide_site: Site) -> Iterator[tuple[Page, 
 @pytest.fixture
 def api_page(chromium: Browser, api_site: Site) -> Iterator[tuple[Page, Offline]]:
     yield from _routed_page(chromium, api_site)
+
+
+@pytest.fixture(params=["api", "pyodide"])
+def form_page(request: pytest.FixtureRequest, chromium: Browser) -> Iterator[tuple[Page, Offline]]:
+    """The page under test with its engine ready, once for the API page and once for the
+    Pyodide page."""
+    site = request.getfixturevalue(f"{request.param}_site")
+    for page, offline in _routed_page(chromium, site):
+        goto_ready(page, site)
+        yield page, offline
+
+
+@pytest.fixture
+def api_form_page(api_page: tuple[Page, Offline], api_site: Site) -> tuple[Page, Offline]:
+    """The API page with the example in its box."""
+    goto_ready(api_page[0], api_site)
+    return api_page

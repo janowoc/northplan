@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // The engine's worker: loads Pyodide and the engine's archive once, then answers each
-// scenario the page posts with the JSON string northplan_browser.simulate returns,
-// untouched. Every file is requested relative to this worker's own URL, except Pyodide,
-// which comes from the pinned jsDelivr release below.
+// message the page posts, in the order they arrive. A message is {id, type: "simulate",
+// text} or {id, type: "editor", call, arguments}; the answer is {type: "reply", id,
+// payload}, where payload is the JSON string northplan_browser.simulate or
+// northplan_browser.editor_call returns, untouched. Every file is requested relative to
+// this worker's own URL, except Pyodide, which comes from the pinned jsDelivr release
+// below.
 
 const PYODIDE_VERSION = "314.0.7";
 const PYODIDE_BASE = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
@@ -35,11 +38,25 @@ self.onmessage = async (event) => {
   if (entry === null) {
     return;
   }
+  const { id, type } = event.data;
   let payload;
-  try {
-    payload = entry.simulate(event.data.text, "{}");
-  } catch (error) {
-    payload = JSON.stringify({ status: "error", detail: String(error) });
+  if (type === "simulate") {
+    try {
+      payload = entry.simulate(event.data.text, "{}");
+    } catch (error) {
+      payload = JSON.stringify({ status: "error", detail: String(error) });
+    }
+  } else if (type === "editor") {
+    try {
+      payload = entry.editor_call(event.data.call, event.data.arguments);
+    } catch (error) {
+      payload = JSON.stringify({ status: "error", body: { detail: String(error) } });
+    }
+  } else {
+    payload = JSON.stringify({
+      status: "error",
+      detail: `unknown message type ${JSON.stringify(type)}`,
+    });
   }
-  self.postMessage({ type: "result", payload });
+  self.postMessage({ type: "reply", id, payload });
 };

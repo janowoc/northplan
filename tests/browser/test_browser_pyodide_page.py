@@ -54,7 +54,7 @@ def years_line(page: Page) -> Locator:
 
 
 def run_button(page: Page) -> Locator:
-    return page.get_by_role("button")
+    return page.locator("#run")
 
 
 def textarea(page: Page) -> Locator:
