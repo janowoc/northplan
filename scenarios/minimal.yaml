@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Jan Owoc
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The smallest valid scenario: where the editor's New button starts. Every amount is zero
+# where zero is allowed, so nothing here is a suggestion; fill it in for your household.
+# scenarios/example.yaml explains each field in its comments.
+
+name: new-scenario
+start_year: 2026
+n_paths: 1000
+seed: 1
+
+household:
+  province: ab
+  persons:
+    - id: a
+      birth_year: 1970
+      birth_month: 1
+      sex: f
+      cpp: {contributory_history: 0.0}
+      prior_year_net_income: 0
+      net_income_two_years_prior: 0
+
+spending:
+  schedule:
+    - {from_year: 2026, annual: 0}
+  survivor_share: 1.0
+
+assumptions:
+  inflation: 0.0
+  asset_classes:
+    cash: {real_mean: 0.0, vol: 0.0, interest_yield: 0.0, dividend_yield: 0.0, distributed_gains_yield: 0.0}
+  correlation: [[1.0]]
+  allocations:
+    default: {cash: 1.0}
+
+policies:
+  - name: policy
+    contribution:
+      weights: {tfsa: 1.0}
+      spill_order: []
+    withdrawal:
+      order: [tfsa]
+      taxable_ceiling_bracket: null
+      fill_pension_credit: false
+    elections:
+      cpp_start_age_years: {a: 65}
+      oas_start_age_years: {a: 65}
+      rrif_conversion: {age_years: 65, fraction: 0.0}
