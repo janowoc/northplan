@@ -1071,9 +1071,10 @@ class Assumptions(_Base):
 
     Attributes:
         inflation: Assumed annual inflation, a bare fraction. Constant for the
-            run (limitations.md L6). Used for the indexation erosion factor and
-            for the decay of amounts fixed in nominal terms — returns are real,
-            so it enters nowhere else. Must be above -1: at or below it,
+            run (limitations.md L6). Used for the indexation erosion factor, for
+            the decay of amounts fixed in nominal terms, and to restate the two
+            as-filed prior-year net incomes to real dollars. Returns are real
+            and do not use it. Must be above -1: at or below it,
             ``(1 + inflation)`` raised to a fractional power is a complex
             number rather than an error.
         asset_classes: Named classes, at least one. Declaration order is the
