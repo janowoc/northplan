@@ -15,6 +15,10 @@ read-only view: a scenario is loaded once and shared across every Monte Carlo
 path and every policy the optimizer evaluates, so a mutation or a silently
 ignored misspelled key would corrupt a whole run without a visible error.
 
+Every field carries a ``description``, written for the person filling in a scenario
+rather than for the developer, and published in the JSON Schema; a model's
+``Attributes:`` remain the developer's notes.
+
 **Dollars are real dollars of January of ``start_year``**, the same convention
 the engine holds everywhere, except a person's ``prior_year_net_income`` and
 ``net_income_two_years_prior``, stated as filed; ``engine.core.build`` restates
@@ -187,9 +191,16 @@ class Employment(_Base):
         annual: Real dollars per year, before tax.
     """
 
-    from_year: int
-    to_year: int
-    annual: Money
+    from_year: int = Field(
+        description="First calendar year this income is earned.",
+    )
+    to_year: int = Field(
+        description="Last calendar year this income is earned, inclusive.",
+    )
+    annual: Money = Field(
+        description="Real dollars a year, before tax. Do not inflate a future salary: amounts "
+        "are in January-of-start-year purchasing power.",
+    )
 
     @model_validator(mode="after")
     def _check_years_ordered(self) -> Self:
@@ -222,8 +233,16 @@ class CppEntitlement(_Base):
             gross amount, before any income-tax withholding.
     """
 
-    contributory_history: Fraction | None = None
-    in_pay_monthly: Money | None = None
+    contributory_history: Fraction | None = Field(
+        default=None,
+        description="Fraction of the maximum CPP pension earned, from 0 to 1. For example, 0.85 "
+        "is a career with some low-earning years. Give this or the in-pay amount, not both.",
+    )
+    in_pay_monthly: Money | None = Field(
+        default=None,
+        description="Real dollars a month of CPP already being received, gross, before any tax "
+        "withheld. Give this or the contributory history, not both.",
+    )
 
     @model_validator(mode="after")
     def _check_exactly_one(self) -> Self:
@@ -268,14 +287,39 @@ class DbPension(_Base):
             :class:`Spending`'s ``(0, 1]``).
     """
 
-    name: str
-    start_year: int
-    start_month: Month
-    annual: Money
-    indexation: Literal["none", "full"]
-    bridge_annual: Money = 0.0
-    bridge_to_age_years: int | None = None
-    survivor_share: Fraction = 0.0
+    name: str = Field(
+        description="A label for this pension, unique for this person, used to tell pensions "
+        "apart in results.",
+    )
+    start_year: int = Field(
+        description="Calendar year the pension begins.",
+    )
+    start_month: Month = Field(
+        description="Month the pension begins, 1 to 12.",
+    )
+    annual: Money = Field(
+        description="Real dollars a year at the start date.",
+    )
+    indexation: Literal["none", "full"] = Field(
+        description="full if the pension rises with inflation, so it stays constant in real "
+        "terms; none if it is fixed in dollars and loses value to inflation. No default: it "
+        "is the biggest factor in a pension's value.",
+    )
+    bridge_annual: Money = Field(
+        default=0.0,
+        description="Real dollars a year of a bridge benefit paid on top of the pension until "
+        "the bridge age. Zero if there is none.",
+    )
+    bridge_to_age_years: int | None = Field(
+        default=None,
+        description="Age the bridge benefit stops, usually the age the public pension it "
+        "bridges to begins.",
+    )
+    survivor_share: Fraction = Field(
+        default=0.0,
+        description="Fraction of the pension the survivor keeps receiving after the member "
+        "dies, from 0 to 1.",
+    )
 
     @model_validator(mode="after")
     def _check_bridge_ends(self) -> Self:
@@ -299,7 +343,10 @@ class CashAccount(_Base):
         balance: Real dollars on 1 January of the start year.
     """
 
-    balance: Money = 0.0
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
 
 
 class RrspAccount(_Base):
@@ -313,8 +360,15 @@ class RrspAccount(_Base):
             filing history the model does not have.
     """
 
-    balance: Money = 0.0
-    room: Money = 0.0
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
+    room: Money = Field(
+        default=0.0,
+        description="Unused RRSP contribution room on 1 January of the start year, after that "
+        "year's new room, as your notice of assessment states it.",
+    )
 
 
 class RrifAccount(_Base):
@@ -326,7 +380,10 @@ class RrifAccount(_Base):
         balance: Real dollars on 1 January of the start year.
     """
 
-    balance: Money = 0.0
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
 
 
 class TfsaAccount(_Base):
@@ -339,8 +396,15 @@ class TfsaAccount(_Base):
             earlier years.
     """
 
-    balance: Money = 0.0
-    room: Money = 0.0
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
+    room: Money = Field(
+        default=0.0,
+        description="Unused TFSA contribution room on 1 January of the start year, after that "
+        "year's new room and including room restored by earlier withdrawals.",
+    )
 
 
 class TaxableAccount(_Base):
@@ -355,8 +419,14 @@ class TaxableAccount(_Base):
         acb: Adjusted cost base in the same dollars.
     """
 
-    balance: Money = 0.0
-    acb: Money = 0.0
+    balance: Money = Field(
+        default=0.0,
+        description="Market value in real dollars on 1 January of the start year.",
+    )
+    acb: Money = Field(
+        default=0.0,
+        description="Adjusted cost base of those holdings, in the same dollars.",
+    )
 
 
 def _check_jurisdiction_required_when_funded(
@@ -392,8 +462,16 @@ class LiraAccount(_Base):
             household that never moved would catch it (limitations.md L3).
     """
 
-    balance: Money = 0.0
-    jurisdiction: JurisdictionCode | None = None
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
+    jurisdiction: JurisdictionCode | None = Field(
+        default=None,
+        description="The pension jurisdiction the LIRA is registered in, which may not be where "
+        "you live. It sets the withdrawal limits once it becomes a LIF. Required as soon as "
+        "there is a balance.",
+    )
 
     @model_validator(mode="after")
     def _check_jurisdiction_present(self) -> Self:
@@ -416,8 +494,15 @@ class LifAccount(_Base):
             catch it (limitations.md L3).
     """
 
-    balance: Money = 0.0
-    jurisdiction: JurisdictionCode | None = None
+    balance: Money = Field(
+        default=0.0,
+        description="Real dollars on 1 January of the start year.",
+    )
+    jurisdiction: JurisdictionCode | None = Field(
+        default=None,
+        description="The pension jurisdiction the LIF is registered in, which may not be where "
+        "you live. It sets the withdrawal limits. Required as soon as there is a balance.",
+    )
 
     @model_validator(mode="after")
     def _check_jurisdiction_present(self) -> Self:
@@ -441,13 +526,35 @@ class Accounts(_Base):
         lif: Life income fund, for a person already converted.
     """
 
-    cash: CashAccount = Field(default_factory=CashAccount)
-    rrsp: RrspAccount = Field(default_factory=RrspAccount)
-    rrif: RrifAccount = Field(default_factory=RrifAccount)
-    tfsa: TfsaAccount = Field(default_factory=TfsaAccount)
-    taxable: TaxableAccount = Field(default_factory=TaxableAccount)
-    lira: LiraAccount = Field(default_factory=LiraAccount)
-    lif: LifAccount = Field(default_factory=LifAccount)
+    cash: CashAccount = Field(
+        default_factory=CashAccount,
+        description="Cash on hand. Every person's cash is pooled into the household's one cash "
+        "account.",
+    )
+    rrsp: RrspAccount = Field(
+        default_factory=RrspAccount,
+        description="Registered retirement savings plan.",
+    )
+    rrif: RrifAccount = Field(
+        default_factory=RrifAccount,
+        description="Registered retirement income fund.",
+    )
+    tfsa: TfsaAccount = Field(
+        default_factory=TfsaAccount,
+        description="Tax-free savings account.",
+    )
+    taxable: TaxableAccount = Field(
+        default_factory=TaxableAccount,
+        description="Non-registered investments.",
+    )
+    lira: LiraAccount = Field(
+        default_factory=LiraAccount,
+        description="Locked-in retirement account, not yet converted.",
+    )
+    lif: LifAccount = Field(
+        default_factory=LifAccount,
+        description="Life income fund, for a person who has already converted.",
+    )
 
     @model_validator(mode="after")
     def _check_lira_and_lif_agree_on_jurisdiction(self) -> Self:
@@ -484,7 +591,11 @@ class OasEntitlement(_Base):
             gross amount, before any recovery-tax or income-tax withholding.
     """
 
-    in_pay_monthly: Money | None = None
+    in_pay_monthly: Money | None = Field(
+        default=None,
+        description="Real dollars a month of OAS already being received, gross, before any "
+        "recovery tax or income tax withheld. Leave it out if OAS has not started.",
+    )
 
 
 class Person(_Base):
@@ -517,17 +628,50 @@ class Person(_Base):
             no default because zero is a legitimate value the author types.
     """
 
-    id: str
-    birth_year: int
-    birth_month: Month
-    sex: Literal["f", "m"]
-    employment: tuple[Employment, ...] = ()
-    cpp: CppEntitlement
-    oas: OasEntitlement = Field(default_factory=OasEntitlement)
-    db_pensions: tuple[DbPension, ...] = ()
-    accounts: Accounts = Field(default_factory=Accounts)
-    prior_year_net_income: Money
-    net_income_two_years_prior: Money
+    id: str = Field(
+        description="A short name for this person, unique among every person and beneficiary. "
+        "Elections, RESP subscribers and grid paths refer to it.",
+    )
+    birth_year: int = Field(
+        description="Calendar year of birth.",
+    )
+    birth_month: Month = Field(
+        description="Month of birth, 1 to 12. It decides the month a pension can start.",
+    )
+    sex: Literal["f", "m"] = Field(
+        description="f or m. Selects the life table used for mortality, and nothing else.",
+    )
+    employment: tuple[Employment, ...] = Field(
+        default=(),
+        description="Periods of employment income. They may be listed in any order but must not "
+        "overlap.",
+    )
+    cpp: CppEntitlement = Field(
+        description="What is known about this person's CPP: either how much of the maximum they "
+        "have earned, or the amount already being paid.",
+    )
+    oas: OasEntitlement = Field(
+        default_factory=OasEntitlement,
+        description="What is known about this person's OAS, if it is already being paid.",
+    )
+    db_pensions: tuple[DbPension, ...] = Field(
+        default=(),
+        description="Defined-benefit pensions, possibly none.",
+    )
+    accounts: Accounts = Field(
+        default_factory=Accounts,
+        description="Opening balances on 1 January of the start year.",
+    )
+    prior_year_net_income: Money = Field(
+        description="Net income (line 23600) for the year before the start year, as filed on "
+        "that return, or an estimate if not yet filed. Stated as filed, not in real dollars; "
+        "the engine converts it. Required: zero is a legitimate answer.",
+    )
+    net_income_two_years_prior: Money = Field(
+        description="Net income (line 23600) for two years before the start year, as filed. "
+        "Stated as filed, not in real dollars; the engine converts it. Required: zero is a "
+        "legitimate answer.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -646,11 +790,27 @@ class Resp(_Base):
             amount of grant, not of contribution.
     """
 
-    subscriber: str
-    contributions: Money = 0.0
-    grants: Money = 0.0
-    income: Money = 0.0
-    grant_room_carried: Money = 0.0
+    subscriber: str = Field(
+        description="The id of the person who owns the plan. Income paid out when the plan "
+        "winds up is taxed to them.",
+    )
+    contributions: Money = Field(
+        default=0.0,
+        description="Contributions made to date, in real dollars.",
+    )
+    grants: Money = Field(
+        default=0.0,
+        description="Grants received to date, in real dollars.",
+    )
+    income: Money = Field(
+        default=0.0,
+        description="Investment income accumulated to date, in real dollars.",
+    )
+    grant_room_carried: Money = Field(
+        default=0.0,
+        description="Unused grant room on 1 January of the start year, after that year's new "
+        "room. An amount of grant, not of contribution.",
+    )
 
 
 class Education(_Base):
@@ -666,10 +826,19 @@ class Education(_Base):
             the RESP covers it; a shortfall comes from the household.
     """
 
-    start_year: int
-    start_month: Month
-    months: Annotated[int, Field(ge=1)]
-    annual_cost: Money
+    start_year: int = Field(
+        description="Calendar year schooling begins.",
+    )
+    start_month: Month = Field(
+        description="Month schooling begins, 1 to 12; usually 9 for September.",
+    )
+    months: Annotated[int, Field(ge=1)] = Field(
+        description="Length of the programme in months, at least one.",
+    )
+    annual_cost: Money = Field(
+        description="Real dollars a year while enrolled. Spent whether or not the RESP covers "
+        "it; any shortfall comes from the household. Do not inflate a future fee.",
+    )
 
 
 class Beneficiary(_Base):
@@ -687,11 +856,22 @@ class Beneficiary(_Base):
         education: The window it is meant to pay for.
     """
 
-    id: str
-    birth_year: int
-    birth_month: Month
-    resp: Resp
-    education: Education
+    id: str = Field(
+        description="A short name for this beneficiary, unique among every person and beneficiary.",
+    )
+    birth_year: int = Field(
+        description="Calendar year of birth; it decides grant eligibility.",
+    )
+    birth_month: Month = Field(
+        description="Month of birth, 1 to 12.",
+    )
+    resp: Resp = Field(
+        description="The RESP held for this beneficiary. Every figure is for this beneficiary "
+        "alone.",
+    )
+    education: Education = Field(
+        description="The schooling the RESP is meant to pay for.",
+    )
 
 
 class Household(_Base):
@@ -707,9 +887,18 @@ class Household(_Base):
         beneficiaries: RESP beneficiaries, possibly none.
     """
 
-    province: JurisdictionCode
-    persons: tuple[Person, ...]
-    beneficiaries: tuple[Beneficiary, ...] = ()
+    province: JurisdictionCode = Field(
+        description="Two-letter code of the province you live in, which selects the provincial "
+        "income tax. This is not where a locked-in account is registered; that is set on the "
+        "account.",
+    )
+    persons: tuple[Person, ...] = Field(
+        description="One or two adults. Their order is kept throughout the results.",
+    )
+    beneficiaries: tuple[Beneficiary, ...] = Field(
+        default=(),
+        description="Children or others with an RESP, possibly none.",
+    )
 
     @property
     def person_ids(self) -> tuple[str, ...]:
@@ -774,8 +963,12 @@ class SpendingBand(_Base):
         annual: Real dollars a year for the household.
     """
 
-    from_year: int
-    annual: Money
+    from_year: int = Field(
+        description="First calendar year this spending level applies.",
+    )
+    annual: Money = Field(
+        description="Real dollars a year for the whole household.",
+    )
 
 
 class Spending(_Base):
@@ -791,8 +984,14 @@ class Spending(_Base):
             mistake — and at most one.
     """
 
-    schedule: tuple[SpendingBand, ...]
-    survivor_share: Annotated[float, Field(gt=0.0, le=1.0, allow_inf_nan=False)]
+    schedule: tuple[SpendingBand, ...] = Field(
+        description="Spending levels by year. Each level lasts until the next one begins; the "
+        "first must begin at or before the start year, and the last runs to the second death.",
+    )
+    survivor_share: Annotated[float, Field(gt=0.0, le=1.0, allow_inf_nan=False)] = Field(
+        description="Fraction of household spending the survivor keeps from the month after the "
+        "first death. Above 0 and at most 1.",
+    )
 
     @model_validator(mode="after")
     def _check_schedule_is_not_empty(self) -> Self:
@@ -839,11 +1038,26 @@ class AssetClass(_Base):
             gains.
     """
 
-    real_mean: Finite
-    vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
-    interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
-    dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
-    distributed_gains_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+    real_mean: Finite = Field(
+        description="Expected real annual total return, a fraction (0.05), not a percentage. It "
+        "may be negative, but must be above -1.",
+    )
+    vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+        description="Annual standard deviation of the real return. Zero means a riskless class.",
+    )
+    interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+        description="Fraction of the balance paid out each year as interest. This is the tax "
+        "character of the return, not an addition to it.",
+    )
+    dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+        description="Fraction of the balance paid out each year as eligible dividends. Part of "
+        "the return, not an addition to it.",
+    )
+    distributed_gains_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+        description="Fraction of the balance paid out each year as realized capital gains. Part "
+        "of the return, not an addition to it; price change is the real mean less the three "
+        "yields.",
+    )
 
 
 class Assumptions(_Base):
@@ -873,10 +1087,23 @@ class Assumptions(_Base):
             allocation names known classes, is finite, and sums to one.
     """
 
-    inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False)]
-    asset_classes: FrozenMapping[AssetClass]
-    correlation: tuple[tuple[Finite, ...], ...]
-    allocations: FrozenMapping[FrozenMapping[Finite]]
+    inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False)] = Field(
+        description="Annual inflation, a fraction (0.02), not a percentage. Constant for the "
+        "run. Returns below are real, so inflation erodes amounts fixed in dollars.",
+    )
+    asset_classes: FrozenMapping[AssetClass] = Field(
+        description="The asset classes, at least one. Their order is the row order of the "
+        "correlation matrix.",
+    )
+    correlation: tuple[tuple[Finite, ...], ...] = Field(
+        description="Correlation of the classes' real annual returns, one row and column per "
+        "asset class in the order listed: symmetric, ones on the diagonal, and a valid "
+        "correlation matrix.",
+    )
+    allocations: FrozenMapping[FrozenMapping[Finite]] = Field(
+        description="Portfolio weights by account, as fractions summing to 1. default is "
+        "required and applies to any account without its own entry.",
+    )
 
     @property
     def asset_class_names(self) -> tuple[str, ...]:
@@ -1015,8 +1242,14 @@ class ContributionRule(_Base):
             names has no room left. Tried in order, each kind at most once.
     """
 
-    weights: FrozenMapping[Finite]
-    spill_order: tuple[str, ...]
+    weights: FrozenMapping[Finite] = Field(
+        description="Share of each contribution sent to each account kind, as fractions summing "
+        "to 1. Leaving a kind out is the same as giving it 0.",
+    )
+    spill_order: tuple[str, ...] = Field(
+        description="Where a contribution goes when its account has no room left, tried in "
+        "order. Each kind at most once.",
+    )
 
     @model_validator(mode="after")
     def _check_weights(self) -> Self:
@@ -1065,9 +1298,20 @@ class WithdrawalRule(_Base):
             use the pension income credit.
     """
 
-    order: tuple[str, ...]
-    taxable_ceiling_bracket: Annotated[int, Field(ge=0)] | None
-    fill_pension_credit: bool
+    order: tuple[str, ...] = Field(
+        description="Account kinds to draw from, in order, each at most once. Mandatory minimum "
+        "withdrawals happen regardless of this order.",
+    )
+    taxable_ceiling_bracket: Annotated[int, Field(ge=0)] | None = Field(
+        description="Turn on to draw from the RRIF, then the RRSP, every month until this "
+        "year's net income, projected from the year to date, reaches the top of this federal "
+        "tax bracket, counted from 0, whether or not cash is needed. Suits a household that "
+        "is drawing down; off for one that is still contributing.",
+    )
+    fill_pension_credit: bool = Field(
+        description="Whether to withdraw enough eligible pension income to use the pension "
+        "income tax credit.",
+    )
 
     @model_validator(mode="after")
     def _check_order(self) -> Self:
@@ -1088,8 +1332,14 @@ class RrifConversion(_Base):
             the whole balance to a minimum.
     """
 
-    age_years: int
-    fraction: Fraction
+    age_years: int = Field(
+        description="Age the conversion happens. The legal deadline is checked against the "
+        "start year's parameters.",
+    )
+    fraction: Fraction = Field(
+        description="Share of the RRSP converted, from 0 to 1. A partial conversion provides "
+        "eligible pension income without committing the whole balance to minimum withdrawals.",
+    )
 
 
 class ElectionsSpec(_Base):
@@ -1112,9 +1362,15 @@ class ElectionsSpec(_Base):
         rrif_conversion: The RRSP-to-RRIF conversion, household-wide.
     """
 
-    cpp_start_age_years: FrozenMapping[int]
-    oas_start_age_years: FrozenMapping[int]
-    rrif_conversion: RrifConversion
+    cpp_start_age_years: FrozenMapping[int] = Field(
+        description="The age each person starts CPP, by person id.",
+    )
+    oas_start_age_years: FrozenMapping[int] = Field(
+        description="The age each person starts OAS, by person id.",
+    )
+    rrif_conversion: RrifConversion = Field(
+        description="When and how much of the RRSP converts to a RRIF, for the whole household.",
+    )
 
 
 class PolicySpec(_Base):
@@ -1133,10 +1389,18 @@ class PolicySpec(_Base):
         elections: The dated choices.
     """
 
-    name: str
-    contribution: ContributionRule
-    withdrawal: WithdrawalRule
-    elections: ElectionsSpec
+    name: str = Field(
+        description="A label for this policy, unique in the scenario, shown against its results.",
+    )
+    contribution: ContributionRule = Field(
+        description="Where surplus money goes.",
+    )
+    withdrawal: WithdrawalRule = Field(
+        description="Where money comes from when it is needed.",
+    )
+    elections: ElectionsSpec = Field(
+        description="When to start CPP, OAS and the RRIF conversion.",
+    )
 
 
 class Scenario(_Base):
@@ -1175,18 +1439,53 @@ class Scenario(_Base):
             because the grid is expanded against all of them.
     """
 
-    name: str
-    start_year: int
-    n_paths: Annotated[int, Field(ge=1)]
-    seed: int
-    risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] | None = None
-    estate_utility_shift: Annotated[float, Field(gt=0.0, allow_inf_nan=False)] | None = None
-    household: Household
-    spending: Spending
-    assumptions: Assumptions
-    policies: tuple[PolicySpec, ...]
+    name: str = Field(
+        description="A label for this scenario, used in export file names.",
+    )
+    start_year: int = Field(
+        description="The year the simulation starts, on 1 January. Every dollar amount in the "
+        "scenario is in that January's dollars, except the two prior-year net incomes, and "
+        "that year's tax parameters serve the whole run.",
+    )
+    n_paths: Annotated[int, Field(ge=1)] = Field(
+        description="How many Monte Carlo paths to simulate.",
+    )
+    seed: int = Field(
+        description="Seed for the random draws. The same seed reproduces the same results, and "
+        "every policy sees the same draws, so policies are compared rather than luck.",
+    )
+    risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] | None = Field(
+        default=None,
+        description="Your household's risk preference: a coefficient of relative risk aversion, "
+        "a bare number and not a percentage. Zero means risk neutral. It scores the finished "
+        "results and changes no simulated number. Leave it out and the objectives that need "
+        "it refuse to run instead of choosing a preference for you.",
+    )
+    estate_utility_shift: Annotated[float, Field(gt=0.0, allow_inf_nan=False)] | None = Field(
+        default=None,
+        description="Real dollars added to every path's after-tax estate before the "
+        "certainty-equivalent objective scores it, and subtracted again afterwards. Without "
+        "it, at a risk aversion of 1 or more, a path that ends with an estate of zero decides "
+        "the whole score. Smaller values let the worst paths dominate; larger ones move the "
+        "score toward the average. Above zero when given; leave it out and that objective "
+        "refuses to run.",
+    )
+    household: Household = Field(
+        description="The people in the household.",
+    )
+    spending: Spending = Field(
+        description="What the household spends.",
+    )
+    assumptions: Assumptions = Field(
+        description="Inflation and the capital markets.",
+    )
+    policies: tuple[PolicySpec, ...] = Field(
+        description="One or more policies to simulate and compare.",
+    )
     grid: FrozenMapping[tuple[int | Finite, ...]] = Field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: MappingProxyType({}),
+        description="Optional. Each key is a dotted path to one number in a policy, and each "
+        "value is the list of numbers to try there. Every key must exist on every policy.",
     )
 
     @model_validator(mode="after")

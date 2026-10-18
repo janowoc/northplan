@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import collections.abc
 import copy
+import enum
 import types
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -1221,6 +1222,137 @@ def test_the_walk_helper_finds_every_bare_float_in_a_synthetic_model() -> None:
         "_SyntheticModel.anything",
         "_SyntheticModel.unbound_mapping",
     }
+
+
+# --- Field descriptions ----------------------------------------------------
+
+
+def _models_under(root: type[pydantic.BaseModel]) -> list[type[pydantic.BaseModel]]:
+    """Every model reachable from ``root`` through its fields' annotations, ``root`` first.
+
+    Descends through ``Annotated`` layers, the type arguments of any generic, and nested
+    models, each visited once.
+    """
+    models: list[type[pydantic.BaseModel]] = []
+
+    def walk(annotation: Any) -> None:
+        if isinstance(annotation, type) and issubclass(annotation, pydantic.BaseModel):
+            if annotation not in models:
+                models.append(annotation)
+                for field in annotation.model_fields.values():
+                    walk(field.annotation)
+            return
+        for arg in get_args(annotation):
+            walk(arg)
+
+    walk(root)
+    return models
+
+
+def _undescribed_fields(root: type[pydantic.BaseModel]) -> list[str]:
+    """Every ``Model.field`` under ``root`` without a description the JSON Schema carries.
+
+    A field is listed when its ``description`` is absent or blank, and marked ``(JSON
+    Schema)`` when the property in ``root.model_json_schema()`` does not carry that same
+    text. A model reached by :func:`_models_under` with no definition in the JSON Schema,
+    or a definition no reached model accounts for, is listed by name, so a walk that misses
+    a model fails rather than passes.
+    """
+    schema = root.model_json_schema()
+    definitions = schema.get("$defs", {})
+    models = _models_under(root)
+    sites = [
+        f"{name} (models and JSON Schema definitions disagree)"
+        for name in sorted({m.__name__ for m in models} ^ {*definitions, root.__name__})
+    ]
+    for model in models:
+        properties = (schema if model is root else definitions.get(model.__name__, {})).get(
+            "properties", {}
+        )
+        for name, field in model.model_fields.items():
+            if not (field.description or "").strip():
+                sites.append(f"{model.__name__}.{name}")
+            elif properties.get(name, {}).get("description") != field.description:
+                sites.append(f"{model.__name__}.{name} (JSON Schema)")
+    return sorted(sites)
+
+
+def test_every_scenario_field_has_a_description() -> None:
+    """Every field under :class:`Scenario` has help text, and the JSON Schema carries it.
+
+    The scenario editor shows a field's ``description`` from the JSON Schema as its help.
+    """
+    sites = _undescribed_fields(Scenario)
+
+    assert not sites, f"fields without a description: {', '.join(sites)}"
+
+
+class _SyntheticColour(enum.Enum):
+    """An enum, which the JSON Schema defines although it is not a model."""
+
+    RED = "red"
+
+
+class _SyntheticListed(pydantic.BaseModel):
+    """Reached through a tuple; its one field has no description."""
+
+    bare: int
+
+
+class _SyntheticMapped(pydantic.BaseModel):
+    """Reached through a ``FrozenMapping``; its one field's description is blank."""
+
+    blank: int = pydantic.Field(description="  ")
+
+
+class _SyntheticOptional(pydantic.BaseModel):
+    """Reached through ``| None``; one field is described, one is overridden in the JSON Schema."""
+
+    described: int = pydantic.Field(description="Synthetic.")
+    overridden: int = pydantic.Field(
+        description="Synthetic.", json_schema_extra={"description": "Other."}
+    )
+
+
+class _SyntheticHidden(pydantic.BaseModel):
+    """Reached through a field whose JSON Schema is replaced, so it has no definition."""
+
+    inner: int = pydantic.Field(description="Synthetic.")
+
+
+class _SyntheticWrapped(pydantic.BaseModel):
+    """Reached only through an ``Annotated`` tuple element; its one field has no description."""
+
+    unwrapped: int
+
+
+class _SyntheticDescribed(pydantic.BaseModel):
+    """A control model for :func:`_undescribed_fields`. Obviously synthetic."""
+
+    listed: tuple[_SyntheticListed, ...] = pydantic.Field(description="Synthetic.")
+    mapped: FrozenMapping[_SyntheticMapped] = pydantic.Field(description="Synthetic.")
+    optional: _SyntheticOptional | None = None
+    colour: _SyntheticColour = pydantic.Field(description="Synthetic.")
+    hidden: Annotated[_SyntheticHidden, pydantic.WithJsonSchema({"type": "object"})] = (
+        pydantic.Field(description="Synthetic.")
+    )
+    wrapped: tuple[Annotated[_SyntheticWrapped, pydantic.Field(strict=True)], ...] = pydantic.Field(
+        description="Synthetic."
+    )
+
+
+def test_the_description_walk_finds_every_undescribed_field_in_a_synthetic_model() -> None:
+    """A control, so a walk that under-visits or compares nothing cannot pass."""
+    assert _undescribed_fields(_SyntheticDescribed) == [
+        "_SyntheticColour (models and JSON Schema definitions disagree)",
+        "_SyntheticDescribed.optional",
+        "_SyntheticHidden (models and JSON Schema definitions disagree)",
+        "_SyntheticHidden.inner (JSON Schema)",
+        "_SyntheticListed.bare",
+        "_SyntheticMapped.blank",
+        "_SyntheticOptional.overridden (JSON Schema)",
+        "_SyntheticWrapped.unwrapped",
+    ]
 
 
 # --- Risk aversion ------------------------------------------------------
