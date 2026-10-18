@@ -710,7 +710,9 @@ def test_check_scenario_refuses_a_parameter_year_for_another_year() -> None:
         return dataclasses.replace(load_year(year), year=year + 1)
 
     scenario = Scenario.model_validate(_values(EXAMPLE))
-    with pytest.raises(ValueError, match=re.escape("params is for tax year 2027")) as excinfo:
+    with pytest.raises(
+        ValueError, match=re.escape("check_start_ages: params is for tax year 2027")
+    ) as excinfo:
         check_scenario(scenario, paths=None, load_params=wrong_year)
     assert type(excinfo.value) is ValueError
 
@@ -756,3 +758,29 @@ def test_check_scenario_runs_start_ages_before_lifespan() -> None:
 
     with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
         check_scenario(scenario, paths=None, load_params=load_year)
+
+
+def test_check_scenario_runs_start_ages_before_the_lifespans_parameter_lookup() -> None:
+    def without_terminal_age(year: int) -> ParamYear:
+        loaded = load_year(year)
+        mortality = loaded.sets["mortality"]
+        values = types.MappingProxyType(
+            {k: v for k, v in mortality.values.items() if k != "terminal_age_years"}
+        )
+        sets = {**loaded.sets, "mortality": dataclasses.replace(mortality, values=values)}
+        return dataclasses.replace(loaded, sets=types.MappingProxyType(sets))
+
+    with pytest.raises(
+        MissingParameterError, match=re.escape("mortality.yaml[terminal_age_years]")
+    ):
+        check_scenario(
+            Scenario.model_validate(_values(EXAMPLE)),
+            paths=None,
+            load_params=without_terminal_age,
+        )
+
+    values = _values(EXAMPLE)
+    values["grid"] = {"elections.cpp_start_age_years.a": [50, 65]}
+    scenario = Scenario.model_validate(values)
+    with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
+        check_scenario(scenario, paths=None, load_params=without_terminal_age)
