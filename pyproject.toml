@@ -27,6 +27,7 @@ dev = [
     "ruff==0.16.4",
     "setuptools>=77",
     "pip>=24",
+    "playwright>=1.63",
 ]
 
 [project.scripts]

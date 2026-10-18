@@ -52,6 +52,9 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
         working-directory: tests/browser
+      # The Chromium headless shell that the locked playwright names, and the system
+      # libraries it needs.
+      - run: playwright install --with-deps --only-shell chromium
       - name: The tag is v followed by the version in pyproject.toml
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -71,6 +74,7 @@ jobs:
       - run: pytest
         env:
           NORTHPLAN_REQUIRE_NODE: "1"
+          NORTHPLAN_REQUIRE_BROWSER: "1"
 
   pages:
     needs: test

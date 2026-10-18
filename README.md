@@ -290,6 +290,21 @@ version is updated.
 most eight; a larger `-n` also needs a larger `--maxprocesses`. `pytest -n 0`
 runs them serially.
 
+The browser tests also need Node, the npm packages pinned in `tests/browser`
+and Chromium's headless shell:
+
+```sh
+(cd tests/browser && npm ci --ignore-scripts)
+playwright install --only-shell chromium
+```
+
+Without them those tests are skipped, and the skip says what is missing. On
+Linux, `playwright install-deps chromium` installs the system libraries Chromium
+needs, with sudo; without those, Chromium does not start and the tests that
+drive Chromium report Playwright's error. The first run downloads Pyodide's
+packages from jsDelivr into `tests/browser/node_modules`; the pages themselves
+are tested offline.
+
 Run a scenario from the command line:
 
 ```sh

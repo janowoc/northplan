@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 import pytest
+from offline import CDN_FILES
 
 from api.schemas import FinalRow, SimulationMeta, SimulationResponse, YearRow
 
@@ -120,6 +121,17 @@ def test_the_pyodide_version_is_named_once_and_agrees_with_the_npm_pins() -> Non
         *(p.read_text(encoding="utf-8") for p in (REPO_ROOT / "browser").glob("*.py")),
     ):
         assert version.group(1) not in text
+
+
+def test_the_offline_scripts_are_the_pages_scripts_at_the_npm_pins() -> None:
+    assert list(CDN_FILES) == SCRIPT_URLS
+    tests = REPO_ROOT / "tests" / "browser"
+    package = json.loads((tests / "package.json").read_text(encoding="utf-8"))
+    lock = json.loads((tests / "package-lock.json").read_text(encoding="utf-8"))
+    for name in ("alpinejs", "plotly.js-dist-min"):
+        pinned = package["dependencies"][name]
+        assert lock["packages"][""]["dependencies"][name] == pinned
+        assert lock["packages"][f"node_modules/{name}"]["version"] == pinned
 
 
 def squeeze(text: str) -> str:
