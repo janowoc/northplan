@@ -97,14 +97,18 @@ def maximum_withdrawal(
         Maximum permitted withdrawal for the year, ``(n_paths,)``.
 
     Raises:
-        MissingParameterError: If the jurisdiction has no maximum table. Guard
-            with :func:`has_maximum`.
+        MissingParameterError: If the jurisdiction has no maximum table, or the
+            table has no row for the age looked up. Guard with
+            :func:`has_maximum`.
+        MalformedParamFileError: If the terminal age is not a finite whole
+            number, the table is not a mapping or is empty, a key of the
+            table is not plain decimal, or a row looked up is not a finite
+            number.
         ValueError: If ``age_at_start_of_year`` is below the table's first
             row. The maximum is not extrapolated below it.
     """
-    table = params.get("lif.maximum_factors.by_age")
-    terminal_age = params.number("lif.maximum_factors.terminal_age_years")
-    first_age = min(int(age) for age in table)
+    terminal_age = params.integer("lif.maximum_factors.terminal_age_years")
+    first_age = min(params.integer_keys("lif.maximum_factors.by_age"))
     if age_at_start_of_year < first_age:
         raise ValueError(
             f"age {age_at_start_of_year} is below the LIF maximum table's "
@@ -112,9 +116,9 @@ def maximum_withdrawal(
             "The maximum is not extrapolated below the table."
         )
     if age_at_start_of_year >= terminal_age:
-        factor = float(table[str(int(terminal_age))])
+        factor = params.number(f"lif.maximum_factors.by_age.{terminal_age}")
     else:
-        factor = float(table[str(age_at_start_of_year)])
+        factor = params.number(f"lif.maximum_factors.by_age.{age_at_start_of_year}")
     opening_balance_arr = np.asarray(opening_balance, dtype=np.float64)
     return np.asarray(opening_balance_arr * factor, dtype=np.float64)
 

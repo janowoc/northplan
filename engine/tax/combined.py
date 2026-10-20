@@ -305,7 +305,7 @@ def household_assessment(state: HouseholdState, params: RealParamYear) -> tuple[
     shared = np.minimum(months0, months1).astype(np.float64)
     scale0 = shared / np.maximum(months0, 1)
     scale1 = shared / np.maximum(months1, 1)
-    min_age = fed.number("eligible_pension_income.rrif_minimum_age_years")
+    min_age = fed.integer("eligible_pension_income.rrif_minimum_age_years")
     zeros = np.zeros(state.n_paths, dtype=np.float64)
 
     assessments0: list[Assessment] = []

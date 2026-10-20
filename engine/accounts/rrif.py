@@ -36,6 +36,7 @@ from engine.accounts import base
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet
 from engine.core.state import RrifState, updated
+from engine.params.loader import MalformedParamFileError
 
 
 def minimum_factor(age_at_start_of_year: int, params: RealParamSet) -> float:
@@ -56,16 +57,32 @@ def minimum_factor(age_at_start_of_year: int, params: RealParamSet) -> float:
 
     Returns:
         Factor as a bare fraction.
+
+    Raises:
+        MissingParameterError: If a parameter, or the row looked up, is absent.
+        MalformedParamFileError: If the terminal age is not a finite whole
+            number, the table is not a mapping or is empty, a key of the
+            table is not plain decimal, a value looked up (a row, or the
+            pre-table formula constant) is not a finite number, or, for an
+            age below the table's first age, the formula constant is less
+            than that first age.
     """
-    table = params.get("rrif.minimum_factors.by_age")
-    terminal_age = params.number("rrif.minimum_factors.terminal_age_years")
-    first_age = min(int(age) for age in table)
+    terminal_age = params.integer("rrif.minimum_factors.terminal_age_years")
+    first_age = min(params.integer_keys("rrif.minimum_factors.by_age"))
     if age_at_start_of_year >= terminal_age:
-        return float(table[str(int(terminal_age))])
+        return params.number(f"rrif.minimum_factors.by_age.{terminal_age}")
     if age_at_start_of_year < first_age:
-        formula_constant = params.number("rrif.minimum_factors.pre_table.formula_constant")
+        path = "rrif.minimum_factors.pre_table.formula_constant"
+        formula_constant = params.number(path)
+        if formula_constant < first_age:
+            raise MalformedParamFileError(
+                f"{params.raw.source}[{path}]: is {formula_constant!r}, less than the "
+                f"table's first age ({first_age}). Below that age the factor is "
+                "1 / (formula_constant - age), which is at most 1 only if "
+                "formula_constant is at least the first age."
+            )
         return 1 / (formula_constant - age_at_start_of_year)
-    return float(table[str(age_at_start_of_year)])
+    return params.number(f"rrif.minimum_factors.by_age.{age_at_start_of_year}")
 
 
 def minimum_withdrawal(

@@ -101,7 +101,7 @@ def non_refundable_credits(
         "credits.basic_personal_amount_annual", january_month_index
     )
 
-    eligibility_age = params.number("credits.age_amount.eligibility_age_years")
+    eligibility_age = params.integer("credits.age_amount.eligibility_age_years")
     age_amount = params.annual_amount("credits.age_amount.amount_annual", january_month_index)
     reduction_threshold = params.annual_amount(
         "credits.age_amount.reduction_threshold_annual", january_month_index

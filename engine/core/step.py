@@ -116,7 +116,7 @@ def advance_month(
     8. Transfers: withdrawals to cash first, in the order given, each with its registered
        withholding; then contributions from cash, in the order given, capped at room and at the
        cash available -- an RRSP contribution is capped at zero past the statutory conversion
-       age (``real_params.rrif.number("conversion_age_years")``), even with room still stated
+       age (``real_params.rrif.integer("conversion_age_years")``), even with room still stated
        and even though validation still accepts the transfer. The RESP wind-up in the
        first month after the education window pays the accumulated income into cash net of the
        special tax, which is withheld into the credited person's ``IncomeLedger.remitted``
@@ -679,7 +679,7 @@ def _phase6_forced_withdrawals(
     fill_age = None
     target = None
     if elections.fill_pension_credit:
-        fill_age = real_params.federal.number("eligible_pension_income.rrif_minimum_age_years")
+        fill_age = real_params.federal.integer("eligible_pension_income.rrif_minimum_age_years")
         target = max(
             real_params.federal.annual_amount(
                 "credits.pension_income_amount_annual", january_month_index
@@ -911,7 +911,7 @@ def _phase8_transfers(
 
     A contribution to a dead person's own account is capped at zero (L41); so is an RRSP
     contribution once the person's age at the end of ``year`` exceeds
-    ``real_params.rrif.number("conversion_age_years")`` -- the contribution is no longer legal,
+    ``real_params.rrif.integer("conversion_age_years")`` -- the contribution is no longer legal,
     though validation still accepts the transfer. An RESP wind-up's accumulated income is
     credited to the living spouse where the subscriber has died (L41). The wind-up pays the
     accumulated income into cash net of the special tax, withheld into the credited person's
@@ -990,7 +990,7 @@ def _phase8_transfers(
                 # No RRSP contribution is legal past the statutory conversion deadline (31
                 # December of the year the person reaches conversion_age_years), even though
                 # validation still accepts the transfer.
-                conversion_age_years = real_params.rrif.number("conversion_age_years")
+                conversion_age_years = real_params.rrif.integer("conversion_age_years")
                 person_age_end = timeline.age_at_end_of_year(
                     person.birth_year, person.birth_month, year
                 )
@@ -1214,7 +1214,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
     3. RRSP room on last year's employment income, read from the ledger before item 6 resets it
        (L25); then, regardless of that accrual and regardless of ``first_year``, ``room`` is
        fixed at zero for anyone whose age at the end of ``year`` exceeds
-       ``real_params.rrif.number("conversion_age_years")``.
+       ``real_params.rrif.integer("conversion_age_years")``.
     4. RESP grant room per beneficiary under the cessation age.
     5. RRIF and LIF minimum, and LIF maximum, from the opening 1 January balances by age at the
        start of the year. The LIF's maximum from
@@ -1267,7 +1267,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
         taxable_state = person.taxable
 
         age_end = timeline.age_at_end_of_year(person.birth_year, person.birth_month, year)
-        conversion_age_years = real_params.rrif.number("conversion_age_years")
+        conversion_age_years = real_params.rrif.integer("conversion_age_years")
 
         if not first_year:
             rrsp_state = rrsp_mod.erode_nominal(rrsp_state, inflation_rate)

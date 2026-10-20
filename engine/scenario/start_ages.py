@@ -60,11 +60,6 @@ class StartAgeNotAllowedError(ScenarioError):
     """
 
 
-def _format_number(number: float) -> str:
-    """Render a parameter number without a spurious trailing ``.0``."""
-    return str(int(number)) if number.is_integer() else repr(number)
-
-
 def _age_at_open(person: Person, start_year: int) -> int:
     return age_in_months(person.birth_year, person.birth_month, start_year, 1)
 
@@ -76,8 +71,8 @@ def _check_election(
     field_name: str,
     benefit_name: str,
     elections: Mapping[str, int],
-    earliest: float,
-    latest: float,
+    earliest: int,
+    latest: int,
     source: Path,
     in_pay: bool,
     start_year: int,
@@ -98,7 +93,7 @@ def _check_election(
         return
     years = elections[person.id]
     months = years * MONTHS_PER_YEAR
-    window = f"{_format_number(earliest)}-{_format_number(latest)} months"
+    window = f"{earliest}-{latest} months"
 
     if not (earliest <= months <= latest):
         raise StartAgeNotAllowedError(
@@ -161,10 +156,10 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
             f"params/{scenario.start_year}/ for this scenario."
         )
 
-    cpp_earliest = params.cpp.number("start_age.earliest_months")
-    cpp_latest = params.cpp.number("start_age.latest_months")
-    oas_earliest = params.oas.number("start_age.earliest_months")
-    oas_latest = params.oas.number("start_age.latest_months")
+    cpp_earliest = params.cpp.integer("start_age.earliest_months")
+    cpp_latest = params.cpp.integer("start_age.latest_months")
+    oas_earliest = params.oas.integer("start_age.earliest_months")
+    oas_latest = params.oas.integer("start_age.latest_months")
 
     for person in scenario.household.persons:
         age_at_open = _age_at_open(person, scenario.start_year)
@@ -174,7 +169,7 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
                 f"(cpp.in_pay_monthly) but is {age_at_open} months old when "
                 f"the run opens on 1 January {scenario.start_year}, younger "
                 f"than start_age.earliest_months "
-                f"({_format_number(cpp_earliest)}) in {params.cpp.source}; "
+                f"({cpp_earliest}) in {params.cpp.source}; "
                 f"CPP is first paid in the month that age is reached."
             )
         if person.oas.in_pay_monthly is not None and age_at_open <= oas_earliest:
@@ -183,7 +178,7 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
                 f"(oas.in_pay_monthly) but is {age_at_open} months old when "
                 f"the run opens on 1 January {scenario.start_year}, not older "
                 f"than start_age.earliest_months "
-                f"({_format_number(oas_earliest)}) in {params.oas.source}; "
+                f"({oas_earliest}) in {params.oas.source}; "
                 f"OAS is first paid in the month after that age."
             )
 
@@ -217,14 +212,14 @@ def check_start_ages(scenario: Scenario, params: ParamYear) -> None:
                 age_at_open=age_at_open,
             )
 
-    conversion_age_years = params.rrif.number("conversion_age_years")
+    conversion_age_years = params.rrif.integer("conversion_age_years")
     for policy in scenario.policies:
         elected = policy.elections.rrif_conversion.age_years
         if elected > conversion_age_years:
             raise StartAgeNotAllowedError(
                 f"policies[{policy.name!r}].elections.rrif_conversion.age_years: "
                 f"elected age {elected} is above conversion_age_years "
-                f"({_format_number(conversion_age_years)}) in {params.rrif.source}; "
+                f"({conversion_age_years}) in {params.rrif.source}; "
                 "an RRSP must already be converted to a RRIF by then, so this "
                 "election could never take effect."
             )

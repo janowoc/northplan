@@ -49,7 +49,7 @@ def room_accrued(
     Returns:
         Room accrued for the year, zero below the eligibility age.
     """
-    eligibility_age = params.number("room.eligibility_age_years")
+    eligibility_age = params.integer("room.eligibility_age_years")
     if age_at_end_of_year < eligibility_age:
         return 0.0
     return params.annual_amount("room.amount_annual", january_month_index)
@@ -137,10 +137,14 @@ def restore_room(state: TfsaState, params: RealParamSet) -> TfsaState:
         Updated state, room restored and the counter zeroed.
 
     Raises:
-        ValueError: If ``recontribution.restored_after_n_year_ends`` is not
-            exactly 1 — a single counter cannot express any other lag.
+        MissingParameterError: If ``recontribution.restored_after_n_year_ends`` is
+            absent.
+        MalformedParamFileError: If ``recontribution.restored_after_n_year_ends``
+            is not a finite whole number.
+        ValueError: If it is a whole number other than 1 — a single counter
+            cannot express any other lag.
     """
-    lag = params.number("recontribution.restored_after_n_year_ends")
+    lag = params.integer("recontribution.restored_after_n_year_ends")
     if lag != 1:
         raise ValueError(
             f"{params.name}.yaml recontribution.restored_after_n_year_ends is "

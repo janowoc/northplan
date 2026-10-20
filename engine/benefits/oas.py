@@ -50,7 +50,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from engine.core.indexation import RealParamSet
 from engine.core.state import BenefitState
-from engine.params.loader import MalformedParamFileError
+from engine.params.loader import MalformedParamFileError, integer_value
 
 
 def deferral_factor(start_age_months: ArrayLike, params: RealParamSet) -> NDArray[np.float64]:
@@ -68,9 +68,9 @@ def deferral_factor(start_age_months: ArrayLike, params: RealParamSet) -> NDArra
     Returns:
         Multiplier, at least 1.0, ``float64`` array.
     """
-    earliest = params.number("start_age.earliest_months")
+    earliest = params.integer("start_age.earliest_months")
     increment = params.number("deferral.increment_rate_per_month")
-    maximum_months = params.number("deferral.maximum_months")
+    maximum_months = params.integer("deferral.maximum_months")
     deferred = np.clip(np.asarray(start_age_months, dtype=np.float64) - earliest, 0, maximum_months)
     return np.asarray(1 + increment * deferred, dtype=np.float64)
 
@@ -93,7 +93,8 @@ def _band_max(age_months: float, month_index: int, params: RealParamSet) -> floa
 
     Raises:
         MalformedParamFileError: If a band is not a mapping, a band has no
-            ``from_age_months``, the number of band starting ages does not
+            ``from_age_months``, a band's ``from_age_months`` is not a finite
+            whole number, the number of band starting ages does not
             match the number of band maxima, or the starting ages do not
             strictly ascend.
     """
@@ -109,7 +110,12 @@ def _band_max(age_months: float, month_index: int, params: RealParamSet) -> floa
             raise MalformedParamFileError(
                 f"{params.raw.source}[pension.age_bands.{band_index}]: has no 'from_age_months'."
             )
-        from_ages.append(band["from_age_months"])
+        from_ages.append(
+            integer_value(
+                band["from_age_months"],
+                f"{params.raw.source}[pension.age_bands.{band_index}.from_age_months]",
+            )
+        )
     maxima = params.amounts("pension.age_bands.*.maximum_monthly", month_index)
     if len(from_ages) != len(maxima):
         raise MalformedParamFileError(
@@ -178,8 +184,8 @@ def gross_pension_monthly(
             "supplied."
         )
 
-    earliest = params.number("start_age.earliest_months")
-    latest = params.number("start_age.latest_months")
+    earliest = params.integer("start_age.earliest_months")
+    latest = params.integer("start_age.latest_months")
     effective_start = np.clip(max(benefit.start_age_months, age_at_open - 1), earliest, latest)
     max_at_current = _band_max(current_age_months, month_index, params)
     factor = deferral_factor(effective_start, params)
@@ -215,8 +221,8 @@ def gross_pension_annual(
         Twelve times the monthly OAS, ``(n_paths,)``, zero up to and
         including the start month.
     """
-    earliest = params.number("start_age.earliest_months")
-    latest = params.number("start_age.latest_months")
+    earliest = params.integer("start_age.earliest_months")
+    latest = params.integer("start_age.latest_months")
     start = np.clip(np.asarray(start_age_months, dtype=np.float64), earliest, latest)
     max_at_current = _band_max(current_age_months, month_index, params)
     factor = deferral_factor(start, params)

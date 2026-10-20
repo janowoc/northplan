@@ -214,13 +214,13 @@ def _eligible(
 ) -> NDArray[np.bool_]:
     """Whether ``beneficiary`` may receive a contribution this month, ``(n_paths,)``.
 
-    All three of: age at or below ``real_params.resp.number("grant.cessation_age_years")``
+    All three of: age at or below ``real_params.resp.integer("grant.cessation_age_years")``
     at the end of ``context.year``; ``context.month_index`` still inside the education
     window (before ``education_start_month_index + education_months``); and not wound up,
     per path.
     """
     resp_state = beneficiary.resp
-    cessation_age = real_params.resp.number("grant.cessation_age_years")
+    cessation_age = real_params.resp.integer("grant.cessation_age_years")
     age_end = age_at_end_of_year(beneficiary.birth_year, beneficiary.birth_month, context.year)
     within_age = age_end <= cessation_age
     within_window = context.month_index < (

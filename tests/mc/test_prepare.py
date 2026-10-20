@@ -49,6 +49,7 @@ from engine.mc.prepare import (
 from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import (
     DEFAULT_PARAMS_ROOT,
+    MalformedParamFileError,
     MissingParameterError,
     ParamError,
     ParamYear,
@@ -362,6 +363,22 @@ def test_resp_offset_check_runs_at_the_opening(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="income_year_offset"):
         prepare_run(_EXAMPLE_RAW, n_paths=2, params_root=tmp_path)
+
+
+def test_a_fractional_conversion_age_is_refused_as_a_param_error(tmp_path: Path) -> None:
+    shutil.copytree(DEFAULT_PARAMS_ROOT / "2026", tmp_path / "2026")
+    rrif_file = tmp_path / "2026" / "rrif.yaml"
+    original = rrif_file.read_text(encoding="utf-8")
+    modified = original.replace("conversion_age_years: 71 ", "conversion_age_years: 71.5 ")
+    assert modified != original
+    rrif_file.write_text(modified, encoding="utf-8")
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        prepare_run(_EXAMPLE_RAW, n_paths=2, params_root=tmp_path)
+    assert isinstance(raised.value, ParamError)
+    assert str(raised.value) == (
+        f"{rrif_file}[conversion_age_years]: expected an integer, found 71.5."
+    )
 
 
 def test_params_root_is_honoured(tmp_path: Path) -> None:

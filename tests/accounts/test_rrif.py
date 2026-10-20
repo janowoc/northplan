@@ -18,7 +18,7 @@ import pytest
 from engine.accounts import rrif
 from engine.core.indexation import real_year
 from engine.core.state import RrifState
-from engine.params.loader import load_year
+from engine.params.loader import MalformedParamFileError, MissingParameterError, load_year
 
 JANUARY = 0
 
@@ -355,3 +355,147 @@ def test_withdraw_leaves_the_inherited_fraction_unchanged() -> None:
 
     assert result.gross[0] == 300.0  # guard: something was withdrawn
     np.testing.assert_array_equal(new_state.inherited_fraction, [0.4])
+
+
+# =============================================================================
+# The factor table is read as a table of finite numbers under whole-number keys
+# =============================================================================
+
+
+def _table_params(
+    root: Path,
+    *,
+    terminal: str = "62",
+    formula_constant: str = "100",
+    rows: str = "      60: 0.05\n      61: 0.06\n      62: 0.07\n",
+):
+    """The synthetic ``rrif`` file with its factor table spelled out in YAML text."""
+    text = (
+        "rrif:\n"
+        "  minimum_factors:\n"
+        "    pre_table:\n"
+        f"      formula_constant: {formula_constant}\n"
+        "    by_age:\n"
+        f"{rows}"
+        f"    terminal_age_years: {terminal}\n"
+    )
+    _write(root, "rrif", text)
+    return real_year(load_year(2026, root), 0.0).rrif
+
+
+def test_minimum_factor_refuses_a_fractional_terminal_age(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, terminal="62.5")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.terminal_age_years]: "
+        f"expected an integer, found 62.5."
+    )
+
+
+def test_minimum_factor_refuses_a_boolean_row(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: true\n      62: 0.07\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age.61]: "
+        f"expected a number, found bool (True)."
+    )
+
+
+def test_minimum_factor_refuses_a_non_finite_row(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: .nan\n      62: 0.07\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age.61]: expected a finite number, found nan."
+    )
+
+
+@pytest.mark.parametrize("age", (62, 70))
+def test_minimum_factor_refuses_a_boolean_terminal_row(tmp_path: Path, age: int) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: 0.06\n      62: true\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(age, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age.62]: expected a number, found bool (True)."
+    )
+
+
+@pytest.mark.parametrize("age", (62, 70))
+def test_minimum_factor_refuses_a_non_finite_terminal_row(tmp_path: Path, age: int) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: 0.06\n      62: .nan\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(age, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age.62]: expected a finite number, found nan."
+    )
+
+
+@pytest.mark.parametrize(("constant", "shown"), [("59", "59.0"), ("59.5", "59.5"), ("30", "30.0")])
+def test_minimum_factor_refuses_a_formula_constant_below_the_first_age(
+    tmp_path: Path, constant: str, shown: str
+) -> None:
+    params = _table_params(tmp_path, formula_constant=constant)
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(59, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.pre_table.formula_constant]: "
+        f"is {shown}, less than the table's first age (60). Below that age the factor is "
+        "1 / (formula_constant - age), which is at most 1 only if formula_constant is at "
+        "least the first age."
+    )
+
+
+def test_minimum_factor_accepts_a_formula_constant_equal_to_the_first_age(
+    tmp_path: Path,
+) -> None:
+    params = _table_params(tmp_path, formula_constant="60")
+    assert rrif.minimum_factor(59, params) == 1.0
+
+
+def test_minimum_factor_reads_no_formula_constant_at_the_first_age(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, formula_constant="30")
+    assert rrif.minimum_factor(60, params) == 0.05
+
+
+def test_minimum_factor_reads_no_non_finite_formula_constant_at_the_first_age(
+    tmp_path: Path,
+) -> None:
+    params = _table_params(tmp_path, formula_constant=".nan")
+    assert rrif.minimum_factor(60, params) == 0.05
+
+
+def test_minimum_factor_raises_missing_for_a_row_absent_inside_the_table(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      62: 0.07\n")
+    with pytest.raises(MissingParameterError, match="'61' is not present"):
+        rrif.minimum_factor(61, params)
+
+
+def test_minimum_factor_refuses_a_key_not_in_plain_decimal(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows='      60: 0.05\n      "071": 0.06\n      62: 0.07\n')
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age]: key '071' is not an integer "
+        f"written in plain decimal, such as 71."
+    )
+
+
+def test_minimum_factor_refuses_an_empty_table(tmp_path: Path) -> None:
+    text = (
+        "rrif:\n"
+        "  minimum_factors:\n"
+        "    pre_table:\n"
+        "      formula_constant: 100\n"
+        "    by_age: {}\n"
+        "    terminal_age_years: 62\n"
+    )
+    _write(tmp_path, "rrif", text)
+    params = real_year(load_year(2026, tmp_path), 0.0).rrif
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[rrif.minimum_factors.by_age]: "
+        f"the mapping is empty; a table needs at least one row."
+    )

@@ -513,3 +513,36 @@ def test_band_max_raises_on_non_ascending_band_ages(synth_oas_non_ascending) -> 
 
     with pytest.raises(MalformedParamFileError, match="ascend"):
         _band_max(800, JANUARY, synth_oas_non_ascending)
+
+
+@pytest.mark.parametrize(
+    ("written", "message"),
+    [
+        ('"780"', "expected an integer, found str ('780')."),
+        (".nan", "expected a finite number, found nan."),
+        ("780.5", "expected an integer, found 780.5."),
+        ("true", "expected an integer, found bool (True)."),
+    ],
+    ids=["str", "nan", "fraction", "bool"],
+)
+def test_band_start_must_be_an_integer(tmp_path: Path, written: str, message: str) -> None:
+    from engine.benefits.oas import _band_max
+
+    text = (
+        "indexation:\n"
+        "  pension:\n"
+        "    adjustment_months: [1, 4, 7, 10]\n"
+        "    applies_to:\n"
+        "      - pension.age_bands.*.maximum_monthly\n"
+        "pension:\n"
+        "  age_bands:\n"
+        "    - from_age_months: 780\n"
+        "      maximum_monthly: 100\n"
+        f"    - from_age_months: {written}\n"
+        "      maximum_monthly: 200\n"
+    )
+    _write(tmp_path, "oas", text)
+    oas = real_year(load_year(2026, tmp_path), 0.0).oas
+    with pytest.raises(MalformedParamFileError) as raised:
+        _band_max(800, JANUARY, oas)
+    assert str(raised.value) == f"{oas.raw.source}[pension.age_bands.1.from_age_months]: {message}"

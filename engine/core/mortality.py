@@ -60,10 +60,10 @@ def survival_curve(
         MissingParameterError: If ``terminal_age_years`` is absent, or ``table`` has no
             ``q_x`` row for the age reached at some month, naming the file and the missing
             key.
-        MalformedParamFileError: If that row, or ``terminal_age_years``, is present but not
-            numeric.
+        MalformedParamFileError: If that row is present but not a finite number, or
+            ``terminal_age_years`` is not a finite whole number.
     """
-    terminal_age = int(table.number("terminal_age_years"))
+    terminal_age = table.integer("terminal_age_years")
     age_at_start = age_in_years(birth_year, birth_month, start_year, 1)
     if age_at_start > terminal_age:
         curve = np.array([0.0], dtype=np.float64)

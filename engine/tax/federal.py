@@ -260,7 +260,7 @@ def non_refundable_credits(
         "credits.basic_personal_amount_annual", january_month_index
     )
 
-    eligibility_age = params.number("credits.age_amount.eligibility_age_years")
+    eligibility_age = params.integer("credits.age_amount.eligibility_age_years")
     age_amount = params.annual_amount("credits.age_amount.amount_annual", january_month_index)
     reduction_threshold = params.annual_amount(
         "credits.age_amount.reduction_threshold_annual", january_month_index
@@ -366,7 +366,7 @@ def eligible_pension_income(
     Returns:
         Eligible pension income, real dollars, non-negative.
     """
-    min_age = params.number("eligible_pension_income.rrif_minimum_age_years")
+    min_age = params.integer("eligible_pension_income.rrif_minimum_age_years")
     age_arr = np.asarray(age_at_end_of_year)
     result = ledger.db_pension + np.where(
         age_arr >= min_age, ledger.rrif_lif_withdrawals, ledger.inherited_rrif_lif_withdrawals

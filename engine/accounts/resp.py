@@ -35,7 +35,6 @@ Parameters come from ``params/{year}/resp.yaml``.
 
 from __future__ import annotations
 
-import math
 from typing import Final
 
 import numpy as np
@@ -44,6 +43,7 @@ from numpy.typing import ArrayLike, NDArray
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet, nominal_carry_factor
 from engine.core.state import RespState, updated
+from engine.params.loader import is_finite
 
 #: Net-income fields ``PersonState`` carries (``prior_year_net_income``,
 #: ``net_income_two_years_prior``) — a structural fact about the state, not a
@@ -108,7 +108,7 @@ def grant_room_accrued(
         ``grant.room_annual`` while ``age_at_end_of_year <=
         grant.cessation_age_years``, else zero.
     """
-    cessation_age = params.number("grant.cessation_age_years")
+    cessation_age = params.integer("grant.cessation_age_years")
     if age_at_end_of_year > cessation_age:
         return 0.0
     return params.annual_amount("grant.room_annual", january_month_index)
@@ -184,9 +184,10 @@ def governing_income_year_offset(params: RealParamSet) -> int:
         at all.
 
     Raises:
+        MissingParameterError: If ``grant.enhanced.income_year_offset`` is absent.
         ValueError: If the value is not finite or not integral (``bool``,
-            ``NaN``, and infinity all take this branch, never
-            :class:`OverflowError`), or is integral but not
+            ``NaN``, an infinity and an int too large for a float all take
+            this branch, never :class:`OverflowError`), or is integral but not
             ``-_NET_INCOME_FIELDS``. ``PersonState`` carries exactly that
             many net-income fields, so a two-year reach-back is the only one
             the state can express; if the published offset ever changes, the
@@ -198,7 +199,7 @@ def governing_income_year_offset(params: RealParamSet) -> int:
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
+        or not is_finite(value)
         or not float(value).is_integer()
     ):
         raise ValueError(
@@ -374,7 +375,7 @@ def contribute(
     remaining_lifetime = np.clip(lifetime_max - state.contributions_lifetime, 0, None)
     contributed = np.minimum(requested_arr, remaining_lifetime)
 
-    cessation_age = params.number("grant.cessation_age_years")
+    cessation_age = params.integer("grant.cessation_age_years")
     if age_at_end_of_year > cessation_age:
         zeros = np.zeros_like(contributed)
         basic, enhanced = zeros, zeros

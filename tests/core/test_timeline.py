@@ -18,7 +18,7 @@ from types import MappingProxyType
 import pytest
 
 from engine.core import timeline
-from engine.params.loader import ParamSet
+from engine.params.loader import MalformedParamFileError, ParamSet
 
 BASE_YEAR = 2026
 
@@ -160,3 +160,28 @@ class TestIsFilingMonth:
         june_filer = _federal(filing_month=6)
         assert timeline.is_filing_month(4, june_filer) is False
         assert timeline.is_filing_month(6, june_filer) is True
+
+
+class TestFilingMonthIsAWholeNumber:
+    @staticmethod
+    def _with(value: object) -> ParamSet:
+        return ParamSet(
+            name="federal",
+            year=BASE_YEAR,
+            source=Path("synthetic-federal.yaml"),
+            values=MappingProxyType({"filing_month": value}),
+        )
+
+    def test_a_fractional_filing_month_is_refused(self) -> None:
+        with pytest.raises(MalformedParamFileError) as raised:
+            timeline.is_filing_month(4, self._with(4.5))
+        assert str(raised.value) == (
+            "synthetic-federal.yaml[filing_month]: expected an integer, found 4.5."
+        )
+
+    def test_a_non_finite_filing_month_is_refused(self) -> None:
+        with pytest.raises(MalformedParamFileError) as raised:
+            timeline.is_filing_month(4, self._with(float("nan")))
+        assert str(raised.value) == (
+            "synthetic-federal.yaml[filing_month]: expected a finite number, found nan."
+        )

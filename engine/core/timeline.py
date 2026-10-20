@@ -159,4 +159,4 @@ def is_filing_month(month: int, params: ParamSet) -> bool:
     Returns:
         True in the month the prior year's balance is settled.
     """
-    return month == int(params.number("filing_month"))
+    return month == params.integer("filing_month")

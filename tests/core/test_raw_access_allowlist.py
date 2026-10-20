@@ -27,15 +27,19 @@ from typing import Final
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = REPO_ROOT / "engine"
 
-#: engine/core/indexation.py defines RealParamSet and RealParamYear: every one of its 22
+#: engine/core/indexation.py defines RealParamSet and RealParamYear: every one of its 25
 #: `self.raw` accesses is the implementation reading its own wrapped object. Listing them would
-#: be 22 allowlist entries all saying "this is the implementation." Excluded by path, and nothing
+#: be 25 allowlist entries all saying "this is the implementation." Excluded by path, and nothing
 #: else is.
 _EXCLUDED_MODULE: Final[str] = "engine/core/indexation.py"
 
 #: One entry per allowlisted access, keyed by (module path relative to the repo root, the
 #: rendered access expression). See the module docstring for how an access is found and keyed.
 ALLOWLIST: Final[dict[tuple[str, str], str]] = {
+    ("engine/accounts/rrif.py", "params.raw.source"): (
+        "Reaches the parameter file's Path for an error message, not a dollar amount, and has "
+        "no real-terms equivalent."
+    ),
     ("engine/accounts/resp.py", "params.raw.source"): (
         "Reaches the parameter file's Path for an error message, not a dollar amount, and has "
         "no real-terms equivalent."
@@ -47,7 +51,7 @@ ALLOWLIST: Final[dict[tuple[str, str], str]] = {
 }
 
 #: A floor, not an exact count: high enough that a collector that silently stopped finding
-#: accesses could not pass the first test vacuously. The real tree has exactly 2 today.
+#: accesses could not pass the first test vacuously. The real tree has exactly 3 today.
 MINIMUM_RAW_ACCESSES: Final[int] = 2
 
 

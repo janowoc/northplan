@@ -163,7 +163,7 @@ def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
     Returns:
         Whether conversion is due this year.
     """
-    conversion_age = params.number("conversion_age_years")
+    conversion_age = params.integer("conversion_age_years")
     return bool(age_at_end_of_year >= conversion_age)
 
 

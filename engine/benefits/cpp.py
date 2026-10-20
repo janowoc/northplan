@@ -49,9 +49,9 @@ def start_adjustment_factor(
     Returns:
         Multiplier, 1.0 at exactly the standard start age, ``float64`` array.
     """
-    standard = params.number("start_age.standard_months")
-    earliest = params.number("start_age.earliest_months")
-    latest = params.number("start_age.latest_months")
+    standard = params.integer("start_age.standard_months")
+    earliest = params.integer("start_age.earliest_months")
+    latest = params.integer("start_age.latest_months")
     early_rate = params.number("start_adjustment.early_rate_per_month")
     late_rate = params.number("start_adjustment.late_rate_per_month")
 
@@ -141,8 +141,8 @@ def pension_monthly(
             f"one way of knowing this benefit's amount must be supplied."
         )
 
-    earliest = params.number("start_age.earliest_months")
-    latest = params.number("start_age.latest_months")
+    earliest = params.integer("start_age.earliest_months")
+    latest = params.integer("start_age.latest_months")
     age_at_open = current_age_months - month_index
     effective_start = np.clip(max(benefit.start_age_months, age_at_open), earliest, latest)
     base = base_pension_monthly(benefit.contributory_history, month_index, params)

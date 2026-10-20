@@ -10,7 +10,9 @@ meaningless offsets ("one year older") are literals.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -18,7 +20,7 @@ import yaml
 
 from engine.core.mortality import months_to_terminal
 from engine.core.timeline import MONTHS_PER_YEAR
-from engine.params.loader import ParamYear, load_year
+from engine.params.loader import MalformedParamFileError, ParamSet, ParamYear, load_year
 from engine.scenario import LifespanNotRepresentableError, Scenario, check_lifespan
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -377,3 +379,39 @@ def test_wrong_parameter_year_is_a_value_error(params: ParamYear) -> None:
     message = str(excinfo.value)
     assert str(scenario.start_year) in message
     assert str(scenario.start_year + 1) in message
+
+
+# --- terminal_age_years must be a finite whole number -----------------------
+
+
+def _with_terminal_age(params: ParamYear, value: float) -> ParamYear:
+    mortality = params["mortality"]
+    changed = ParamSet(
+        mortality.name,
+        mortality.year,
+        mortality.source,
+        MappingProxyType({**mortality.values, "terminal_age_years": value}),
+    )
+    return replace(params, sets=MappingProxyType({**params.sets, "mortality": changed}))
+
+
+@pytest.mark.parametrize(
+    "value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+)
+def test_check_lifespan_refuses_a_non_finite_terminal_age(params: ParamYear, value: float) -> None:
+    scenario = Scenario.model_validate(example_values())
+    with pytest.raises(MalformedParamFileError) as raised:
+        check_lifespan(scenario, _with_terminal_age(params, value))
+    assert str(raised.value) == (
+        f"{params['mortality'].source}[terminal_age_years]: "
+        f"expected a finite number, found {value!r}."
+    )
+
+
+def test_check_lifespan_refuses_a_fractional_terminal_age(params: ParamYear) -> None:
+    scenario = Scenario.model_validate(example_values())
+    with pytest.raises(MalformedParamFileError) as raised:
+        check_lifespan(scenario, _with_terminal_age(params, 110.5))
+    assert str(raised.value) == (
+        f"{params['mortality'].source}[terminal_age_years]: expected an integer, found 110.5."
+    )

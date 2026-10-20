@@ -49,6 +49,7 @@ from engine.params.loader import (
     ParamError,
     ParamSet,
     ParamYear,
+    is_finite,
 )
 
 __all__ = [
@@ -428,7 +429,7 @@ class RealParamSet:
         Raises:
             UnroutedParameterError: If no schedule routes ``path``.
             MissingParameterError: If the parameter is absent.
-            MalformedParamFileError: If it is present but not numeric.
+            MalformedParamFileError: If it is present but not a finite number.
             ValueError: If ``path`` holds a wildcard.
         """
         if WILDCARD in _segments(path):
@@ -453,7 +454,7 @@ class RealParamSet:
                 pattern matches nothing at all. An empty table is not a table
                 of no amounts — it is a pattern that has stopped naming the
                 file it was written for.
-            MalformedParamFileError: If any element is not numeric.
+            MalformedParamFileError: If any element is not a finite number.
         """
         factor = self._factor(path, month_index)
         return self._table(path, factor)
@@ -476,7 +477,7 @@ class RealParamSet:
                 multiple of twelve, or if ``path`` holds a wildcard.
             UnroutedParameterError: If no schedule routes ``path``.
             MissingParameterError: If the parameter is absent.
-            MalformedParamFileError: If it is present but not numeric.
+            MalformedParamFileError: If it is present but not a finite number.
         """
         _check_january_index(january_month_index)
         if WILDCARD in _segments(path):
@@ -505,7 +506,7 @@ class RealParamSet:
             UnroutedParameterError: If no schedule routes ``path``.
             MissingParameterError: If the parameter is absent, or if a ``*``
                 pattern matches nothing at all.
-            MalformedParamFileError: If any element is not numeric.
+            MalformedParamFileError: If any element is not a finite number.
         """
         _check_january_index(january_month_index)
         factor = self._annual_factor(path, january_month_index)
@@ -520,7 +521,7 @@ class RealParamSet:
         Raises:
             MissingParameterError: If the parameter is absent, or if a ``*``
                 pattern matches nothing at all.
-            MalformedParamFileError: If any element is not numeric.
+            MalformedParamFileError: If any element is not a finite number.
         """
         if WILDCARD not in _segments(path):
             return tuple(value * factor for value in self.raw.numbers(path))
@@ -539,6 +540,10 @@ class RealParamSet:
                     f"{self.raw.source}[{concrete}]: expected a number, found "
                     f"{type(value).__name__} ({value!r})."
                 )
+            if not is_finite(value):
+                raise MalformedParamFileError(
+                    f"{self.raw.source}[{concrete}]: expected a finite number, found {value!r}."
+                )
             out.append(float(value) * factor)
         return tuple(out)
 
@@ -556,6 +561,16 @@ class RealParamSet:
         """Raw :meth:`~engine.params.loader.ParamSet.numbers`, refusing routed paths."""
         self._refuse_if_routed(path, "numbers")
         return self.raw.numbers(path)
+
+    def integer(self, path: str) -> int:
+        """Raw :meth:`~engine.params.loader.ParamSet.integer`, refusing routed paths."""
+        self._refuse_if_routed(path, "integer")
+        return self.raw.integer(path)
+
+    def integer_keys(self, path: str) -> tuple[int, ...]:
+        """Raw :meth:`~engine.params.loader.ParamSet.integer_keys`, refusing routed paths."""
+        self._refuse_if_routed(path, "integer_keys")
+        return self.raw.integer_keys(path)
 
     def sequence(self, path: str) -> tuple[Any, ...]:
         """Raw :meth:`~engine.params.loader.ParamSet.sequence`, refusing routed paths."""

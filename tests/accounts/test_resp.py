@@ -221,6 +221,14 @@ SYNTHETIC_BOOLEAN_OFFSET = SYNTHETIC.replace("income_year_offset: -1", "income_y
 #: collision guarantee as SYNTHETIC_NONINTEGRAL_OFFSET above.
 SYNTHETIC_INFINITE_OFFSET = SYNTHETIC.replace("income_year_offset: -1", "income_year_offset: .inf")
 
+#: SYNTHETIC, with an offset of a 1 followed by 400 zeros. A YAML int this large
+#: parses as an exact ``int``, and ``math.isfinite`` on it raises
+#: ``OverflowError``, so the guard has to refuse it as a ``ValueError`` first.
+#: Same construction and same collision guarantee as SYNTHETIC_NONINTEGRAL_OFFSET above.
+SYNTHETIC_HUGE_OFFSET = SYNTHETIC.replace(
+    "income_year_offset: -1", "income_year_offset: " + "1" + "0" * 400
+)
+
 
 def _write(root: Path, name: str, text: str) -> Path:
     year_dir = root / "2026"
@@ -258,12 +266,19 @@ def _leaves(value: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], A
 
 @pytest.mark.parametrize(
     "fixture_text",
-    (SYNTHETIC, SYNTHETIC_NONINTEGRAL_OFFSET, SYNTHETIC_BOOLEAN_OFFSET, SYNTHETIC_INFINITE_OFFSET),
+    (
+        SYNTHETIC,
+        SYNTHETIC_NONINTEGRAL_OFFSET,
+        SYNTHETIC_BOOLEAN_OFFSET,
+        SYNTHETIC_INFINITE_OFFSET,
+        SYNTHETIC_HUGE_OFFSET,
+    ),
     ids=(
         "SYNTHETIC",
         "SYNTHETIC_NONINTEGRAL_OFFSET",
         "SYNTHETIC_BOOLEAN_OFFSET",
         "SYNTHETIC_INFINITE_OFFSET",
+        "SYNTHETIC_HUGE_OFFSET",
     ),
 )
 def test_the_synthetic_fixture_shares_no_value_with_the_real_file(
@@ -828,7 +843,7 @@ def test_governing_income_year_offset_raises_on_a_boolean_value(tmp_path: Path) 
 def test_governing_income_year_offset_raises_on_an_infinite_value(tmp_path: Path) -> None:
     """``value != int(value)`` would call ``int(inf)``, which raises ``OverflowError`` — a
     type the docstring does not promise and a caller catching ``ValueError`` would not
-    catch. ``math.isfinite`` is checked before any conversion, so this must raise
+    catch. ``is_finite`` is checked before any conversion, so this must raise
     ``ValueError`` naming the file and path, not ``OverflowError``.
     """
     _write(tmp_path, "resp", SYNTHETIC_INFINITE_OFFSET)
@@ -840,3 +855,18 @@ def test_governing_income_year_offset_raises_on_an_infinite_value(tmp_path: Path
     message = str(excinfo.value)
     assert "grant.enhanced.income_year_offset" in message, message
     assert str(infinite.raw.source) in message, message
+
+
+def test_governing_income_year_offset_raises_on_an_int_too_large_for_a_float(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "resp", SYNTHETIC_HUGE_OFFSET)
+    huge = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(huge)
+
+    message = str(excinfo.value)
+    assert "grant.enhanced.income_year_offset" in message, message
+    assert str(huge.raw.source) in message, message
+    assert "expected a whole number of years" in message, message

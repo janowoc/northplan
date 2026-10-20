@@ -18,6 +18,7 @@ produces.
 from __future__ import annotations
 
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -29,7 +30,7 @@ from engine.core.mortality import (
     survival_curve,
 )
 from engine.core.timeline import MONTHS_PER_YEAR
-from engine.params.loader import ParamSet, load_year
+from engine.params.loader import MalformedParamFileError, ParamSet, load_year
 
 START_YEAR = 2026
 
@@ -348,3 +349,32 @@ class TestMonthsToTerminal:
         older = months_to_terminal(START_YEAR - 40, 1, "f", START_YEAR, table)
         younger = months_to_terminal(START_YEAR - 10, 1, "f", START_YEAR, table)
         assert younger > older
+
+
+def _with_terminal_age(table: ParamSet, value: object) -> ParamSet:
+    return ParamSet(
+        table.name,
+        table.year,
+        table.source,
+        MappingProxyType({**table.values, "terminal_age_years": value}),
+    )
+
+
+class TestTerminalAgeIsAFiniteWholeNumber:
+    def test_survival_curve_refuses_a_fractional_terminal_age(self, table: ParamSet) -> None:
+        with pytest.raises(MalformedParamFileError) as raised:
+            survival_curve(START_YEAR, 1, "f", START_YEAR, _with_terminal_age(table, 50.5))
+        assert (
+            str(raised.value)
+            == f"{table.source}[terminal_age_years]: expected an integer, found 50.5."
+        )
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "inf"])
+    def test_survival_curve_refuses_a_non_finite_terminal_age(
+        self, table: ParamSet, value: float
+    ) -> None:
+        with pytest.raises(MalformedParamFileError) as raised:
+            survival_curve(START_YEAR, 1, "f", START_YEAR, _with_terminal_age(table, value))
+        assert str(raised.value) == (
+            f"{table.source}[terminal_age_years]: expected a finite number, found {value!r}."
+        )

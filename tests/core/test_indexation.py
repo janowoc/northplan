@@ -632,3 +632,74 @@ def test_annual_amounts_on_an_unindexed_list_valued_path_decays_then_averages(
         value * unindexed_factor(HALVING, 12) * erosion_factor(HALVING, 1) for value in (4000, 8000)
     )
     assert federal.annual_amounts("frozen.edges_annual", 12) == expected
+
+
+# --- Non-finite values and the integer readers ---------------------------------
+
+
+def test_a_wildcard_table_refuses_a_non_finite_element(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "federal",
+        "indexation:\n"
+        "  yearly:\n"
+        "    adjustment_months: [1]\n"
+        "    applies_to:\n"
+        "      - pension.bands.*.maximum_monthly\n"
+        "pension:\n"
+        "  bands:\n"
+        "    - maximum_monthly: 100\n"
+        "    - maximum_monthly: .nan\n",
+    )
+    federal = real_year(load_year(2026, tmp_path), 0).federal
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amounts("pension.bands.*.maximum_monthly", 0)
+    assert str(raised.value) == (
+        f"{federal.raw.source}[pension.bands.1.maximum_monthly]: "
+        f"expected a finite number, found nan."
+    )
+
+
+@pytest.mark.parametrize("value", [".nan", ".inf", "-.inf"])
+def test_amount_refuses_a_non_finite_value(tmp_path: Path, value: str) -> None:
+    _write(
+        tmp_path,
+        "federal",
+        "indexation:\n"
+        "  yearly:\n"
+        "    adjustment_months: [1]\n"
+        "    applies_to:\n"
+        "      - credits.basic_amount_annual\n"
+        f"credits:\n  basic_amount_annual: {value}\n",
+    )
+    federal = real_year(load_year(2026, tmp_path), 0).federal
+    shown = {".nan": "nan", ".inf": "inf", "-.inf": "-inf"}[value]
+    expected = f"{federal.raw.source}[credits.basic_amount_annual]: expected a finite number, found {shown}."
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amount("credits.basic_amount_annual", 0)
+    assert str(raised.value) == expected
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.annual_amount("credits.basic_amount_annual", 0)
+    assert str(raised.value) == expected
+
+
+def test_integer_passes_through_an_unrouted_path(real: RealParamSet) -> None:
+    result = real.integer("filing_month")
+    assert result == 4
+    assert type(result) is int
+
+
+def test_integer_refuses_a_routed_path(real: RealParamSet) -> None:
+    with pytest.raises(RoutedParameterError, match="undeflated"):
+        real.integer("credits.basic_amount_annual")
+
+
+def test_integer_keys_passes_through_an_unrouted_path(tmp_path: Path) -> None:
+    _write(tmp_path, "federal", SYNTHETIC + "table:\n  71: 0.5\n  72: 0.25\n")
+    federal = real_year(load_year(2026, tmp_path), HALVING).federal
+    assert federal.integer_keys("table") == (71, 72)
+
+
+def test_integer_keys_refuses_a_routed_path(real: RealParamSet) -> None:
+    with pytest.raises(RoutedParameterError, match="undeflated"):
+        real.integer_keys("credits.basic_amount_annual")

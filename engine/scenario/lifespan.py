@@ -76,6 +76,10 @@ def check_lifespan(scenario: Scenario, params: ParamYear) -> None:
 
     Raises:
         ValueError: If ``params.year != scenario.start_year``.
+        MissingParameterError: If ``terminal_age_years``, or a ``q_x`` row that
+            check 2 reads, is absent.
+        MalformedParamFileError: If ``terminal_age_years`` is not a finite whole
+            number, or a ``q_x`` row that check 2 reads is not a finite number.
         LifespanNotRepresentableError: On the first person, or household, the
             table cannot represent.
     """
@@ -87,7 +91,7 @@ def check_lifespan(scenario: Scenario, params: ParamYear) -> None:
         )
 
     mortality = params["mortality"]
-    terminal_age = int(mortality.number("terminal_age_years"))
+    terminal_age = mortality.integer("terminal_age_years")
 
     for person in scenario.household.persons:
         age_at_open = age_at_start_of_year(

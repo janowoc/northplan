@@ -11,13 +11,15 @@ table's *shape*, which the real file already has.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from engine.accounts import lif
 from engine.core.indexation import real_year
 from engine.core.state import LifState
-from engine.params.loader import load_year
+from engine.params.loader import MalformedParamFileError, MissingParameterError, load_year
 
 
 @pytest.fixture
@@ -328,3 +330,102 @@ def test_spousal_rollover_leaves_the_deceaseds_inherited_fraction_unchanged() ->
     new_deceased, _ = lif.spousal_rollover(deceased, survivor, np.array([True]))
 
     np.testing.assert_array_equal(new_deceased.inherited_fraction, [0.3])
+
+
+# =============================================================================
+# The factor table is read as a table of finite numbers under whole-number keys
+# =============================================================================
+
+
+def _table_params(
+    root: Path,
+    *,
+    terminal: str = "62",
+    rows: str = "      60: 0.05\n      61: 0.06\n      62: 0.07\n",
+    table: str | None = None,
+):
+    """A synthetic ``ab`` file with its LIF maximum table spelled out in YAML text."""
+    body = table if table is not None else f"    by_age:\n{rows}"
+    text = (
+        f"lif:\n  has_maximum: true\n  maximum_factors:\n{body}    terminal_age_years: {terminal}\n"
+    )
+    year_dir = root / "2026"
+    year_dir.mkdir(parents=True, exist_ok=True)
+    (year_dir / "ab.yaml").write_text(text, encoding="utf-8")
+    return real_year(load_year(2026, root), 0.0).jurisdiction("ab")
+
+
+def test_maximum_withdrawal_refuses_a_fractional_terminal_age(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, terminal="62.5")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.terminal_age_years]: "
+        f"expected an integer, found 62.5."
+    )
+
+
+def test_maximum_withdrawal_refuses_a_boolean_row(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: true\n      62: 0.07\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age.61]: expected a number, found bool (True)."
+    )
+
+
+def test_maximum_withdrawal_refuses_a_non_finite_row(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: .inf\n      62: 0.07\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age.61]: expected a finite number, found inf."
+    )
+
+
+@pytest.mark.parametrize("age", (62, 70))
+def test_maximum_withdrawal_refuses_a_boolean_terminal_row(tmp_path: Path, age: int) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: 0.06\n      62: true\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(100.0, age, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age.62]: expected a number, found bool (True)."
+    )
+
+
+@pytest.mark.parametrize("age", (62, 70))
+def test_maximum_withdrawal_refuses_a_non_finite_terminal_row(tmp_path: Path, age: int) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: 0.06\n      62: .nan\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(100.0, age, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age.62]: expected a finite number, found nan."
+    )
+
+
+def test_maximum_withdrawal_raises_missing_for_a_row_absent_inside_the_table(
+    tmp_path: Path,
+) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      62: 0.07\n")
+    with pytest.raises(MissingParameterError, match="'61' is not present"):
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+
+
+def test_maximum_withdrawal_refuses_a_key_not_in_plain_decimal(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows='      60: 0.05\n      "071": 0.06\n      62: 0.07\n')
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age]: key '071' is not an integer "
+        f"written in plain decimal, such as 71."
+    )
+
+
+def test_maximum_withdrawal_refuses_an_empty_table(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, table="    by_age: {}\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        lif.maximum_withdrawal(np.array([100.0]), 61, params)
+    assert str(raised.value) == (
+        f"{params.raw.source}[lif.maximum_factors.by_age]: "
+        f"the mapping is empty; a table needs at least one row."
+    )

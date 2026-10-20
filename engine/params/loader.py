@@ -37,7 +37,9 @@ document's size.
 from __future__ import annotations
 
 import errno
+import math
 import os
+import re
 import stat
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -60,6 +62,8 @@ __all__ = [
     "ParamYearMissingError",
     "YamlConstructionError",
     "check_params_root",
+    "integer_value",
+    "is_finite",
     "load_year",
     "parse_yaml",
 ]
@@ -312,6 +316,50 @@ def _freeze(value: Any, *, where: str = "") -> Any:
     return value
 
 
+def is_finite(value: int | float) -> bool:
+    """Whether ``value`` converts to a finite float.
+
+    An ``int`` too large for a float is not finite here: ``math.isfinite``
+    raises ``OverflowError`` on it, and this returns ``False`` instead.
+
+    Precondition: the caller has already refused ``bool`` and non-numbers.
+    """
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def integer_value(value: Any, where: str) -> int:
+    """Return ``value`` as an ``int`` if it is a finite whole number, or raise.
+
+    The checks :meth:`ParamSet.integer` applies, for a value already in hand
+    (a list element the dotted-path ``get`` cannot reach). An ``int`` is
+    returned unchanged, so a YAML int above 2**53 stays exact; an integral
+    ``float`` such as ``71.0`` or ``-0.0`` is returned as ``int``.
+
+    Args:
+        value: The parsed YAML value.
+        where: The ``"<file>[<path>]"`` text every message begins with.
+
+    Raises:
+        MalformedParamFileError: If ``value`` is a ``bool`` or not a number,
+            is NaN, an infinity or an int too large for a float, or is not a
+            whole number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MalformedParamFileError(
+            f"{where}: expected an integer, found {type(value).__name__} ({value!r})."
+        )
+    if not is_finite(value):
+        raise MalformedParamFileError(f"{where}: expected a finite number, found {value!r}.")
+    if not float(value).is_integer():
+        raise MalformedParamFileError(f"{where}: expected an integer, found {value!r}.")
+    if isinstance(value, int):
+        return value
+    return int(value)
+
+
 @dataclass(frozen=True, slots=True)
 class ParamSet:
     """One parameter file — e.g. ``params/2026/federal.yaml`` — read-only.
@@ -376,12 +424,18 @@ class ParamSet:
 
         Raises:
             MissingParameterError: If the parameter is absent.
-            MalformedParamFileError: If the value is present but not numeric.
+            MalformedParamFileError: If the value is present but not a finite
+                number (NaN, an infinity, or an int too large for a float), or
+                is a boolean.
         """
         value = self.get(path)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise MalformedParamFileError(
                 f"{self._where(path)}: expected a number, found {type(value).__name__} ({value!r})."
+            )
+        if not is_finite(value):
+            raise MalformedParamFileError(
+                f"{self._where(path)}: expected a finite number, found {value!r}."
             )
         return float(value)
 
@@ -410,7 +464,7 @@ class ParamSet:
         Raises:
             MissingParameterError: If the parameter is absent.
             MalformedParamFileError: If the value is not a list, or if any
-                element is not numeric.
+                element is not a finite number.
         """
         values = self.sequence(path)
         out: list[float] = []
@@ -420,8 +474,57 @@ class ParamSet:
                     f"{self._where(path)}: element {index} is "
                     f"{type(value).__name__} ({value!r}), expected a number."
                 )
+            if not is_finite(value):
+                raise MalformedParamFileError(
+                    f"{self._where(path)}: element {index} is {value!r}, expected a finite number."
+                )
             out.append(float(value))
         return tuple(out)
+
+    def integer(self, path: str) -> int:
+        """Return the value at ``path`` as an ``int``, or raise.
+
+        An integral float such as ``71.0`` is accepted and returned as ``int``;
+        an ``int`` is returned exactly.
+
+        Raises:
+            MissingParameterError: If the parameter is absent.
+            MalformedParamFileError: If the value is present but not a finite
+                whole number, a boolean included.
+        """
+        return integer_value(self.get(path), self._where(path))
+
+    def integer_keys(self, path: str) -> tuple[int, ...]:
+        """Return the keys of the mapping at ``path`` as ints, in file order.
+
+        Keys are stored as text, so a row is looked up as ``f"{path}.{n}"``. A
+        key such as ``"071"`` or ``"71.0"`` could never be found that way, so
+        it is refused here rather than missed later.
+
+        Raises:
+            MissingParameterError: If the parameter is absent.
+            MalformedParamFileError: If the value is not a mapping, the
+                mapping is empty, or a key is not an integer in plain decimal.
+        """
+        table = self.get(path)
+        if not isinstance(table, Mapping):
+            raise MalformedParamFileError(
+                f"{self._where(path)}: expected a mapping, found "
+                f"{type(table).__name__} ({table!r})."
+            )
+        if not table:
+            raise MalformedParamFileError(
+                f"{self._where(path)}: the mapping is empty; a table needs at least one row."
+            )
+        keys: list[int] = []
+        for key in table:
+            if not re.fullmatch(r"0|-?[1-9][0-9]*", key):
+                raise MalformedParamFileError(
+                    f"{self._where(path)}: key {key!r} is not an integer written in "
+                    f"plain decimal, such as 71."
+                )
+            keys.append(int(key))
+        return tuple(keys)
 
     def has(self, path: str) -> bool:
         """Whether ``path`` is present.

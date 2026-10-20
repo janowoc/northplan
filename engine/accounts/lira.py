@@ -46,7 +46,7 @@ def withdrawals_permitted(age_at_start_of_year: int, params: RealParamSet) -> bo
     Returns:
         Whether the lock has lifted.
     """
-    unlocking_age = params.number("lif.unlocking_age_years")
+    unlocking_age = params.integer("lif.unlocking_age_years")
     return bool(age_at_start_of_year >= unlocking_age)
 
 
@@ -156,5 +156,5 @@ def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
     Returns:
         Whether conversion is due this year.
     """
-    deadline_age = params.number("lif.conversion_deadline_age_years")
+    deadline_age = params.integer("lif.conversion_deadline_age_years")
     return bool(age_at_end_of_year >= deadline_age)

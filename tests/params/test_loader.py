@@ -15,15 +15,17 @@ from __future__ import annotations
 import datetime
 import errno
 import inspect
+import math
 import os
 import random
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Final
+from types import MappingProxyType
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -40,6 +42,8 @@ from engine.params.loader import (
     ParamYearMissingError,
     YamlConstructionError,
     check_params_root,
+    integer_value,
+    is_finite,
     load_year,
     parse_yaml,
 )
@@ -1509,3 +1513,231 @@ def test_check_passes_a_year_entry_that_is_a_symlink_loop(
         (root / "2031").stat()
     assert raised.value.errno == errno.ELOOP
     assert check_params_root(root) is None
+
+
+# --- Finite numbers and integers ---------------------------------------------
+
+_SYNTHETIC_FILE: Final[Path] = Path("/synthetic/params/2099/example.yaml")
+
+
+def _synthetic(values: dict[str, Any]) -> ParamSet:
+    """A parameter set over obviously synthetic values, frozen like a loaded one."""
+    return ParamSet("example", 2099, _SYNTHETIC_FILE, MappingProxyType(values))
+
+
+def _where(key: str) -> str:
+    return f"{_SYNTHETIC_FILE}[{key}]"
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf], ids=["nan", "inf", "-inf"])
+def test_number_refuses_a_non_finite_value(value: float) -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": value}).number("key")
+    assert str(raised.value) == f"{_where('key')}: expected a finite number, found {value!r}."
+
+
+def test_number_refuses_an_int_too_large_for_a_float() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": 10**400}).number("key")
+    assert str(raised.value) == f"{_where('key')}: expected a finite number, found {10**400!r}."
+
+
+def test_number_accepts_the_extreme_finite_values() -> None:
+    ps = _synthetic({"big": 1.7976931348623157e308, "tiny": 5e-324, "zero": -0.0, "int": 2**1023})
+    assert ps.number("big") == 1.7976931348623157e308
+    assert ps.number("tiny") == 5e-324
+    assert math.copysign(1.0, ps.number("zero")) == -1.0
+    assert ps.number("int") == float(2**1023)
+
+
+@pytest.mark.parametrize(
+    ("elements", "index", "shown"),
+    [
+        ((1.0, math.nan, 2.0), 1, "nan"),
+        ((10**400, 1.0), 0, repr(10**400)),
+        ((1.0, 2.0, -math.inf), 2, "-inf"),
+    ],
+    ids=["nan", "huge-int", "-inf"],
+)
+def test_numbers_refuses_a_non_finite_element_naming_its_index(
+    elements: tuple[float, ...], index: int, shown: str
+) -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": elements}).numbers("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: element {index} is {shown}, expected a finite number."
+    )
+
+
+def test_integer_returns_an_int_for_a_yaml_int() -> None:
+    result = _synthetic({"key": 71}).integer("key")
+    assert result == 71
+    assert type(result) is int
+
+
+def test_integer_accepts_an_integral_float_and_returns_an_int() -> None:
+    ps = _synthetic({"a": 71.0, "b": -0.0})
+    assert ps.integer("a") == 71
+    assert type(ps.integer("a")) is int
+    assert ps.integer("b") == 0
+    assert type(ps.integer("b")) is int
+
+
+def test_integer_keeps_a_yaml_int_beyond_float_precision_exact() -> None:
+    assert _synthetic({"key": 2**53 + 1}).integer("key") == 2**53 + 1
+
+
+def test_integer_refuses_a_fraction() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": 110.5}).integer("key")
+    assert str(raised.value) == f"{_where('key')}: expected an integer, found 110.5."
+
+
+@pytest.mark.parametrize(
+    "value", [math.nan, math.inf, -math.inf, 10**400], ids=["nan", "inf", "-inf", "huge-int"]
+)
+def test_integer_refuses_a_non_finite_value(value: float) -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": value}).integer("key")
+    assert str(raised.value) == f"{_where('key')}: expected a finite number, found {value!r}."
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"), [(True, "bool (True)"), ("71", "str ('71')")], ids=["bool", "str"]
+)
+def test_integer_refuses_a_boolean_and_a_string(value: object, shown: str) -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": value}).integer("key")
+    assert str(raised.value) == f"{_where('key')}: expected an integer, found {shown}."
+
+
+def test_integer_on_a_missing_key_raises_missing_not_malformed() -> None:
+    with pytest.raises(MissingParameterError):
+        _synthetic({"other": 1}).integer("key")
+
+
+def test_integer_value_messages_begin_with_the_where_it_is_given() -> None:
+    where = "/synthetic/file.yaml[some.path.0.age]"
+    for value in ("x", math.nan, 1.5):
+        with pytest.raises(MalformedParamFileError) as raised:
+            integer_value(value, where)
+        assert str(raised.value).startswith(f"{where}: ")
+    assert integer_value(71.0, where) == 71
+
+
+def test_integer_keys_returns_the_keys_as_ints_in_file_order() -> None:
+    ps = _synthetic({"table": MappingProxyType({"72": 1.0, "71": 2.0, "0": 3.0, "-3": 4.0})})
+    assert ps.integer_keys("table") == (72, 71, 0, -3)
+
+
+@pytest.mark.parametrize("key", ["071", "71.0", "x", "+7", "-0", " 7", "7 ", "7_1", "\u0663"])
+def test_integer_keys_refuses_a_key_not_in_plain_decimal(key: str) -> None:
+    ps = _synthetic({"table": MappingProxyType({"70": 1.0, key: 2.0})})
+    with pytest.raises(MalformedParamFileError) as raised:
+        ps.integer_keys("table")
+    assert str(raised.value) == (
+        f"{_where('table')}: key {key!r} is not an integer written in plain decimal, such as 71."
+    )
+
+
+def test_integer_keys_refuses_a_non_mapping() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"table": (1.0, 2.0)}).integer_keys("table")
+    assert str(raised.value) == f"{_where('table')}: expected a mapping, found tuple ((1.0, 2.0))."
+
+
+def test_integer_keys_refuses_an_empty_mapping() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"table": MappingProxyType({})}).integer_keys("table")
+    assert str(raised.value) == (
+        f"{_where('table')}: the mapping is empty; a table needs at least one row."
+    )
+
+
+def test_integer_keys_on_a_missing_key_raises_missing() -> None:
+    with pytest.raises(MissingParameterError):
+        _synthetic({"other": 1}).integer_keys("table")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0, True),
+        (-0.0, True),
+        (1e308, True),
+        (2**1023, True),
+        (math.nan, False),
+        (math.inf, False),
+        (-math.inf, False),
+        (10**400, False),
+    ],
+)
+def test_is_finite(value: float, expected: bool) -> None:
+    assert is_finite(value) is expected
+
+
+def _numeric_leaves(node: Any, prefix: str = "") -> Iterator[tuple[str, Any]]:
+    """Every dotted path to an int or float leaf under nested mappings, not into lists."""
+    for key, child in node.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(child, Mapping):
+            yield from _numeric_leaves(child, path)
+        elif isinstance(child, (int, float)) and not isinstance(child, bool):
+            yield path, child
+
+
+def _all_files_2026() -> list[ParamSet]:
+    year = load_year(2026)
+    return [year[name] for name in year.names()]
+
+
+#: Measured on the shipped 2026 files: the leaf count the walk visits, the
+#: number of all-numeric lists, and the integer-like keys. Floors, so that an
+#: empty walk cannot pass.
+_MIN_SCALAR_LEAVES: Final[int] = 359
+_MIN_NUMERIC_LISTS: Final[int] = 22
+_MIN_INTEGER_LIKE_LEAVES: Final[int] = 19
+
+
+def _is_integer_like(path: str) -> bool:
+    return (
+        path.endswith(("_age_years", "_months"))
+        or path == "filing_month"
+        or path.endswith("restored_after_n_year_ends")
+    )
+
+
+def _walk_lists(node: Any, prefix: str = "") -> Iterator[tuple[str, tuple[Any, ...]]]:
+    for key, child in node.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(child, Mapping):
+            yield from _walk_lists(child, path)
+        elif isinstance(child, tuple) and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in child
+        ):
+            yield path, child
+
+
+def test_number_matches_float_on_every_repository_leaf() -> None:
+    scalars = 0
+    lists = 0
+    for ps in _all_files_2026():
+        for path, raw in _numeric_leaves(ps.values):
+            assert ps.number(path) == float(raw), (ps.name, path)
+            scalars += 1
+        for path, raw in _walk_lists(ps.values):
+            assert ps.numbers(path) == tuple(float(v) for v in raw), (ps.name, path)
+            lists += 1
+    assert scalars >= _MIN_SCALAR_LEAVES
+    assert lists >= _MIN_NUMERIC_LISTS
+
+
+def test_integer_matches_number_on_every_integer_like_repository_key() -> None:
+    checked = 0
+    for ps in _all_files_2026():
+        for path, _ in _numeric_leaves(ps.values):
+            if _is_integer_like(path):
+                assert ps.integer(path) == ps.number(path), (ps.name, path)
+                assert type(ps.integer(path)) is int, (ps.name, path)
+                checked += 1
+    assert checked >= _MIN_INTEGER_LIKE_LEAVES
