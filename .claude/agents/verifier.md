@@ -92,11 +92,11 @@ Review in this order, and grep aggressively rather than trusting a read:
      `engine.core.indexation.RealParamSet`, whose `amount`, `amounts`,
      `annual_amount`, and `annual_amounts` already apply the deflation — the
      `annual_` pair is what `engine/tax/` uses almost everywhere. Its
-     undeflated accessors — `number`, `numbers`, `get`, `sequence`, `has` —
-     refuse a path that any schedule routes, so a call site that multiplies by
-     a factor of its own is either double-counting or has gone around the
-     guarantee. Flag any hand-applied factor on a figure that came from
-     `RealParamSet`.
+     undeflated accessors — `number`, `numbers`, `integer`, `integer_keys`,
+     `get`, `sequence`, `has` — refuse a path that any schedule routes, so a
+     call site that multiplies by a factor of its own is either
+     double-counting or has gone around the guarantee. Flag any hand-applied
+     factor on a figure that came from `RealParamSet`.
    - `erosion_factor(inflation_rate, adjustments_per_year)` is the constant for
      an amount that IS indexed; `unindexed_factor(inflation_rate, month_index)`
      is for one fixed in nominal terms by statute. Note the asymmetry: the
