@@ -667,14 +667,15 @@ excluded, carried over the months still to come, and the LIF minimum not yet
 drawn. What remains under the edge is spread evenly over the months left in
 the year; a policy may turn the fill off entirely. In reality the bracket
 fill's own brackets apply to taxable income after the pension-splitting
-election and the OAS repayment deduction; we measure it against year-to-date
-net income with neither applied, since neither is known before December.
+election and the OAS repayment deduction; we measure it against net income,
+year to date plus the projection, with neither applied, since neither is known
+before December.
 Direction: the bracket fill under-fills for a person who transfers pension
-income away and for one who repays OAS -- both lower taxable income below what
-year-to-date net income shows -- and it can over-fill for the person receiving
-a pension-split transfer, whose taxable income ends up above it. In reality
-the year's income is whatever the rest of the year brings; we project it from
-the run rate so far. Direction: income that arrives later than its run rate
+income away and for one who repays OAS -- both lower taxable income below the
+projected net income the fill measures -- and it can over-fill for the person
+receiving a pension-split transfer, whose taxable income ends up above it. In
+reality the year's income is whatever the rest of the year brings; we project it
+from the run rate so far. Direction: income that arrives later than its run rate
 implies -- a pension that starts mid-year, investment income, which posts
 after each month's decision, and any gain December's own draws realise after
 its fill -- lands on top of a fill already taken, so the year can end above

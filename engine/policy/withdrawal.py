@@ -68,8 +68,9 @@ class OrderedWithdrawal:
     Attributes:
         order: Account types in withdrawal priority order, from
             ``engine.scenario.WITHDRAWAL_KINDS``, each at most once.
-        taxable_ceiling_bracket: Index into the federal bracket edges to fill year-to-date net
-            income up to, every month, or ``None`` to turn the fill off entirely.
+        taxable_ceiling_bracket: Index into the federal bracket edges the fill draws toward
+            every month, measured on the year's net income projected from the year to date,
+            or ``None`` to turn the fill off entirely.
     """
 
     order: tuple[str, ...]
