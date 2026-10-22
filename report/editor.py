@@ -12,7 +12,8 @@ module's boundary is JSON data: dict, list, str, int, float, bool, None.
 
 Invariants:
     * :func:`parse` opens a mapping only for text that passes everything a run checks first,
-      start-age and lifespan refusals included, and whose keys are all text.
+      start-age and lifespan refusals included, and whose mapping keys are all text (an
+      ``!!omap`` or ``!!pairs`` key aside).
     * :func:`check` validates the YAML :func:`emit` writes, never the mapping, so no errors
       means exactly the returned text passes everything a run checks first.
     * An edit works on a deep copy and returns it; its argument is never changed. Every
@@ -146,9 +147,6 @@ _KEYWORDS: Final[tuple[tuple[tuple[str, ...], dict[str, Any]], ...]] = (
 
 _MISSING: Final = object()
 
-# How much of a key that is not text its error shows.
-_KEY_SHOWN_CHARACTERS: Final = 40
-
 
 class EditRefusedError(Exception):
     """An edit the mapping cannot take: ``references`` lists the places that block it."""
@@ -274,31 +272,6 @@ def _uses_aliases(text: str) -> bool:
     return False
 
 
-def _non_text_keys(value: Any, path: list[str | int]) -> list[dict[str, Any]]:
-    """An error for each mapping key under ``value`` that is not a ``str``, in document order,
-    not looking inside such a key's value."""
-    found: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(key, str):
-                found.extend(_non_text_keys(item, [*path, key]))
-            else:
-                shown = repr(key)
-                if len(shown) > _KEY_SHOWN_CHARACTERS:
-                    shown = shown[:_KEY_SHOWN_CHARACTERS] + "…"
-                found.append(
-                    {
-                        "loc": list(path),
-                        "message": f"key {shown} is not text: write it as plain text, "
-                        "without a tag such as !!binary.",
-                    }
-                )
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            found.extend(_non_text_keys(item, [*path, index]))
-    return found
-
-
 def parse(text: str, *, params_root: Path) -> dict[str, Any]:
     """Scenario ``text`` as the editor's mapping, or the errors that stop a form opening.
 
@@ -309,18 +282,13 @@ def parse(text: str, *, params_root: Path) -> dict[str, Any]:
     Returns:
         ``{"mapping": ..., "errors": [...], "notices": [...]}``. Any error leaves ``mapping``
         None and ``notices`` empty; the errors are found as :func:`check` finds them, but on
-        ``text`` itself, whose messages call it "the text"; or, when there are none, one for
-        each key that is not text and not inside such a key's value, capped the same way.
-        Otherwise ``notices`` is ``[FLATTENED]`` when the text uses an anchor, an alias or a
-        merge key, else empty.
+        ``text`` itself, whose messages call it "the text". Otherwise ``notices`` is
+        ``[FLATTENED]`` when the text uses an anchor, an alias or a merge key, else empty.
     """
     scenario, errors = _errors(text, "the text", params_root)
     if errors or scenario is None:
         return {"mapping": None, "errors": errors, "notices": []}
     document = parse_yaml(text)
-    non_text = _non_text_keys(document, [])
-    if non_text:
-        return {"mapping": None, "errors": _capped(non_text), "notices": []}
     mapping = _ordered(_typed(document, scenario), Scenario)
     return {"mapping": mapping, "errors": [], "notices": [FLATTENED] if _uses_aliases(text) else []}
 

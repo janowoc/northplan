@@ -13,10 +13,14 @@ the mechanisms it exists for.
 
 from __future__ import annotations
 
+import base64
+import datetime
 import errno
 import json
 import os
+import sys
 import time
+import tracemalloc
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -48,6 +52,7 @@ from engine.scenario.load import (
     MAX_REPORTED_ERRORS,
     DuplicateKeyError,
     _expanded_size,
+    _refuse_non_text_keys_and_sets,
     _text_length,
     scenario_from_text,
     validation_message,
@@ -60,6 +65,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: API run against this file, so a change that stops it loading breaks them
 #: too, not just here.
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
+EXAMPLE_TEXT = EXAMPLE.read_text(encoding="utf-8")
 
 #: The committed two-person fixture: the couple decumulation path, used
 #: wherever a later issue needs a second person, a spousal rollover, or a
@@ -884,3 +890,365 @@ def test_validation_message_rebuilds_a_validator_error() -> None:
     shown = message.split("\n", 1)[1].removesuffix("\n... and 10 more errors, not shown.")
     assert str(exc).split("\n", 1)[1].startswith(shown)
     assert shown.count("[type=value_error") == MAX_REPORTED_ERRORS
+
+
+# =============================================================================
+# Keys that are not text, and sets
+# =============================================================================
+
+KEY_TAIL = (
+    " is not text. Write it as plain text, without a tag such as !!binary, and quote it if "
+    "YAML would read it as something else, as it reads 2 or true."
+)
+SET_TAIL = " is a set (!!set), which does not keep the order it was written in. Write it as a list."
+GRID_LINE = "elections.cpp_start_age_years.a: [60, 65, 70]"
+
+
+@pytest.fixture
+def default_int_digit_limit() -> Iterator[None]:
+    """Python's default limit on the digits of an int written in decimal, whatever the
+    environment set."""
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(sys.int_info.default_max_str_digits)
+    yield
+    sys.set_int_max_str_digits(limit)
+
+
+def changed(text: str, old: str, new: str) -> str:
+    assert old in text
+    return text.replace(old, new, 1)
+
+
+def binary(text: str) -> str:
+    return "!!binary " + base64.b64encode(text.encode()).decode()
+
+
+def refusal(text: str) -> str:
+    with pytest.raises(MalformedScenarioFileError) as caught:
+        scenario_from_text(text, "request body", syntax="yaml")
+    assert type(caught.value) is MalformedScenarioFileError
+    return str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("spelling", "shown"),
+    [
+        (binary("bonds"), "b'bonds'"),
+        ("2", "2"),
+        ("2.5", "2.5"),
+        ("true", "True"),
+        ("null", "None"),
+        ("2026-01-01", repr(datetime.date(2026, 1, 1))),
+    ],
+    ids=["bytes", "int", "float", "bool", "null", "date"],
+)
+def test_a_key_that_is_not_text_is_refused(spelling: str, shown: str) -> None:
+    text = changed(
+        EXAMPLE_TEXT, "{equity: 0.6, bonds: 0.4}", "{equity: 0.6, " + spelling + ": 0.4}"
+    )
+    assert refusal(text) == (
+        f"request body: key {shown} in the mapping at assumptions.allocations.default" + KEY_TAIL
+    )
+
+
+def test_a_key_that_is_not_text_at_the_top_level_is_refused() -> None:
+    text = changed(EXAMPLE_TEXT, "name: example-household", binary("name") + ": example-household")
+    assert refusal(text) == "request body: key b'name' in the mapping at the top level" + KEY_TAIL
+
+
+def test_a_binary_twin_of_a_start_age_key_is_refused() -> None:
+    text = changed(
+        EXAMPLE_TEXT,
+        "cpp_start_age_years: {a: 65}",
+        "cpp_start_age_years: {a: 65, !!binary YQ==: 70}",
+    )
+    assert refusal(text) == (
+        "request body: key b'a' in the mapping at policies.0.elections.cpp_start_age_years"
+        + KEY_TAIL
+    )
+
+
+def test_a_binary_twin_of_a_grid_key_is_refused() -> None:
+    text = changed(
+        EXAMPLE_TEXT,
+        "  " + GRID_LINE,
+        "  " + GRID_LINE + "\n  " + binary("elections.cpp_start_age_years.a") + ": [70]",
+    )
+    assert refusal(text) == (
+        "request body: key b'elections.cpp_start_age_years.a' in the mapping at grid" + KEY_TAIL
+    )
+
+
+def test_a_binary_twin_of_an_asset_class_is_refused() -> None:
+    text = changed(
+        EXAMPLE_TEXT,
+        "{equity: 0.6, bonds: 0.4}",
+        "{equity: 0.6, bonds: 0.4, " + binary("equity") + ": 0.4}",
+    )
+    assert refusal(text) == (
+        "request body: key b'equity' in the mapping at assumptions.allocations.default" + KEY_TAIL
+    )
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "place"),
+    [
+        (
+            "spill_order: [tfsa, rrsp, taxable]",
+            "spill_order: !!set {tfsa, rrsp, taxable}",
+            "policies.0.contribution.spill_order",
+        ),
+        (
+            "order: [taxable, rrif, rrsp, lif, tfsa]",
+            "order: !!set {taxable, rrif, rrsp, lif, tfsa}",
+            "policies.0.withdrawal.order",
+        ),
+        (
+            GRID_LINE,
+            "elections.cpp_start_age_years.a: !!set {60, 65, 70}",
+            "grid.`elections.cpp_start_age_years.a`",
+        ),
+        (
+            "correlation: [[1.0, 0.1], [0.1, 1.0]]",
+            "correlation: [!!set {1.0, 0.1}, [0.1, 1.0]]",
+            "assumptions.correlation.0",
+        ),
+        (
+            "default: {equity: 0.6, bonds: 0.4}",
+            "default: !!set {equity, bonds}",
+            "assumptions.allocations.default",
+        ),
+        (
+            "spill_order: [tfsa, rrsp, taxable]",
+            "spill_order: !!set {}",
+            "policies.0.contribution.spill_order",
+        ),
+    ],
+    ids=["spill", "withdrawal", "grid", "correlation", "mapping", "empty"],
+)
+def test_a_set_is_refused(old: str, new: str, place: str) -> None:
+    assert (
+        refusal(changed(EXAMPLE_TEXT, old, new)) == f"request body: the value at {place}" + SET_TAIL
+    )
+
+
+def test_a_set_before_a_non_text_key_of_the_same_mapping_is_the_one_reported() -> None:
+    # In one mapping: the set is under the first key, the bad key is the second.
+    line = "    default: {equity: 0.6, bonds: 0.4}\n"
+    text = changed(
+        EXAMPLE_TEXT,
+        line,
+        "    default: !!set {equity}\n    " + binary("rrsp") + ": {equity: 1.0}\n",
+    )
+    assert "the value at assumptions.allocations.default is a set" in refusal(text)
+
+
+def test_a_non_text_key_before_a_set_is_the_one_reported() -> None:
+    text = changed(
+        EXAMPLE_TEXT, "{equity: 0.6, bonds: 0.4}", "{equity: 0.6, " + binary("bonds") + ": 0.4}"
+    )
+    text = changed(text, "spill_order: [tfsa, rrsp, taxable]", "spill_order: !!set {tfsa}")
+    assert "key b'bonds' in the mapping at assumptions.allocations.default" in refusal(text)
+
+
+def test_a_non_text_key_is_reported_before_a_set_in_its_value() -> None:
+    # The key comes before a set inside its own value.
+    text = changed(
+        EXAMPLE_TEXT,
+        "    default: {equity: 0.6, bonds: 0.4}",
+        "    " + binary("default") + ": !!set {equity}",
+    )
+    assert "key b'default' in the mapping at assumptions.allocations" in refusal(text)
+
+
+def test_an_outer_non_text_key_is_reported_and_not_one_in_its_value() -> None:
+    text = changed(
+        EXAMPLE_TEXT,
+        "    default: {equity: 0.6, bonds: 0.4}",
+        "    " + binary("default") + ": {" + binary("equity") + ": 0.6, bonds: 0.4}",
+    )
+    assert refusal(text) == (
+        "request body: key b'default' in the mapping at assumptions.allocations" + KEY_TAIL
+    )
+
+
+def test_a_shared_mapping_is_reported_where_it_is_first_reached() -> None:
+    text = changed(
+        EXAMPLE_TEXT, "{equity: 0.6, bonds: 0.4}", "&d {equity: 0.6, " + binary("bonds") + ": 0.4}"
+    )
+    text += "later: *d\n"
+    # Reached first under assumptions, refused there; the later alias is never named.
+    assert "in the mapping at assumptions.allocations.default" in refusal(text)
+
+
+def test_a_shared_set_is_reported_where_it_is_first_reached() -> None:
+    text = changed(
+        EXAMPLE_TEXT,
+        "spill_order: [tfsa, rrsp, taxable]",
+        "spill_order: &s !!set {tfsa, rrsp, taxable}",
+    )
+    text = changed(text, "order: [taxable, rrif, rrsp, lif, tfsa]", "order: *s")
+    assert "the value at policies.0.contribution.spill_order is a set" in refusal(text)
+
+
+def test_a_long_key_is_cut_after_forty_characters() -> None:
+    long = "    default: {equity: 0.6, bonds: 0.4}\n"
+
+    def with_key(n: int) -> str:
+        return changed(
+            EXAMPLE_TEXT,
+            long,
+            long + "    ? " + binary("x" * n) + "\n    : {equity: 0.6, bonds: 0.4}\n",
+        )
+
+    assert len(repr(b"x" * 37)) == 40
+    assert f"key {b'x' * 37!r} in the mapping" in refusal(with_key(37))
+    assert f"key {repr(b'x' * 38)[:40]}… in the mapping" in refusal(with_key(38))
+    assert f"key {repr(b'x' * 5000)[:40]}… in the mapping" in refusal(with_key(5000))
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["0x" + "f" * 5000, "0b" + "1" * 20_000, "0" + "7" * 6000, ":".join(["59"] * 3000)],
+    ids=["hex", "binary", "octal", "base-60"],
+)
+@pytest.mark.usefixtures("default_int_digit_limit")
+def test_an_integer_key_too_long_for_decimal_is_shown_in_hex(spelling: str) -> None:
+    (key,) = parse_yaml(f"? {spelling}\n: 1\n")
+    with pytest.raises(ValueError, match="4300"):
+        repr(key)
+    line = "    default: {equity: 0.6, bonds: 0.4}\n"
+    text = changed(
+        EXAMPLE_TEXT, line, line + f"    ? {spelling}\n    : {{equity: 0.6, bonds: 0.4}}\n"
+    )
+    assert refusal(text) == (
+        f"request body: key {hex(key)[:40]}… in the mapping at assumptions.allocations" + KEY_TAIL
+    )
+
+
+def test_a_set_inside_pairs_is_refused() -> None:
+    text = EXAMPLE_TEXT + "x: !!pairs [{a: !!set {q}}]\n"
+    assert refusal(text) == "request body: the value at x.0.1" + SET_TAIL
+
+
+def test_a_binary_key_inside_pairs_is_not_checked_for_text() -> None:
+    # The walk passes it; validation refuses the unknown top-level key.
+    with pytest.raises(InvalidScenarioError):
+        scenario_from_text(
+            EXAMPLE_TEXT + "x: !!pairs [{!!binary YQ==: 1}]\n", "request body", syntax="yaml"
+        )
+
+
+def test_a_merged_key_is_checked_before_a_key_written_before_the_merge() -> None:
+    text = EXAMPLE_TEXT + "x: {2: 3, <<: {!!binary YQ==: 1}}\n"
+    assert refusal(text) == "request body: key b'a' in the mapping at x" + KEY_TAIL
+
+
+def test_a_deep_and_wide_document_is_walked_in_bounded_memory() -> None:
+    text = '{"name": ' + "[" * 300 + ",".join(["0"] * 60_000) + "]" * 300 + "}"
+    # A trace the run already started (PYTHONTRACEMALLOC, -X tracemalloc) is measured from
+    # here and left running.
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        base, _ = tracemalloc.get_traced_memory()
+        with pytest.raises(InvalidScenarioError):
+            scenario_from_text(text, "request body", syntax="json")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not tracing:
+            tracemalloc.stop()
+    # About 10 MB; a path copied for each node takes about 175 MB.
+    assert peak - base < 50_000_000
+
+
+def test_the_character_budget_message_says_what_it_counts() -> None:
+    text = json.dumps({"name": "x" * (MAX_DOCUMENT_CHARACTERS + 1)})
+    with pytest.raises(MalformedScenarioFileError) as caught:
+        scenario_from_text(text, "request body", syntax="json")
+    assert str(caught.value) == (
+        "request body: the document holds more than 1,000,000 characters of text, counting "
+        "text and !!binary keys and each string an alias repeats; a scenario holds a few "
+        "thousand."
+    )
+
+
+def test_the_character_budget_counts_bytes_keys() -> None:
+    key = binary("k" * 10_000)
+    text = f"shared: {{? &k {key}\n : 1}}\nmany:\n" + "  - {*k : 1}\n" * 101
+    values = parse_yaml(text)
+    assert _expanded_size(values, 10**9) < 1000
+    with pytest.raises(MalformedScenarioFileError, match="more than 1,000,000 characters of text"):
+        scenario_from_text(text, "request body", syntax="yaml")
+
+
+def test_text_length_counts_a_bytes_key() -> None:
+    assert _expanded_size({b"abc": 1, "de": 2, 7: 3}, 10**9, _text_length) == 5
+
+
+def test_a_container_reached_again_is_walked_once() -> None:
+    CountingList.iterations = 0
+    big = CountingList(range(1000))
+    nested: list[object] = [big]
+    for _ in range(300):
+        nested = [big, nested]
+    _refuse_non_text_keys_and_sets("request body", {"big": big, "x": nested})
+    assert CountingList.iterations == 1
+
+
+def test_a_frozenset_is_refused_like_a_set() -> None:
+    with pytest.raises(MalformedScenarioFileError) as caught:
+        _refuse_non_text_keys_and_sets("request body", {"a": frozenset()})
+    assert str(caught.value) == "request body: the value at a" + SET_TAIL
+
+
+def test_json_nested_past_the_recursion_limit_reaches_validation() -> None:
+    text = '{"name": ' + "[" * 3000 + "]" * 3000 + "}"
+    with pytest.raises(InvalidScenarioError):
+        scenario_from_text(text, "request body", syntax="json")
+
+
+def test_a_cycle_is_reported_before_a_set_in_it() -> None:
+    with pytest.raises(MalformedScenarioFileError, match="refers to itself"):
+        scenario_from_text("a: &a [!!set {x}, *a]\n", "request body", syntax="yaml")
+
+
+def test_a_top_level_set_is_reported_as_not_a_mapping() -> None:
+    with pytest.raises(MalformedScenarioFileError, match="this parses to set"):
+        scenario_from_text("!!set {a, b}\n", "request body", syntax="yaml")
+
+
+def test_the_value_cap_is_reported_before_a_set() -> None:
+    text = "s: !!set {a}\n" + json.dumps({"a": [0] * 100_000})[1:-1].replace('"a"', "a") + "\n"
+    with pytest.raises(MalformedScenarioFileError, match="more than 100,000 values"):
+        scenario_from_text(text, "request body", syntax="yaml")
+
+
+def test_a_set_is_refused_before_validation() -> None:
+    text = changed(EXAMPLE_TEXT, "birth_month: 3", "birth_month: 13")
+    text = changed(text, "spill_order: [tfsa, rrsp, taxable]", "spill_order: !!set {tfsa}")
+    assert "is a set" in refusal(text)
+
+
+def test_a_binary_value_is_still_accepted() -> None:
+    scenario = scenario_from_text(
+        changed(EXAMPLE_TEXT, "name: example-household", "name: !!binary ZXhhbXBsZQ=="),
+        "request body",
+        syntax="yaml",
+    )
+    assert scenario.name == "example"
+
+
+def test_load_scenario_refuses_a_set_naming_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "scenario.yaml"
+    path.write_text(
+        changed(EXAMPLE_TEXT, "spill_order: [tfsa, rrsp, taxable]", "spill_order: !!set {tfsa}"),
+        encoding="utf-8",
+    )
+    with pytest.raises(MalformedScenarioFileError) as caught:
+        load_scenario(path)
+    assert (
+        str(caught.value) == f"{path}: the value at policies.0.contribution.spill_order" + SET_TAIL
+    )

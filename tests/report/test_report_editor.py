@@ -10,6 +10,7 @@ import base64
 import copy
 import json
 import re
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -180,15 +181,22 @@ def test_parse_normalises_an_integral_float_and_an_integer_flag() -> None:
     assert flag is True
 
 
-def test_parse_turns_a_set_into_a_list() -> None:
+def test_parse_refuses_a_set() -> None:
     text = changed(
         EXAMPLE_TEXT,
         "spill_order: [tfsa, rrsp, taxable]",
         "spill_order: !!set {tfsa, rrsp, taxable}",
     )
-    order = mapping_of(text)["policies"][0]["contribution"]["spill_order"]
-    assert isinstance(order, list)
-    assert sorted(order) == ["rrsp", "taxable", "tfsa"]
+    result = parse(text, params_root=ROOT)
+    assert result["mapping"] is None
+    assert result["notices"] == []
+    assert result["errors"] == [
+        {
+            "loc": [],
+            "message": "the text: the value at policies.0.contribution.spill_order is a set "
+            "(!!set), which does not keep the order it was written in. Write it as a list.",
+        }
+    ]
 
 
 def test_parse_turns_binary_into_a_string() -> None:
@@ -238,10 +246,15 @@ def test_parse_refuses_a_start_age_the_parameter_year_refuses() -> None:
     assert error["loc"] == []
 
 
+NON_TEXT_KEY_TAIL = (
+    " is not text. Write it as plain text, without a tag such as !!binary, and quote it if "
+    "YAML would read it as something else, as it reads 2 or true."
+)
+
 NON_TEXT_KEYS = [
     pytest.param(
         changed(EXAMPLE_TEXT, "    default:", "    !!binary ZGVmYXVsdA==:"),
-        ["assumptions", "allocations"],
+        "assumptions.allocations",
         "default",
         id="allocations",
     ),
@@ -251,56 +264,34 @@ NON_TEXT_KEYS = [
             "  " + GRID_LINE,
             "  !!binary ZWxlY3Rpb25zLmNwcF9zdGFydF9hZ2VfeWVhcnMuYQ==: [60, 65, 70]",
         ),
-        ["grid"],
+        "grid",
         GRID_LINE.split(":")[0],
         id="grid",
     ),
     pytest.param(
         changed(EXAMPLE_TEXT, "{equity: 0.6", "{!!binary ZXF1aXR5: 0.6"),
-        ["assumptions", "allocations", "default"],
+        "assumptions.allocations.default",
         "equity",
         id="default-allocation",
     ),
 ]
 
 
-@pytest.mark.parametrize(("text", "loc", "key"), NON_TEXT_KEYS)
-def test_parse_refuses_a_key_that_is_not_text(text: str, loc: list[str], key: str) -> None:
-    scenario_from_text(text, "the text", syntax="yaml")
+@pytest.mark.parametrize(("text", "place", "key"), NON_TEXT_KEYS)
+def test_parse_refuses_a_key_that_is_not_text(text: str, place: str, key: str) -> None:
     result = parse(text, params_root=ROOT)
     assert result["mapping"] is None
     assert result["notices"] == []
     assert result["errors"] == [
         {
-            "loc": loc,
-            "message": f"key {key.encode()!r} is not text: write it as plain text, "
-            "without a tag such as !!binary.",
+            "loc": [],
+            "message": f"the text: key {key.encode()!r} in the mapping at {place}"
+            + NON_TEXT_KEY_TAIL,
         }
     ]
 
 
-def test_non_text_key_error_bounds_the_key() -> None:
-    (long,) = editor._non_text_keys({b"x" * 10_000: 1}, [])
-    assert long["message"] == (
-        f"key {repr(b'x' * 10_000)[:40]}… is not text: write it as plain text, "
-        "without a tag such as !!binary."
-    )
-    (short,) = editor._non_text_keys({b"ab": 1}, [])
-    assert short["message"] == (
-        "key b'ab' is not text: write it as plain text, without a tag such as !!binary."
-    )
-
-
-def test_non_text_key_error_truncates_only_past_forty_characters() -> None:
-    tail = " is not text: write it as plain text, without a tag such as !!binary."
-    assert len(repr(b"x" * 37)) == 40
-    (exact,) = editor._non_text_keys({b"x" * 37: 1}, [])
-    assert exact["message"] == f"key {b'x' * 37!r}" + tail
-    (over,) = editor._non_text_keys({b"x" * 38: 1}, [])
-    assert over["message"] == f"key {repr(b'x' * 38)[:40]}…" + tail
-
-
-def test_parse_caps_the_non_text_key_errors() -> None:
+def test_parse_reports_only_the_first_non_text_key() -> None:
     m = example()
     first = m["policies"][0]
     m["policies"] = [{**copy.deepcopy(first), "name": f"p{i}"} for i in range(7)]
@@ -311,32 +302,12 @@ def test_parse_caps_the_non_text_key_errors() -> None:
     result = parse(text, params_root=ROOT)
     assert result["mapping"] is None
     assert result["notices"] == []
-    assert len(result["errors"]) == 21
-    assert result["errors"][0] == {
-        "loc": ["policies", 0, "contribution", "weights"],
-        "message": "key b'rrsp' is not text: write it as plain text, "
-        "without a tag such as !!binary.",
-    }
-    assert result["errors"][-1] == {"loc": [], "message": "... and 8 more errors, not shown."}
-
-
-def test_parse_reports_several_non_text_keys_in_document_order() -> None:
-    text = changed(
-        EXAMPLE_TEXT,
-        "    default: {equity: 0.6, bonds: 0.4}",
-        "    default: {" + binary("equity") + ": 0.6, bonds: 0.4}",
-    )
-    text = changed(
-        text,
-        "    resp:    {equity: 0.3, bonds: 0.7}",
-        "    resp:    {equity: 0.3, " + binary("bonds") + ": 0.7}",
-    )
-    result = parse(text, params_root=ROOT)
-    assert result["mapping"] is None
-    tail = " is not text: write it as plain text, without a tag such as !!binary."
     assert result["errors"] == [
-        {"loc": ["assumptions", "allocations", "default"], "message": "key b'equity'" + tail},
-        {"loc": ["assumptions", "allocations", "resp"], "message": "key b'bonds'" + tail},
+        {
+            "loc": [],
+            "message": "the text: key b'rrsp' in the mapping at policies.0.contribution.weights"
+            + NON_TEXT_KEY_TAIL,
+        }
     ]
 
 
@@ -348,9 +319,42 @@ def test_parse_reports_a_nested_non_text_key_once() -> None:
     )
     result = parse(text, params_root=ROOT)
     assert result["mapping"] is None
-    (error,) = result["errors"]
-    assert error["loc"] == ["assumptions", "allocations"]
-    assert error["message"].startswith("key b'default' is not text")
+    assert result["errors"] == [
+        {
+            "loc": [],
+            "message": "the text: key b'default' in the mapping at assumptions.allocations"
+            + NON_TEXT_KEY_TAIL,
+        }
+    ]
+
+
+@pytest.fixture
+def default_int_digit_limit() -> Iterator[None]:
+    """Python's default limit on the digits of an int written in decimal, whatever the
+    environment set."""
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(sys.int_info.default_max_str_digits)
+    yield
+    sys.set_int_max_str_digits(limit)
+
+
+@pytest.mark.usefixtures("default_int_digit_limit")
+def test_parse_refuses_an_integer_key_too_long_for_decimal() -> None:
+    line = "    default: {equity: 0.6, bonds: 0.4}\n"
+    text = changed(
+        EXAMPLE_TEXT, line, line + "    ? 0x" + "f" * 5000 + "\n    : {equity: 0.6, bonds: 0.4}\n"
+    )
+    result = parse(text, params_root=ROOT)
+    assert result["mapping"] is None
+    assert result["errors"] == [
+        {
+            "loc": [],
+            "message": "the text: key 0x"
+            + "f" * 38
+            + "… in the mapping at assumptions.allocations"
+            + NON_TEXT_KEY_TAIL,
+        }
+    ]
 
 
 def test_parse_refuses_a_binary_twin_of_a_text_key() -> None:
@@ -358,11 +362,15 @@ def test_parse_refuses_a_binary_twin_of_a_text_key() -> None:
     text = changed(
         EXAMPLE_TEXT, line, line + "    " + binary("default") + ": {equity: 0.6, bonds: 0.4}\n"
     )
-    scenario_from_text(text, "the text", syntax="yaml")
     result = parse(text, params_root=ROOT)
     assert result["mapping"] is None
-    (error,) = result["errors"]
-    assert error["loc"] == ["assumptions", "allocations"]
+    assert result["errors"] == [
+        {
+            "loc": [],
+            "message": "the text: key b'default' in the mapping at assumptions.allocations"
+            + NON_TEXT_KEY_TAIL,
+        }
+    ]
 
 
 @pytest.mark.parametrize("spelling", ['"<<"', "'<<'", "!!str <<"])

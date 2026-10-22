@@ -32,7 +32,7 @@ import functools
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import ValidationError
@@ -57,7 +57,7 @@ __all__ = [
 
 # How much a scenario document may hold once each alias is expanded: values (the
 # committed example holds 140) and characters of text, counting every string, every
-# mapping key and every alias repeat (the example holds about 1,200). Merge keys are
+# text or bytes key and every alias repeat (the example holds about 1,200). Merge keys are
 # bounded in the parser, engine.params.loader.parse_yaml.
 MAX_DOCUMENT_VALUES = 100_000
 MAX_DOCUMENT_CHARACTERS = 1_000_000
@@ -65,6 +65,9 @@ MAX_DOCUMENT_CHARACTERS = 1_000_000
 # How many validation errors a message lists; a body under every cap can still produce
 # hundreds of thousands, and the message would be tens of megabytes.
 MAX_REPORTED_ERRORS = 20
+
+# How much of a key that is not text its message shows.
+_KEY_SHOWN_CHARACTERS = 40
 
 
 class ScenarioError(Exception):
@@ -90,7 +93,10 @@ class MalformedScenarioFileError(ScenarioError):
     than :data:`MAX_DOCUMENT_VALUES` values or :data:`MAX_DOCUMENT_CHARACTERS` characters
     of text once its aliases are expanded, or is JSON
     that Python refuses (an integer too long to convert, nesting too deep), and when
-    a file is not UTF-8.
+    a file is not UTF-8. And raised when a mapping key is not text (a ``!!binary``
+    key, or an unquoted ``2`` or ``true``; the keys of an ``!!omap`` or ``!!pairs`` are
+    not checked for text) or a value is a set (``!!set``); only the first, in the order the
+    parsed document holds them, is reported.
 
     Unlike a parameter file, an *empty* scenario file is malformed rather than
     a stub awaiting values. A parameter file with no values is the expected
@@ -140,7 +146,9 @@ def load_scenario(path: str | Path) -> Scenario:
             refers to itself through a YAML alias, or it holds more than
             ``MAX_DOCUMENT_VALUES`` values counting each value an alias repeats,
             or more than ``MAX_DOCUMENT_CHARACTERS`` characters of text counting
-            keys and each string an alias repeats.
+            text and bytes keys and each string an alias repeats; or a mapping key
+            is not text (an ``!!omap`` or ``!!pairs`` key aside), or a value is a set
+            (``!!set``).
         InvalidScenarioError: Parsed, but a validation rule rejects it. The
             message names the offending field and this file.
     """
@@ -214,11 +222,11 @@ def _one(_node: object) -> int:
 
 
 def _text_length(node: object) -> int:
-    """Characters of text a node holds itself: a str or bytes, or a dict's str keys."""
+    """Characters of text a node holds itself: a str or bytes, or a dict's str and bytes keys."""
     if isinstance(node, (str, bytes)):
         return len(node)
     if isinstance(node, dict):
-        return sum(len(key) for key in node if isinstance(key, str))
+        return sum(len(key) for key in node if isinstance(key, (str, bytes)))
     return 0
 
 
@@ -295,6 +303,73 @@ def _expanded_size(value: object, limit: int, weigh: Callable[[object], int] = _
     return total
 
 
+def _place(path: list[str | int]) -> str:
+    """``"at the top level"``, or ``"at "`` and ``path`` joined by dots, a part holding a dot
+    in backticks as pydantic writes a location."""
+    if not path:
+        return "at the top level"
+    return "at " + ".".join(
+        f"`{part}`" if isinstance(part, str) and "." in part else str(part) for part in path
+    )
+
+
+def _path(link: tuple[Any, str | int] | None) -> list[str | int]:
+    """The path a link of :func:`_refuse_non_text_keys_and_sets` stands for, top first."""
+    parts: list[str | int] = []
+    while link is not None:
+        link, part = link
+        parts.append(part)
+    return parts[::-1]
+
+
+def _refuse_non_text_keys_and_sets(source: str, value: object) -> None:
+    """Raise on the first mapping key in ``value`` that is not a ``str``, or the first set.
+
+    Order: depth first, each mapping's keys in the order the parsed mapping holds
+    them, a key checked before its value. A set's items are never read, so the message does
+    not depend on hashing. A container reached again through an alias is not walked again.
+    Iterative, so depth cannot exhaust the recursion limit, and a node's path is written out
+    as a list only for a message, so memory grows with the nodes and not with their depth.
+
+    Raises:
+        MalformedScenarioFileError: Naming ``source`` and the place; for a key, its repr
+            (in hex for an int too long to write in decimal) cut at
+            ``_KEY_SHOWN_CHARACTERS`` characters.
+    """
+    seen: set[int] = set()
+    # Each entry is (key, node, link): the key the node is held under, or _DONE when there
+    # is none to check, the node, and its path as a link, a (parent's link, part) pair or
+    # None at the top, which a child extends without copying.
+    stack: list[tuple[object, object, tuple[Any, str | int] | None]] = [(_DONE, value, None)]
+    while stack:
+        key, node, link = stack.pop()
+        if key is not _DONE and not isinstance(key, str):
+            try:
+                shown = repr(key)
+            except ValueError:  # an int past Python's limit on decimal digits
+                shown = hex(key)
+            if len(shown) > _KEY_SHOWN_CHARACTERS:
+                shown = shown[:_KEY_SHOWN_CHARACTERS] + "…"
+            raise MalformedScenarioFileError(
+                f"{source}: key {shown} in the mapping {_place(_path(link[0]))} is not text. "
+                "Write it as plain text, without a tag such as !!binary, and quote it if "
+                "YAML would read it as something else, as it reads 2 or true."
+            )
+        if isinstance(node, (set, frozenset)):
+            raise MalformedScenarioFileError(
+                f"{source}: the value {_place(_path(link))} is a set (!!set), which does not keep "
+                "the order it was written in. Write it as a list."
+            )
+        if id(node) in seen:
+            continue
+        if isinstance(node, dict):
+            seen.add(id(node))
+            stack.extend(reversed([(k, item, (link, k)) for k, item in node.items()]))
+        elif isinstance(node, (list, tuple)):
+            seen.add(id(node))
+            stack.extend(reversed([(_DONE, item, (link, i)) for i, item in enumerate(node)]))
+
+
 def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"]) -> Scenario:
     """Parse and validate scenario ``text`` already in memory.
 
@@ -313,8 +388,11 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
             or the top level is not a mapping, or the document refers to itself
             through a YAML alias, or it holds more than ``MAX_DOCUMENT_VALUES``
             values counting each value an alias repeats, or more than
-            ``MAX_DOCUMENT_CHARACTERS`` characters of text counting keys and each
-            string an alias repeats.
+            ``MAX_DOCUMENT_CHARACTERS`` characters of text counting text and bytes
+            keys and each string an alias repeats, or a mapping key is not text (an
+            ``!!omap`` or ``!!pairs`` key aside), or a value is a set (``!!set``). Only
+            the first such key or set, in the order the parsed document holds them, is
+            reported.
         DuplicateKeyError: A mapping repeats a key (a subclass of the above).
         InvalidScenarioError: Parsed, but a validation rule rejects it. The message
             lists at most ``MAX_REPORTED_ERRORS`` errors, and says how many more there are.
@@ -358,8 +436,8 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
     if characters > MAX_DOCUMENT_CHARACTERS:
         raise MalformedScenarioFileError(
             f"{source}: the document holds more than {MAX_DOCUMENT_CHARACTERS:,} characters "
-            "of text, counting keys and each string an alias repeats; a scenario holds "
-            "a few thousand."
+            "of text, counting text and !!binary keys and each string an alias repeats; "
+            "a scenario holds a few thousand."
         )
 
     if not isinstance(values, dict):
@@ -367,6 +445,8 @@ def scenario_from_text(text: str, source: str, *, syntax: Literal["yaml", "json"
             f"{source}: a scenario file is a mapping of top-level keys, and "
             f"this parses to {type(values).__name__}."
         )
+
+    _refuse_non_text_keys_and_sets(source, values)
 
     try:
         return Scenario.model_validate(values)
