@@ -26,6 +26,7 @@ from __future__ import annotations
 import collections.abc
 import copy
 import enum
+import sys
 import types
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -44,6 +45,7 @@ from engine.scenario import (
     load_scenario,
     resolve_policy_path,
 )
+from engine.scenario.load import scenario_from_text
 from engine.scenario.schema import Finite, FrozenMapping
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1486,3 +1488,80 @@ def test_the_grid_in_the_example_resolves(policy: PolicySpec) -> None:
 
     for path in scenario.grid:
         assert resolve_policy_path(policy, path) == 65.0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [10**400, -(10**400), 2**1024, -(2**1024)],
+    ids=["10**400", "-10**400", "2**1024", "-2**1024"],
+)
+def test_a_path_to_an_integer_too_large_for_a_float_is_an_error(
+    policy: PolicySpec, value: int
+) -> None:
+    """The refusal names the path and never prints the number."""
+    elections = policy.elections.model_copy(update={"cpp_start_age_years": {"a": value}})
+    huge = policy.model_copy(update={"elections": elections})
+
+    with pytest.raises(ValueError) as excinfo:
+        resolve_policy_path(huge, "elections.cpp_start_age_years.a")
+
+    assert type(excinfo.value) is ValueError
+    assert str(excinfo.value) == (
+        "elections.cpp_start_age_years.a is an integer too large to convert to a float."
+    )
+    assert type(excinfo.value.__cause__) is OverflowError
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+def test_the_largest_integer_a_float_holds_resolves(policy: PolicySpec, sign: int) -> None:
+    elections = policy.elections.model_copy(
+        update={"cpp_start_age_years": {"a": sign * int(sys.float_info.max)}}
+    )
+    edge = policy.model_copy(update={"elections": elections})
+
+    assert resolve_policy_path(edge, "elections.cpp_start_age_years.a") == sign * sys.float_info.max
+
+
+_HUGE = 10**400
+_HUGE_GRID_CASES = {
+    "cpp": (
+        [("cpp_start_age_years: {a: 65}", f"cpp_start_age_years: {{a: {_HUGE}}}")],
+        "elections.cpp_start_age_years.a",
+    ),
+    "cpp-negative": (
+        [("cpp_start_age_years: {a: 65}", f"cpp_start_age_years: {{a: -{_HUGE}}}")],
+        "elections.cpp_start_age_years.a",
+    ),
+    "rrif": (
+        [
+            (
+                "rrif_conversion: {age_years: 65, fraction: 0.05}",
+                f"rrif_conversion: {{age_years: {_HUGE}, fraction: 0.05}}",
+            ),
+            (
+                "elections.cpp_start_age_years.a: [60, 65, 70]",
+                "elections.rrif_conversion.age_years: [60, 65]",
+            ),
+        ],
+        "elections.rrif_conversion.age_years",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("replacements", "path"), _HUGE_GRID_CASES.values(), ids=list(_HUGE_GRID_CASES)
+)
+def test_a_grid_over_an_integer_too_large_for_a_float_is_refused_at_load(
+    replacements: list[tuple[str, str]], path: str
+) -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    for old, new in replacements:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+
+    with pytest.raises(InvalidScenarioError) as excinfo:
+        scenario_from_text(text, "the text", syntax="yaml")
+
+    message = str(excinfo.value)
+    assert f"grid[{path!r}]: {path} is an integer too large to convert to a float." in message
+    assert "0" * 100 not in message

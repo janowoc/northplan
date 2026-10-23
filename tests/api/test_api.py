@@ -460,6 +460,16 @@ class TestUnprocessable:
         assert detail.startswith("request body is not valid UTF-8: ")
         assert detail.endswith(". Send it as UTF-8.")
 
+    def test_a_grid_over_an_integer_too_large_for_a_float(self, client: TestClient) -> None:
+        old = "cpp_start_age_years: {a: 65}"
+        assert example_text().count(old) == 1
+        body = example_text().replace(old, f"cpp_start_age_years: {{a: {10**400}}}")
+        detail = self.refused(client, body)
+        assert (
+            "grid['elections.cpp_start_age_years.a']: elections.cpp_start_age_years.a "
+            "is an integer too large to convert to a float." in detail
+        )
+
     def test_malformed_yaml(self, client: TestClient) -> None:
         assert "request body is not valid YAML" in self.refused(client, "a: [1, 2\n")
 

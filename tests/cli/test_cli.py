@@ -937,6 +937,18 @@ class TestScenarioRefusals:
         )
         self.check_exit([str(path)], tmp_path, capsys, 2)
 
+    def test_grid_over_an_integer_too_large_for_a_float(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = mutated(
+            tmp_path, ("cpp_start_age_years: {a: 65}", f"cpp_start_age_years: {{a: {10**400}}}")
+        )
+        stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
+        assert (
+            "grid['elections.cpp_start_age_years.a']: elections.cpp_start_age_years.a "
+            "is an integer too large to convert to a float." in stderr
+        )
+
     def test_param_error_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         path = mutated(tmp_path, ("start_year: 2026 ", "start_year: 2031 "))
         self.check_exit([str(path)], tmp_path, capsys, 1)

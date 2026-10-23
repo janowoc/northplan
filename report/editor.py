@@ -61,6 +61,7 @@ from engine.scenario.schema import (
     AssetClass,
     PolicySpec,
     Scenario,
+    resolve_policy_path,
 )
 
 __all__ = [
@@ -693,13 +694,22 @@ def _numeric_paths(value: Any, prefix: str = "") -> list[str]:
     return found
 
 
+def _resolves(spec: PolicySpec, path: str) -> bool:
+    """Whether ``resolve_policy_path`` accepts ``path`` on ``spec``."""
+    try:
+        resolve_policy_path(spec, path)
+    except ValueError:
+        return False
+    return True
+
+
 def grid_paths(mapping: Any) -> list[str]:
     """The dotted paths, relative to a policy, that ``resolve_policy_path`` resolves to a number
     on every policy. A mapping key containing a dot is skipped: no dotted path can name it.
 
     Returns:
-        The first policy's numeric paths, in its order, that every other policy also has;
-        ``[]`` when ``policies`` is not a non-empty list or any entry fails
+        The first policy's numeric paths, in its order, that ``resolve_policy_path`` accepts on
+        every policy; ``[]`` when ``policies`` is not a non-empty list or any entry fails
         ``PolicySpec`` validation.
     """
     policies = _dig(mapping, "policies")
@@ -709,6 +719,4 @@ def grid_paths(mapping: Any) -> list[str]:
         specs = [PolicySpec.model_validate(entry) for entry in policies]
     except pydantic.ValidationError:
         return []
-    per_policy = [_numeric_paths(spec) for spec in specs]
-    others = [set(paths) for paths in per_policy[1:]]
-    return [path for path in per_policy[0] if all(path in other for other in others)]
+    return [path for path in _numeric_paths(specs[0]) if all(_resolves(s, path) for s in specs)]

@@ -246,6 +246,20 @@ def test_parse_refuses_a_start_age_the_parameter_year_refuses() -> None:
     assert error["loc"] == []
 
 
+def test_parse_refuses_a_grid_over_an_integer_too_large_for_a_float() -> None:
+    text = changed(
+        EXAMPLE_TEXT, "cpp_start_age_years: {a: 65}", f"cpp_start_age_years: {{a: {10**400}}}"
+    )
+    result = parse(text, params_root=ROOT)
+    assert result["mapping"] is None
+    (error,) = result["errors"]
+    assert (
+        "elections.cpp_start_age_years.a is an integer too large to convert to a float."
+        in error["message"]
+    )
+    assert "0" * 100 not in error["message"]
+
+
 NON_TEXT_KEY_TAIL = (
     " is not text. Write it as plain text, without a tag such as !!binary, and quote it if "
     "YAML would read it as something else, as it reads 2 or true."
@@ -1094,6 +1108,27 @@ def test_grid_paths_are_those_every_policy_has() -> None:
         "elections.rrif_conversion.age_years",
         "elections.rrif_conversion.fraction",
     ]
+
+
+def _without_huge_rrif_age() -> list[str]:
+    paths = grid_paths(example())
+    assert "elections.rrif_conversion.age_years" in paths
+    return [p for p in paths if p != "elections.rrif_conversion.age_years"]
+
+
+def test_grid_paths_leave_out_an_integer_too_large_for_a_float() -> None:
+    m = example()
+    m["policies"][0]["elections"]["rrif_conversion"]["age_years"] = 10**400
+    assert grid_paths(m) == _without_huge_rrif_age()
+
+
+def test_grid_paths_leave_out_an_integer_too_large_for_a_float_on_a_later_policy() -> None:
+    m = example()
+    other = copy.deepcopy(m["policies"][0])
+    other["name"] = "other"
+    other["elections"]["rrif_conversion"]["age_years"] = 10**400
+    m["policies"].append(other)
+    assert grid_paths(m) == _without_huge_rrif_age()
 
 
 def _without_policies() -> Any:

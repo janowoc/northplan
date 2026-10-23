@@ -1659,7 +1659,8 @@ def resolve_policy_path(policy: PolicySpec, path: str) -> float:
 
     Raises:
         ValueError: If a segment names nothing, if the walk runs into a value
-            that cannot be traversed, or if the target is not a number.
+            that cannot be traversed, if the target is not a number, or if it is
+            an integer too large to convert to a float.
     """
     current: Any = policy
     walked: list[str] = []
@@ -1690,7 +1691,10 @@ def resolve_policy_path(policy: PolicySpec, path: str) -> float:
         raise ValueError(
             f"{path} is a {type(current).__name__}, and only a number can be put on a grid."
         )
-    return float(current)
+    try:
+        return float(current)
+    except OverflowError as exc:
+        raise ValueError(f"{path} is an integer too large to convert to a float.") from exc
 
 
 def _check_kind_order(field_name: str, order: tuple[str, ...], permitted: frozenset[str]) -> None:
