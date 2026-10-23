@@ -6,7 +6,10 @@
 // turns what a number control holds into JSON number text; and northplanEditor, which builds
 // the form's state and methods for a page's Alpine data and draws the form from the schema.
 // It makes no request of its own: a page hands it an adapter, {call(name, argumentsText),
-// file(name)}, and every byte that crosses the network or the worker goes through that.
+// file(name), runHoldsForm}, and every byte that crosses the network or the worker goes through
+// that. When runHoldsForm is true, formHeld() is true while the page's running field is; the
+// pages turn the form and its three open buttons off by it, and openForm and openFile do
+// nothing then.
 
 const NorthplanJson = (() => {
   const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
@@ -1184,12 +1187,15 @@ const northplanEditor = (() => {
       formYaml: null,
       openForm() {
         const host = this;
+        if (host.formHeld()) {
+          return undefined;
+        }
         return openText(host, host.scenario);
       },
       async openFile(name) {
         const host = this;
         ui = host;
-        if (host.formBusy) {
+        if (host.formBusy || host.formHeld()) {
           return;
         }
         host.formBusy = true;
@@ -1236,7 +1242,13 @@ const northplanEditor = (() => {
           close(host);
         }
       },
+      formHeld() {
+        return adapter.runHoldsForm === true && this.running === true;
+      },
       formStateText() {
+        if (this.formHeld()) {
+          return 'The form is off while the scenario runs.';
+        }
         if (this.formBusy) {
           return 'Working…';
         }

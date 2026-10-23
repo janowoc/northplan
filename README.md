@@ -189,6 +189,11 @@ anchors or flow style, and puts each section's fields in the schema's order.
 Text that does not validate does not open in the form; its errors are listed
 instead.
 
+On this page, while a scenario runs, the form cannot be edited and
+**Edit in form**, **New scenario** and **Open example** are off;
+**Back to YAML**, **Download YAML** and **Discard form** still work. The
+local install's form stays usable during a run.
+
 ## Running
 
 ```sh

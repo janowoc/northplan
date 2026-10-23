@@ -81,7 +81,7 @@ def test_it_has_a_scenario_textarea_a_run_button_an_error_box_and_a_chart() -> N
 
 
 def test_run_is_disabled_until_the_engine_is_ready() -> None:
-    assert ':disabled="running || !ready || (formOpen && formYaml === null)"' in PAGE
+    assert ':disabled="running || !ready || formBusy || (formOpen && formYaml === null)"' in PAGE
     assert "Loading the engine (about 11 MB on a first visit)…" in PAGE
 
 
