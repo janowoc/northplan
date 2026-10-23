@@ -42,7 +42,7 @@ from engine.core.indexation import RoutedParameterError
 from engine.mc.prepare import prepare_run
 from engine.optimize.objective import median_estate_after_tax
 from engine.optimize.search import search
-from engine.params.loader import MissingParameterError, parse_yaml
+from engine.params.loader import MissingParameterError, load_year, parse_yaml
 from engine.scenario.lifespan import LifespanNotRepresentableError
 from engine.scenario.load import load_scenario
 from engine.scenario.schema import Scenario
@@ -578,6 +578,18 @@ class TestUnprocessable:
             headers=YAML,
         )
         assert response.status_code == 200
+
+    def test_a_ceiling_bracket_past_the_last_edge(self, client: TestClient) -> None:
+        edges = len(load_year(2026).federal.sequence("brackets.edges_annual"))
+        assert edges >= 2
+        old = "taxable_ceiling_bracket: null"
+        assert example_text().count(old) == 1
+        detail = self.refused(
+            client, example_text().replace(old, f"taxable_ceiling_bracket: {edges}")
+        )
+        assert (
+            "withdrawal.taxable_ceiling_bracket: no federal bracket edge has this index." in detail
+        )
 
 
 class TestCheckOrder:

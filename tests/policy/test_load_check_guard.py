@@ -130,6 +130,47 @@ def test_a_lifespan_refusal_fails_the_test(scenario) -> None:
         build_initial_state(too_old, n_paths=1)
 
 
+def _edge_count(scenario) -> int:
+    return len(load_year(scenario.start_year).federal.sequence("brackets.edges_annual"))
+
+
+def _first_policy_with_ceiling(scenario, ceiling, name=None):
+    policy = scenario.policies[0]
+    withdrawal = policy.withdrawal.model_copy(update={"taxable_ceiling_bracket": ceiling})
+    update = {"withdrawal": withdrawal}
+    if name is not None:
+        update["name"] = name
+    return policy.model_copy(update=update)
+
+
+def test_a_ceiling_bracket_refusal_fails_the_test(scenario) -> None:
+    ceiling = _first_policy_with_ceiling(scenario, _edge_count(scenario))
+    refused = scenario.model_copy(update={"policies": (ceiling,)})
+    with pytest.raises(pytest.fail.Exception, match="CeilingBracketNotAllowedError"):
+        build_initial_state(refused, n_paths=1)
+
+
+def test_a_ceiling_bracket_grid_value_is_checked(scenario) -> None:
+    edges = _edge_count(scenario)
+    written = _first_policy_with_ceiling(scenario, 1)
+    gridded = scenario.model_copy(
+        update={
+            "policies": (written,),
+            "grid": MappingProxyType({"withdrawal.taxable_ceiling_bracket": (1, edges)}),
+        }
+    )
+    with pytest.raises(pytest.fail.Exception, match="CeilingBracketNotAllowedError") as failure:
+        build_initial_state(gridded, n_paths=1)
+    assert f"[withdrawal.taxable_ceiling_bracket={edges}]" in str(failure.value)
+
+
+def test_a_ceiling_bracket_on_a_policy_passed_outside_the_scenario_is_checked(scenario) -> None:
+    outside = _first_policy_with_ceiling(scenario, _edge_count(scenario), name="outside")
+    with pytest.raises(pytest.fail.Exception) as failure:
+        build_initial_state(scenario, n_paths=1, policy=outside)
+    assert "policies['outside'].withdrawal.taxable_ceiling_bracket" in str(failure.value)
+
+
 def test_a_scenario_the_schema_refuses_on_expansion_fails_the_test(scenario) -> None:
     # model_copy skips validation; expanding the grid revalidates, and the
     # example's first spending band begins after this start year.

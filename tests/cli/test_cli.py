@@ -37,7 +37,7 @@ from engine.mc.simulate import SimulationResult
 from engine.mc.trace import trace_rows
 from engine.optimize.objective import select_objective, success_probability
 from engine.optimize.search import CandidateReport, SearchResult, search
-from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamDirectoryUnreadableError
+from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamDirectoryUnreadableError, load_year
 from engine.scenario import load_scenario
 from engine.scenario.schema import PolicySpec
 from report.tables import evaluation_rows, final_row, year_rows
@@ -924,6 +924,19 @@ class TestScenarioRefusals:
         )
         stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
         assert "50" in stderr
+
+    def test_ceiling_bracket_past_the_last_edge(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        edges = len(load_year(2026).federal.sequence("brackets.edges_annual"))
+        assert edges >= 2
+        path = mutated(
+            tmp_path, ("taxable_ceiling_bracket: null", f"taxable_ceiling_bracket: {edges}")
+        )
+        stderr = self.check_exit([str(path)], tmp_path, capsys, 2)
+        assert (
+            "withdrawal.taxable_ceiling_bracket: no federal bracket edge has this index." in stderr
+        )
 
     def test_grid_value_the_schema_refuses(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

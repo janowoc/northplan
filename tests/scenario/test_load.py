@@ -42,6 +42,7 @@ from engine.scenario import (
     ScenarioError,
     ScenarioFileMissingError,
     ScenarioFileUnreadableError,
+    check_ceiling_bracket,
     check_lifespan,
     check_start_ages,
     load_scenario,
@@ -437,11 +438,12 @@ def test_the_couple_loads() -> None:
 
 
 def test_the_couple_passes_the_run_opening_checks(params: ParamYear) -> None:
-    """Neither of the two checks that gate a run refuses this household."""
+    """None of the three checks that gate a run refuses this household."""
     scenario = load_scenario(COUPLE)
 
     check_start_ages(scenario, params)  # must not raise
     check_lifespan(scenario, params)  # must not raise
+    check_ceiling_bracket(scenario, params)  # must not raise
 
 
 def test_the_couple_exercises_what_it_is_for() -> None:

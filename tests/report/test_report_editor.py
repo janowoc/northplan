@@ -556,6 +556,15 @@ def test_check_refuses_a_lifespan_the_life_table_cannot_represent() -> None:
     assert "terminal_age_years" in error["message"]
 
 
+def test_check_refuses_a_ceiling_bracket_past_the_last_edge() -> None:
+    m = example()
+    edges = len(load_year(m["start_year"]).federal.sequence("brackets.edges_annual"))
+    m["policies"][0]["withdrawal"]["taxable_ceiling_bracket"] = edges
+    (error,) = check_errors(m)
+    assert error["loc"] == []
+    assert "no federal bracket edge has this index" in error["message"]
+
+
 def test_check_refuses_a_start_year_without_parameters() -> None:
     m = example()
     m["start_year"] = 2040

@@ -17,16 +17,18 @@ turns the guard off for every test after it; one that patches it through the
 
 :func:`_checked_select` runs what ``prepare_run`` runs on the scenario:
 :func:`~engine.policy.build.expand_grid`, the parameter year for ``start_year``,
-:func:`~engine.scenario.start_ages.check_start_ages`, then
-:func:`~engine.scenario.lifespan.check_lifespan`. It then validates the scenario,
-with only the chosen policy and no grid, against the schema, and checks that
-policy's own elections, because a build can take a policy ``prepare_run`` never
-sees: one passed as ``policy=``, or one written under a grid that replaces its
-values. A refusal, or a start year with no parameter directory, fails the test
-through ``pytest.fail``, which ``pytest.raises(ValueError)`` and
-``except Exception`` do not catch. The checks use the repository's ``params/``,
-whatever root a test passes to ``prepare_run``; a test whose synthetic root
-disagrees with it opts out and says so.
+:func:`~engine.scenario.start_ages.check_start_ages`,
+:func:`~engine.scenario.lifespan.check_lifespan`, then
+:func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`. It then
+validates the scenario, with only the chosen policy and no grid, against the
+schema, and checks that policy's own elections and ceiling bracket, because a
+build can take a policy ``prepare_run`` never sees: one passed as ``policy=``,
+or one written under a grid that replaces its values. A refusal, or a start year
+with no parameter directory, fails the test through ``pytest.fail``, which
+``pytest.raises(ValueError)`` and ``except Exception`` do not catch. The checks
+use the repository's ``params/``, whatever root a test passes to
+``prepare_run``; a test whose synthetic root disagrees with it opts out and says
+so.
 
 A test that must build a scenario or policy the checks refuse opts out with
 ``@pytest.mark.unchecked_scenario(reason="...")``; the reason is required, as a
@@ -49,6 +51,7 @@ import pytest
 import engine.core.build
 from engine.params.loader import ParamYear, ParamYearMissingError, load_year
 from engine.policy.build import expand_grid
+from engine.scenario.ceiling_bracket import check_ceiling_bracket
 from engine.scenario.lifespan import check_lifespan
 from engine.scenario.load import ScenarioError
 from engine.scenario.schema import PolicySpec, Scenario
@@ -86,11 +89,13 @@ def _checked_select(scenario: Scenario, policy: PolicySpec | None) -> PolicySpec
         params = _param_year(expanded.start_year)
         check_start_ages(expanded, params)
         check_lifespan(expanded, params)
+        check_ceiling_bracket(expanded, params)
         only_chosen = scenario.model_copy(
             update={"policies": (chosen,), "grid": MappingProxyType({})}
         )
         Scenario.model_validate(only_chosen.model_dump(warnings=False))
         check_start_ages(only_chosen, params)
+        check_ceiling_bracket(only_chosen, params)
     except (ScenarioError, ParamYearMissingError, pydantic.ValidationError) as error:
         pytest.fail(
             "build_initial_state was given a scenario, or a policy for it, that the load "

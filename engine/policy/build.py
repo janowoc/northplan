@@ -195,9 +195,10 @@ def expand_grid(scenario: Scenario) -> Scenario:
     order, values printed as written: ``60``, not ``60.0``). Returns
     ``Scenario.model_validate(...)`` of the scenario with those policies and an empty grid,
     so every schema validator runs again on what the optimizer will actually evaluate. The
-    statutory guards (:func:`~engine.scenario.start_ages.check_start_ages`,
-    :func:`~engine.scenario.lifespan.check_lifespan`) are not schema validators and do not run
-    here; :func:`engine.mc.prepare.prepare_run` runs them on the expansion.
+    guards that read the parameter year (:func:`~engine.scenario.start_ages.check_start_ages`,
+    :func:`~engine.scenario.lifespan.check_lifespan`,
+    :func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`) are not schema validators
+    and do not run here; :func:`engine.mc.prepare.prepare_run` runs them on the expansion.
 
     An empty grid returns a scenario equal to the input, unchanged.
 

@@ -4,16 +4,17 @@
 """Opening a run: one function from a scenario to checked, shared inputs.
 
 :func:`prepare_run` is the one entry point that turns a
-:class:`~engine.scenario.schema.Scenario` into a :class:`PreparedRun`: it
-runs :func:`check_scenario`, which checks the run's size, expands the grid,
-loads the parameter year and runs the load-time guards
+:class:`~engine.scenario.schema.Scenario` into a :class:`PreparedRun`: it runs
+:func:`check_scenario`, which checks the run's size, expands the grid, loads the
+parameter year and runs the load-time guards
 (:func:`~engine.scenario.start_ages.check_start_ages`,
-:func:`~engine.scenario.lifespan.check_lifespan`) on the expansion; then it
-checks the parameter year's shape -- ``resp``'s reach-back, via
-:func:`~engine.accounts.resp.governing_income_year_offset` -- and builds the
+:func:`~engine.scenario.lifespan.check_lifespan`, and
+:func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`) on the
+expansion; then it checks the parameter year's shape -- ``resp``'s reach-back,
+via :func:`~engine.accounts.resp.governing_income_year_offset` -- and builds the
 market inputs and the common random numbers every candidate policy shares.
-:func:`evaluate` then runs one candidate spec against a :class:`PreparedRun`.
-A caller that only needs to know whether a run would refuse a scenario calls
+:func:`evaluate` then runs one candidate spec against a :class:`PreparedRun`. A
+caller that only needs to know whether a run would refuse a scenario calls
 :func:`check_scenario` alone.
 
 Invariant: every spec :func:`evaluate` runs has passed the guards, because it
@@ -51,6 +52,7 @@ from engine.mc.returns import RandomDraws
 from engine.mc.simulate import SimulationResult, run
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamYear, load_year
 from engine.policy.build import build_policy, expand_grid
+from engine.scenario.ceiling_bracket import check_ceiling_bracket
 from engine.scenario.lifespan import check_lifespan
 from engine.scenario.load import ScenarioError
 from engine.scenario.schema import PolicySpec, Scenario
@@ -113,9 +115,9 @@ def check_scenario(
     """Check a scenario as :func:`prepare_run` does, before anything is built.
 
     Raises on the first failure, in this order: the run's size, before the grid is
-    expanded; the grid's expansion; ``load_params``; the start ages; the lifespan. A
-    guard's lookups in the parameter year, and its check of that year against
-    ``start_year``, fail within the guard's own step.
+    expanded; the grid's expansion; ``load_params``; the start ages; the lifespan; the
+    ceiling bracket. A guard's lookups in the parameter year, and its check of that year
+    against ``start_year``, fail within the guard's own step.
 
     Args:
         scenario: The scenario as loaded (grid may be non-empty).
@@ -143,6 +145,9 @@ def check_scenario(
             conversion age the parameter year does not allow.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or household
             the life table cannot represent.
+        engine.scenario.ceiling_bracket.CeilingBracketNotAllowedError: A withdrawal
+            ``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
+            parameter year.
     """
     paths = paths if paths is not None else scenario.n_paths
     candidates = len(scenario.policies) * math.prod(len(v) for v in scenario.grid.values())
@@ -167,6 +172,7 @@ def check_scenario(
     params = load_params(expanded.start_year)
     check_start_ages(expanded, params)
     check_lifespan(expanded, params)
+    check_ceiling_bracket(expanded, params)
     return expanded, params
 
 
@@ -207,6 +213,9 @@ def prepare_run(
             a CPP or OAS pension in pay for someone too young to receive it.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or
             household the life table cannot represent.
+        engine.scenario.ceiling_bracket.CeilingBracketNotAllowedError: A withdrawal
+            ``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
+            parameter year.
         RunTooLargeError: More than ``MAX_PATHS`` paths, more than
             ``MAX_CANDIDATES`` candidate policies, or more than
             ``MAX_CANDIDATE_PATHS`` candidate policies times paths. Checked before

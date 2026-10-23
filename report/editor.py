@@ -12,8 +12,8 @@ module's boundary is JSON data: dict, list, str, int, float, bool, None.
 
 Invariants:
     * :func:`parse` opens a mapping only for text that passes everything a run checks first,
-      start-age and lifespan refusals included, and whose mapping keys are all text (an
-      ``!!omap`` or ``!!pairs`` key aside).
+      start-age, lifespan and ceiling-bracket refusals included, and whose mapping keys are all
+      text (an ``!!omap`` or ``!!pairs`` key aside).
     * :func:`check` validates the YAML :func:`emit` writes, never the mapping, so no errors
       means exactly the returned text passes everything a run checks first.
     * An edit works on a deep copy and returns it; its argument is never changed. Every

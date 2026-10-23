@@ -57,6 +57,7 @@ from engine.params.loader import (
 )
 from engine.policy.build import build_policy, expand_grid
 from engine.scenario import (
+    CeilingBracketNotAllowedError,
     LifespanNotRepresentableError,
     PolicySpec,
     Scenario,
@@ -801,3 +802,44 @@ def test_check_scenario_runs_start_ages_before_the_lifespans_parameter_lookup() 
     scenario = Scenario.model_validate(values)
     with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
         check_scenario(scenario, paths=None, load_params=without_terminal_age)
+
+
+EDGES = len(load_year(2026).federal.sequence("brackets.edges_annual"))
+
+
+def test_check_scenario_refuses_a_ceiling_bracket_past_the_last_edge_on_the_grid() -> None:
+    assert EDGES >= 2
+    values = _values(EXAMPLE)
+    _policy(values)["withdrawal"]["taxable_ceiling_bracket"] = 1
+    values["grid"] = {"withdrawal.taxable_ceiling_bracket": [EDGES - 1, EDGES]}
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(
+        CeilingBracketNotAllowedError,
+        match=re.escape(f"[withdrawal.taxable_ceiling_bracket={EDGES}]"),
+    ):
+        check_scenario(scenario, paths=None, load_params=load_year)
+
+
+def test_prepare_run_refuses_a_ceiling_bracket_past_the_last_edge() -> None:
+    values = _values(EXAMPLE)
+    _policy(values)["withdrawal"]["taxable_ceiling_bracket"] = EDGES
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(CeilingBracketNotAllowedError):
+        prepare_run(scenario)
+
+
+def test_check_scenario_runs_lifespan_before_the_ceiling_bracket() -> None:
+    params = load_year(2026)
+    terminal_age_years = int(params["mortality"].number("terminal_age_years"))
+
+    values = _values(EXAMPLE)
+    age_months = (terminal_age_years + 1) * MONTHS_PER_YEAR
+    birth_year, birth_month = _birth_for_age_at_open(values["start_year"], age_months)
+    _append_minimal_person(values, "b", birth_year, birth_month)
+    _policy(values)["withdrawal"]["taxable_ceiling_bracket"] = EDGES
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(LifespanNotRepresentableError):
+        check_scenario(scenario, paths=None, load_params=load_year)

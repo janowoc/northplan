@@ -14,7 +14,9 @@ parameter file.
 scenario's parameter year does not allow. ``lifespan`` refuses a scenario the
 parameter year's life table cannot represent, either for one person past the
 terminal age or for a household no one in which can be alive at the run's first
-December close. Building engine state from a scenario lives in
+December close. ``ceiling_bracket`` refuses a withdrawal
+``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
+parameter year. Building engine state from a scenario lives in
 ``engine/core/build.py``, not here — this package hands out no NumPy arrays.
 
 Names ending in ``Spec`` are the deliberate exceptions to plain naming: they
@@ -22,6 +24,10 @@ describe an input that the engine also has a *runtime* class for, and the two
 have to be importable side by side in the builder without an alias.
 """
 
+from engine.scenario.ceiling_bracket import (
+    CeilingBracketNotAllowedError,
+    check_ceiling_bracket,
+)
 from engine.scenario.lifespan import (
     LifespanNotRepresentableError,
     check_lifespan,
@@ -84,6 +90,7 @@ __all__ = [
     "Assumptions",
     "Beneficiary",
     "CashAccount",
+    "CeilingBracketNotAllowedError",
     "ContributionRule",
     "CppEntitlement",
     "DbPension",
@@ -114,6 +121,7 @@ __all__ = [
     "TaxableAccount",
     "TfsaAccount",
     "WithdrawalRule",
+    "check_ceiling_bracket",
     "check_lifespan",
     "check_start_ages",
     "load_scenario",
