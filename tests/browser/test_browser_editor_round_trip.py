@@ -3,8 +3,9 @@
 
 """Opening a scenario in the form and coming back: the YAML that returns is what Python writes
 for the same mapping, on both pages. It covers the committed scenarios, values JavaScript's
-numbers cannot hold, the two starting files and what happens when one is missing, text the form
-cannot open, the download, Run on the form's scenario, and the buttons that wait for the engine.
+numbers cannot hold, number text the form sends as text, the two starting files and what happens
+when one is missing, text the form cannot open, the download, Run on the form's scenario, and the
+buttons that wait for the engine.
 """
 
 from __future__ import annotations
@@ -97,6 +98,19 @@ def test_values_javascript_numbers_cannot_hold_come_back_unchanged(
     open_text(page, SYNTHETIC_TEXT)
     wait_clean(page)
     assert back_to_yaml(page) == SYNTHETIC_TEXT
+
+
+def test_number_text_comes_back_as_the_number(form_page: tuple[Page, Offline]) -> None:
+    sent = mapping_of(MINIMAL)
+    sent["seed"] = "1_000"
+    assert "seed: '1_000'\n" in editor.emit(sent)
+    expected = mapping_of(MINIMAL)
+    expected["seed"] = 1000
+    page, _ = form_page
+    open_text(page, MINIMAL)
+    fill(page, "1_000", "seed")
+    wait_clean(page)
+    assert back_to_yaml(page) == editor.emit(expected)
 
 
 def test_new_scenario_and_open_example_leave_the_textarea(

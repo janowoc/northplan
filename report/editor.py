@@ -14,8 +14,10 @@ Invariants:
     * :func:`parse` opens a mapping only for text that passes everything a run checks first,
       start-age, lifespan and ceiling-bracket refusals included, and whose mapping keys are all
       text (an ``!!omap`` or ``!!pairs`` key aside).
-    * :func:`check` validates the YAML :func:`emit` writes, never the mapping, so no errors
-      means exactly the returned text passes everything a run checks first.
+    * :func:`check` validates YAML, never the mapping: the text :func:`emit` writes for it,
+      then, when that passes, the text :func:`emit` writes for the mapping :func:`parse` would
+      open from that text. No errors means exactly the returned text passes everything a run
+      checks first.
     * An edit works on a deep copy and returns it; its argument is never changed. Every
       reader of a mapping tolerates a half-edited one and contributes nothing for a missing
       key, a wrong type or an index out of range.
@@ -273,6 +275,11 @@ def _uses_aliases(text: str) -> bool:
     return False
 
 
+def _opened(text: str, scenario: Scenario) -> Any:
+    """The mapping :func:`parse` opens from ``text``, which validated as ``scenario``."""
+    return _ordered(_typed(parse_yaml(text), scenario), Scenario)
+
+
 def parse(text: str, *, params_root: Path) -> dict[str, Any]:
     """Scenario ``text`` as the editor's mapping, or the errors that stop a form opening.
 
@@ -289,9 +296,11 @@ def parse(text: str, *, params_root: Path) -> dict[str, Any]:
     scenario, errors = _errors(text, "the text", params_root)
     if errors or scenario is None:
         return {"mapping": None, "errors": errors, "notices": []}
-    document = parse_yaml(text)
-    mapping = _ordered(_typed(document, scenario), Scenario)
-    return {"mapping": mapping, "errors": [], "notices": [FLATTENED] if _uses_aliases(text) else []}
+    return {
+        "mapping": _opened(text, scenario),
+        "errors": [],
+        "notices": [FLATTENED] if _uses_aliases(text) else [],
+    }
 
 
 class _Dumper(yaml.SafeDumper):
@@ -334,9 +343,14 @@ def emit(mapping: Any) -> str:
 def check(mapping: Any, *, params_root: Path) -> dict[str, Any]:
     """Emit ``mapping`` and check the text as a run checks a scenario first.
 
+    When that text passes, it is written again from the mapping :func:`parse` would open from
+    it, and the new text is checked in its place. Text that pydantic read as a number is then
+    written as that number: ``"1_000"`` given for an int field is written ``1000``.
+
     Returns:
         ``{"yaml": text, "errors": [...]}``; each error is ``{"loc": [...], "message": str}``.
-        The text is what is validated, so empty ``errors`` means exactly ``yaml`` passes.
+        The text is what is validated, so empty ``errors`` means exactly ``yaml`` passes. When
+        the first text has errors, ``yaml`` is that text.
 
     Raises:
         yaml.representer.RepresenterError: ``mapping`` holds a value ``yaml.SafeDumper``
@@ -345,7 +359,11 @@ def check(mapping: Any, *, params_root: Path) -> dict[str, Any]:
         RoutedParameterError: An engine bug, passed through.
     """
     text = emit(mapping)
-    return {"yaml": text, "errors": _errors(text, "the form", params_root)[1]}
+    scenario, errors = _errors(text, "the form", params_root)
+    if errors or scenario is None:
+        return {"yaml": text, "errors": errors}
+    typed = emit(_opened(text, scenario))
+    return {"yaml": typed, "errors": _errors(typed, "the form", params_root)[1]}
 
 
 # --- the schema -----------------------------------------------------------------------

@@ -59,6 +59,7 @@ ROOT = DEFAULT_PARAMS_ROOT
 
 EXAMPLE_TEXT = EXAMPLE.read_text(encoding="utf-8")
 COUPLE_TEXT = COUPLE.read_text(encoding="utf-8")
+MINIMAL_TEXT = MINIMAL.read_text(encoding="utf-8")
 GRID_LINE = "elections.cpp_start_age_years.a: [60, 65, 70]"
 
 PERSON_A_REFERENCES = [
@@ -97,6 +98,10 @@ def example() -> Any:
 
 def couple() -> Any:
     return mapping_of(COUPLE_TEXT)
+
+
+def minimal() -> Any:
+    return mapping_of(MINIMAL_TEXT)
 
 
 def check_errors(mapping: Any) -> list[dict[str, Any]]:
@@ -578,6 +583,111 @@ def test_check_validates_the_text_it_emits(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(editor, "emit", lambda _mapping: text)
     result = check(example(), params_root=ROOT)
     assert result["yaml"] == text
+    (error,) = result["errors"]
+    assert error["loc"] == []
+    assert error["message"].startswith("No parameters for tax year 2040")
+
+
+def _set_at(mapping: Any, path: tuple[str | int, ...], value: Any) -> None:
+    for step in path[:-1]:
+        mapping = mapping[step]
+    mapping[path[-1]] = value
+
+
+def _value_at(mapping: Any, path: tuple[str | int, ...]) -> Any:
+    for step in path:
+        mapping = mapping[step]
+    return mapping
+
+
+@pytest.mark.parametrize(
+    ("path", "sent", "number"),
+    [
+        pytest.param(("seed",), "1_000", 1000, id="seed"),
+        pytest.param(("assumptions", "inflation"), "0.0_2", 0.02, id="inflation"),
+        pytest.param(("household", "persons", 0, "birth_year"), "1_9_7_0", 1970, id="birth-year"),
+        pytest.param(("assumptions", "inflation"), "2e-2", 0.02, id="exponent"),
+    ],
+)
+def test_check_writes_number_text_as_the_number_it_validated_as(
+    path: tuple[str | int, ...], sent: str, number: float
+) -> None:
+    m = minimal()
+    _set_at(m, path, sent)
+    assert isinstance(_value_at(yaml.safe_load(emit(m)), path), str)
+    result = check(m, params_root=ROOT)
+    assert result["errors"] == []
+    expected = minimal()
+    _set_at(expected, path, number)
+    assert result["yaml"] == emit(expected)
+    assert emit(mapping_of(result["yaml"])) == result["yaml"]
+
+
+def _number_leaves(value: Any, path: tuple[str | int, ...] = ()) -> Iterator[tuple[str | int, ...]]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _number_leaves(item, (*path, key))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _number_leaves(item, (*path, index))
+    elif type(value) in (int, float):
+        yield path
+
+
+@pytest.mark.parametrize(
+    "path", sorted((REPO_ROOT / "scenarios").glob("*.yaml")), ids=lambda p: p.name
+)
+def test_check_writes_what_parse_opens_from_the_text_it_emits(path: Path) -> None:
+    base = mapping_of(path.read_text(encoding="utf-8"))
+    leaves = list(_number_leaves(base))
+    assert len(leaves) >= 20
+    assert {type(_value_at(base, leaf)) for leaf in leaves} == {int, float}
+    for leaf in leaves:
+        sent = copy.deepcopy(base)
+        _set_at(sent, leaf, f" {_value_at(base, leaf)!r} ")
+        result = check(sent, params_root=ROOT)
+        assert result["errors"] == [], leaf
+        assert result["yaml"] == emit(parse(emit(sent), params_root=ROOT)["mapping"]), leaf
+        assert result["yaml"] != emit(sent), leaf
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(
+            lambda m: _set_at(m, ("household", "persons", 0, "birth_month"), 13), id="schema-error"
+        ),
+        pytest.param(lambda m: _set_at(m, ("n_paths",), MAX_PATHS + 1), id="run-refusal"),
+    ],
+)
+def test_check_with_errors_returns_the_text_emit_writes(change: Callable[[Any], None]) -> None:
+    m = minimal()
+    _set_at(m, ("seed",), "1_000")
+    change(m)
+    result = check(m, params_root=ROOT)
+    assert result["errors"] != []
+    assert result["yaml"] == emit(m)
+    assert "seed: '1_000'\n" in result["yaml"]
+
+
+def test_check_validates_the_retyped_text_it_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = editor.emit
+    calls: list[int] = []
+
+    def counting(mapping: Any) -> str:
+        calls.append(1)
+        text = real(mapping)
+        if len(calls) == 2:
+            return changed(text, "start_year: 2026", "start_year: 2040")
+        return text
+
+    monkeypatch.setattr(editor, "emit", counting)
+    m = minimal()
+    _set_at(m, ("seed",), "1_000")
+    result = check(m, params_root=ROOT)
+    assert len(calls) == 2
+    assert "start_year: 2040\n" in result["yaml"]
+    assert "seed: 1000\n" in result["yaml"]
     (error,) = result["errors"]
     assert error["loc"] == []
     assert error["message"].startswith("No parameters for tax year 2040")

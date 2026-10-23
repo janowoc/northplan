@@ -111,6 +111,7 @@ CASES = [
         json.dumps({"mapping": start_year_mapping(2040)}),
         200,
     ),
+    Case("check-number-text", "check", json.dumps({"mapping": {**MAPPING, "seed": "1_000"}}), 200),
     Case("check-empty-mapping", "check", '{"mapping": {}}', 200),
     Case("check-null", "check", '{"mapping": null}', 200),
     Case("schema", "schema", "{}", 200),
