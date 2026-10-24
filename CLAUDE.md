@@ -151,6 +151,11 @@
 - A new issue says where it came from in its own body. Nothing in the
   repository registers it. `docs/archive/roadmap-v0.1.0.md` is the ordered
   plan that built the first version and is not updated.
+- A new issue gets labels, and they go in the text you show me: `agent`
+  and/or `human` for who does the work; one of `engine`, `params`, `tests`,
+  `web` and `documentation` for each area it touches; and `bug` for a defect
+  or `enhancement` for something new. A label the scheme lacks is created
+  only once I agree.
 - You may NEVER close an issue. Only the human closes issues, after
   verifying the output.
 - You may NEVER merge a pull request. Only the human merges, after seeing the
