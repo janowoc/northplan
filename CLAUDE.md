@@ -121,6 +121,12 @@
     a new issue by default, folded in only when I say so. Instances inside the
     area are still fixed under the rule above; one new issue covers every
     instance outside it.
+  - Before reporting such a hole, search the whole tree for the same pattern
+    (the same call, the same unbounded format, the same missing check), not
+    just the module where it was found. Every hit goes into the numbered list
+    with its file:line, sorted into inside and outside the area. The new
+    issue names every instance outside, and its body gives the search that
+    found them, so that whoever works on it can run it again.
   Either way, the hole and what was done with it go in the numbered list of
   decisions reported to me.
 - A verifier's bug, test gap or wrong statement goes back to the implementer,
