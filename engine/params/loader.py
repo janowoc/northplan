@@ -41,10 +41,16 @@ contains itself through a YAML alias, and a value nested too deeply, through YAM
 frozen. A value reached through several aliases is frozen once and shared, so aliases cannot
 multiply a file's size either. A message shows the key it refuses as its repr cut at 40
 characters, in hex for an integer too long to write in decimal; the path to it is shown in full.
+
+A message shows a parameter value as its repr cut at 500 characters, in hex for an integer too
+long to write in decimal. :func:`parse_yaml` cuts the text of an error PyYAML raised at 200
+characters: the whole text of a construction error, and each of the context, problem and note of
+a YAML error, whose class and marks it keeps.
 """
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import math
 import os
@@ -90,10 +96,16 @@ _SCALAR_KEY_TAGS: Final[frozenset[str]] = frozenset(
     for suffix in ("str", "int", "float", "bool", "null", "binary", "timestamp")
 )
 
-#: How much of a key a message shows: its repr, cut at this many characters.
+#: How much of a key a message shows: its repr, or its hex for an int too long to write in
+#: decimal, cut at this many characters.
 _KEY_SHOWN_CHARACTERS: Final[int] = 40
 
-#: How much of the text of the error PyYAML's construction raised a message shows.
+#: How much of a value a message shows: its repr, or its hex for an int too long to write in
+#: decimal, cut at this many characters.
+_VALUE_SHOWN_CHARACTERS: Final[int] = 500
+
+#: How much a message shows of the text of the error PyYAML's construction raised, and of each of
+#: the context, problem and note of a YAML error PyYAML raised.
 _DETAIL_SHOWN_CHARACTERS: Final[int] = 200
 
 #: Repository-root ``params/`` directory. Resolved from this file's location so
@@ -169,9 +181,103 @@ def _shown_key(key: Any) -> str:
         shown = repr(key)
     except ValueError:  # an int past Python's limit on decimal digits
         shown = hex(key)
-    if len(shown) > _KEY_SHOWN_CHARACTERS:
-        shown = shown[:_KEY_SHOWN_CHARACTERS] + "…"
-    return shown
+    return _cut(shown, _KEY_SHOWN_CHARACTERS)
+
+
+def _cut(text: str, limit: int) -> str:
+    """``text``, or its first ``limit`` characters followed by "…" when it is longer."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+class _ValueFullError(Exception):
+    """The text of a value being written is already longer than the cut."""
+
+
+def _pieces(value: Any) -> Iterator[tuple[bool, Any]]:
+    """The pieces ``repr`` writes for a tuple, list, dict or read-only mapping, in order.
+
+    Each piece is ``(False, text)`` for text written as it stands, or ``(True, element)`` for an
+    element, key or value that is itself written in turn.
+    """
+    kind = type(value)
+    if kind is MappingProxyType:
+        yield False, "mappingproxy("
+        yield from _pieces(dict(value))
+        yield False, ")"
+    elif kind is dict:
+        yield False, "{"
+        for index, (k, v) in enumerate(value.items()):
+            if index:
+                yield False, ", "
+            yield True, k
+            yield False, ": "
+            yield True, v
+        yield False, "}"
+    else:
+        opening, closing = ("(", ")") if kind is tuple else ("[", "]")
+        yield False, opening
+        for index, element in enumerate(value):
+            if index:
+                yield False, ", "
+            yield True, element
+        if kind is tuple and len(value) == 1:
+            yield False, ","
+        yield False, closing
+
+
+def _write_value(value: Any, parts: list[str]) -> None:
+    """Append to ``parts`` the text of ``value`` as :func:`_shown_value` shows it, before the cut.
+
+    A tuple, list, dict or read-only mapping of exactly that type is written piece by piece with
+    an explicit stack, so nesting them to any depth does not recurse; a read-only mapping is
+    written as one over a dict of its items. Any other value is written whole with ``repr``; an
+    exception from it propagates, except an int's ``ValueError``, which gives the int's ``hex``.
+    Raises :class:`_ValueFullError` as soon as the text appended is longer than the cut.
+    """
+    size = 0
+    stack: list[Iterator[tuple[bool, Any]]] = [iter([(True, value)])]
+    while stack:
+        for is_element, item in stack[-1]:
+            if not is_element:
+                text = item
+            elif type(item) in (tuple, list, dict, MappingProxyType):
+                stack.append(_pieces(item))
+                break
+            else:
+                try:
+                    text = repr(item)
+                except ValueError:  # an int past Python's limit on decimal digits
+                    if not isinstance(item, int):
+                        raise
+                    text = hex(item)
+            parts.append(text)
+            size += len(text)
+            if size > _VALUE_SHOWN_CHARACTERS:
+                raise _ValueFullError
+        else:
+            stack.pop()
+
+
+def _shown_value(value: Any) -> str:
+    """``repr(value)`` as a message shows it, with a long one cut.
+
+    For a value the loader builds (scalars, tuples, lists, dicts and read-only mappings over
+    dicts, none of a subclass and none holding itself) the text is ``repr(value)``, with an int
+    too long to write in decimal in hex, cut to ``_VALUE_SHOWN_CHARACTERS`` characters followed
+    by "…" when it is longer. A tuple, list, dict or read-only mapping of exactly that type is
+    written piece by piece, and the writing stops once the text is longer than the cut, so YAML
+    aliases cannot make it long. Any other value is written whole with ``repr`` before it is cut.
+
+    Raises:
+        Exception: Whatever ``repr`` raises for a value written whole, except the ``ValueError``
+            of an int, which is shown in hex.
+    """
+    parts: list[str] = []
+    with contextlib.suppress(_ValueFullError):
+        _write_value(value, parts)
+    return _cut("".join(parts), _VALUE_SHOWN_CHARACTERS)
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -284,7 +390,10 @@ def parse_yaml(text: str) -> Any:
             while building the document, such as a malformed scalar or nesting too deep to
             build. The original exception is its ``__cause__``. The message quotes that
             exception's text; a text longer than 200 characters is cut to 200, followed by "…".
-        yaml.YAMLError: Any other YAML parse failure, unchanged.
+        yaml.YAMLError: Any other YAML parse failure. A context, problem or note longer than 200
+            characters is cut to 200, followed by "…", in a new error of the same class with the
+            same marks, whose ``__cause__`` is the original; an error with no such field is
+            raised unchanged.
 
     A malformed key or a repeated key in a nested mapping may be reported
     ahead of a syntax error later in the text, and a repeat made through an
@@ -293,12 +402,20 @@ def parse_yaml(text: str) -> Any:
     """
     try:
         return yaml.load(text, Loader=_UniqueKeyLoader)
-    except (DuplicateYamlKeyError, yaml.YAMLError):
+    except DuplicateYamlKeyError:
+        raise
+    except yaml.MarkedYAMLError as exc:
+        fields = (exc.context, exc.problem, exc.note)
+        if not any(isinstance(f, str) and len(f) > _DETAIL_SHOWN_CHARACTERS for f in fields):
+            raise
+        context, problem, note = (
+            _cut(f, _DETAIL_SHOWN_CHARACTERS) if isinstance(f, str) else f for f in fields
+        )
+        raise type(exc)(context, exc.context_mark, problem, exc.problem_mark, note) from exc
+    except yaml.YAMLError:
         raise
     except Exception as exc:
-        detail = str(exc)
-        if len(detail) > _DETAIL_SHOWN_CHARACTERS:
-            detail = detail[:_DETAIL_SHOWN_CHARACTERS] + "…"
+        detail = _cut(str(exc), _DETAIL_SHOWN_CHARACTERS)
         raise YamlConstructionError(
             f"the document could not be built: {type(exc).__name__}: {detail}"
         ) from exc
@@ -452,12 +569,14 @@ def integer_value(value: Any, where: str) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MalformedParamFileError(
-            f"{where}: expected an integer, found {type(value).__name__} ({value!r})."
+            f"{where}: expected an integer, found {type(value).__name__} ({_shown_value(value)})."
         )
     if not is_finite(value):
-        raise MalformedParamFileError(f"{where}: expected a finite number, found {value!r}.")
+        raise MalformedParamFileError(
+            f"{where}: expected a finite number, found {_shown_value(value)}."
+        )
     if not float(value).is_integer():
-        raise MalformedParamFileError(f"{where}: expected an integer, found {value!r}.")
+        raise MalformedParamFileError(f"{where}: expected an integer, found {_shown_value(value)}.")
     if isinstance(value, int):
         return value
     return int(value)
@@ -534,11 +653,12 @@ class ParamSet:
         value = self.get(path)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a number, found {type(value).__name__} ({value!r})."
+                f"{self._where(path)}: expected a number, found "
+                f"{type(value).__name__} ({_shown_value(value)})."
             )
         if not is_finite(value):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a finite number, found {value!r}."
+                f"{self._where(path)}: expected a finite number, found {_shown_value(value)}."
             )
         return float(value)
 
@@ -557,7 +677,8 @@ class ParamSet:
         value = self.get(path)
         if not isinstance(value, tuple):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a list, found {type(value).__name__} ({value!r})."
+                f"{self._where(path)}: expected a list, found "
+                f"{type(value).__name__} ({_shown_value(value)})."
             )
         return value
 
@@ -575,11 +696,12 @@ class ParamSet:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise MalformedParamFileError(
                     f"{self._where(path)}: element {index} is "
-                    f"{type(value).__name__} ({value!r}), expected a number."
+                    f"{type(value).__name__} ({_shown_value(value)}), expected a number."
                 )
             if not is_finite(value):
                 raise MalformedParamFileError(
-                    f"{self._where(path)}: element {index} is {value!r}, expected a finite number."
+                    f"{self._where(path)}: element {index} is {_shown_value(value)}, "
+                    "expected a finite number."
                 )
             out.append(float(value))
         return tuple(out)
@@ -614,7 +736,7 @@ class ParamSet:
         if not isinstance(table, Mapping):
             raise MalformedParamFileError(
                 f"{self._where(path)}: expected a mapping, found "
-                f"{type(table).__name__} ({table!r})."
+                f"{type(table).__name__} ({_shown_value(table)})."
             )
         if not table:
             raise MalformedParamFileError(

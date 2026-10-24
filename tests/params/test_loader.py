@@ -2273,3 +2273,490 @@ def test_too_deep_to_freeze_is_reported_at_the_place_given() -> None:
 
     assert str(excinfo.value) == _TOO_DEEP_MESSAGE.format(place="at m.n")
     assert isinstance(excinfo.value.__cause__, RecursionError)
+
+
+# =============================================================================
+# Values and YAML errors a message shows are bounded
+# =============================================================================
+
+_VALUE_CUT: Final[int] = 500
+_DETAIL_CUT: Final[int] = 200
+
+
+def _cut_oracle(text: str, n: int) -> str:
+    """``text`` cut at ``n`` characters and followed by "…" when longer.
+
+    The tests apply it to the text a value is shown as (its repr, or the hex of an int too long
+    for decimal) and to the fields of a YAML error.
+    """
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def _shown(value: Any) -> str:
+    from engine.params.loader import _shown_value
+
+    return _shown_value(value)
+
+
+def _repr_of_length(wrap: Callable[[str], Any], length: int) -> Any:
+    """``wrap(text)`` with ``text`` a run of ``x`` chosen so that ``repr`` is ``length`` long."""
+    base = len(repr(wrap("")))
+    value = wrap("x" * (length - base))
+    assert len(repr(value)) == length
+    return value
+
+
+_SHOWN_CORPUS: Final[tuple[Any, ...]] = (
+    pytest.param("it's", id="str-single-quote"),
+    pytest.param('say "hi"', id="str-double-quote"),
+    pytest.param('it\'s "both"', id="str-both-quotes"),
+    pytest.param("café ☃ " + chr(0xA0) + chr(0x200B), id="str-non-ascii"),
+    pytest.param("tab\tnew\nnull\x00bell\x07", id="str-control"),
+    pytest.param(b"\x00\xff'\"abc", id="bytes-escapes"),
+    pytest.param(65, id="int"),
+    pytest.param(10**400, id="int-401-digits"),
+    pytest.param(0.1, id="float"),
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="inf"),
+    pytest.param(-math.inf, id="-inf"),
+    pytest.param(-0.0, id="negative-zero"),
+    pytest.param(True, id="true"),
+    pytest.param(False, id="false"),
+    pytest.param(None, id="none"),
+    pytest.param(datetime.date(2030, 1, 2), id="date"),
+    pytest.param(datetime.datetime(2030, 1, 2, 3, 4, 5), id="datetime"),
+    pytest.param((), id="empty-tuple"),
+    pytest.param((1,), id="one-tuple"),
+    pytest.param((1, 2), id="pair"),
+    pytest.param(((1,), ((), (2, 3))), id="nested-tuples"),
+    pytest.param(MappingProxyType({}), id="empty-proxy"),
+    pytest.param(MappingProxyType({"a": 1, "b": (1, 2)}), id="proxy"),
+    pytest.param((MappingProxyType({"a": (MappingProxyType({}),)}), 2), id="proxies-in-tuples"),
+    pytest.param(
+        MappingProxyType({"a": (1,), "b": MappingProxyType({"c": ()})}), id="tuples-in-proxies"
+    ),
+    pytest.param({}, id="empty-dict"),
+    pytest.param({"a": 1, "b": [1, {"c": (2,)}]}, id="dict-nested"),
+    pytest.param([], id="empty-list"),
+    pytest.param([1, [2, [3, ()]], {"k": "v"}], id="list-nested"),
+    pytest.param({1: "a", (2, 3): ["b"]}, id="dict-nonstring-keys"),
+    *(pytest.param(_repr_of_length(lambda t: t, n), id=f"str-repr-{n}") for n in (499, 500, 501)),
+    *(
+        pytest.param(_repr_of_length(lambda t: (t,), n), id=f"tuple-repr-{n}")
+        for n in (499, 500, 501)
+    ),
+    *(
+        pytest.param(_repr_of_length(lambda t: [t], n), id=f"list-repr-{n}")
+        for n in (499, 500, 501)
+    ),
+    *(
+        pytest.param(_repr_of_length(lambda t: MappingProxyType({"k": t}), n), id=f"proxy-repr-{n}")
+        for n in (499, 500, 501)
+    ),
+    pytest.param(("a" * 300, "b" * 300), id="cut-inside-a-nested-element"),
+    pytest.param((1, ("a" * 300, ["b" * 300])), id="cut-inside-a-deeper-element"),
+)
+
+
+@pytest.mark.parametrize("value", _SHOWN_CORPUS)
+def test_shown_value_matches_repr_cut_at_500(value: Any) -> None:
+    assert _shown(value) == _cut_oracle(repr(value), _VALUE_CUT)
+
+
+@pytest.mark.parametrize("length", [499, 500, 501])
+def test_shown_value_corpus_straddles_the_cut(length: int) -> None:
+    for wrap in (lambda t: t, lambda t: (t,), lambda t: [t], lambda t: MappingProxyType({"k": t})):
+        assert len(repr(_repr_of_length(wrap, length))) == length
+    assert len(_shown(_repr_of_length(lambda t: (t,), 501))) == _VALUE_CUT + 1
+    assert not _shown(_repr_of_length(lambda t: (t,), 500)).endswith("…")
+
+
+def _fan_out_text(levels: int) -> str:
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, levels):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def test_shown_value_of_the_six_level_fan_out_is_its_repr_cut_at_500(tmp_path: Path) -> None:
+    _write_federal(tmp_path, _fan_out_text(6))
+    federal = load_year(2030, tmp_path)["federal"]
+    value = federal.get("l5")
+
+    shown = _shown(value)
+
+    assert len(shown) == _VALUE_CUT + 1
+    assert shown == _cut_oracle(repr(value), _VALUE_CUT)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_shown_value_shows_an_int_too_long_for_decimal_in_hex() -> None:
+    huge = 10**700
+    with pytest.raises(ValueError):
+        repr(huge)
+    assert _shown(huge) == _cut_oracle(hex(huge), _VALUE_CUT)
+    assert _shown(-huge) == _cut_oracle(hex(-huge), _VALUE_CUT)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+@pytest.mark.parametrize(
+    ("build", "expected"),
+    [
+        pytest.param(lambda n: (1, n, 2), lambda n: f"(1, {hex(n)}, 2)", id="tuple"),
+        pytest.param(lambda n: [n], lambda n: f"[{hex(n)}]", id="list"),
+        pytest.param(lambda n: (n,), lambda n: f"({hex(n)},)", id="one-tuple"),
+        pytest.param(
+            lambda n: MappingProxyType({"k": n}),
+            lambda n: f"mappingproxy({{'k': {hex(n)}}})",
+            id="proxy",
+        ),
+        pytest.param(lambda n: {n: 1}, lambda n: f"{{{hex(n)}: 1}}", id="dict-key"),
+    ],
+)
+def test_shown_value_shows_an_int_in_a_container_in_hex(
+    build: Callable[[int], Any], expected: Callable[[int], str]
+) -> None:
+    huge = 10**700
+    assert _shown(build(huge)) == _cut_oracle(expected(huge), _VALUE_CUT)
+
+
+def test_shown_value_keeps_a_value_error_that_is_not_a_long_int() -> None:
+    class Unprintable:
+        def __repr__(self) -> str:
+            raise ValueError("no repr")
+
+    with pytest.raises(ValueError, match="no repr"):
+        _shown(Unprintable())
+
+
+_LONG = "x" * 600
+
+
+def _fan_out(levels: int) -> tuple[Any, ...]:
+    """The tenfold fan-out a YAML file of aliases loads as, built with shared tuples."""
+    value: tuple[Any, ...] = ("x",) * 10
+    for _ in range(levels - 1):
+        value = (value,) * 10
+    return value
+
+
+def _long_shown(value: Any) -> str:
+    shown = _cut_oracle(repr(value), _VALUE_CUT)
+    assert shown.endswith("…")
+    return shown
+
+
+def test_number_message_bounds_a_value_that_is_not_a_number() -> None:
+    fan = _fan_out(6)
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": fan}).number("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: expected a number, found tuple ({_long_shown(fan)})."
+    )
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_number_message_bounds_a_value_that_is_not_finite() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": 10**600}).number("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: expected a finite number, found {_long_shown(10**600)}."
+    )
+
+
+def test_sequence_message_bounds_a_value_that_is_not_a_list() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": _LONG}).sequence("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: expected a list, found str ({_long_shown(_LONG)})."
+    )
+
+
+def test_numbers_message_bounds_an_element_that_is_not_a_number() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": (1.0, _LONG)}).numbers("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: element 1 is str ({_long_shown(_LONG)}), expected a number."
+    )
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_numbers_message_bounds_an_element_that_is_not_finite() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": (1.0, 10**600)}).numbers("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: element 1 is {_long_shown(10**600)}, expected a finite number."
+    )
+
+
+def test_integer_keys_message_bounds_a_value_that_is_not_a_mapping() -> None:
+    value = _fan_out(6)
+    with pytest.raises(MalformedParamFileError) as raised:
+        _synthetic({"key": value}).integer_keys("key")
+    assert str(raised.value) == (
+        f"{_where('key')}: expected a mapping, found tuple ({_long_shown(value)})."
+    )
+
+
+def test_integer_value_message_bounds_a_value_that_is_not_a_number() -> None:
+    fan = _fan_out(6)
+    with pytest.raises(MalformedParamFileError) as raised:
+        integer_value(fan, "where")
+    assert str(raised.value) == f"where: expected an integer, found tuple ({_long_shown(fan)})."
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_integer_value_message_bounds_a_value_that_is_not_finite() -> None:
+    with pytest.raises(MalformedParamFileError) as raised:
+        integer_value(10**600, "where")
+    assert str(raised.value) == f"where: expected a finite number, found {_long_shown(10**600)}."
+
+
+def test_integer_value_message_for_a_fractional_float_is_the_whole_repr() -> None:
+    # A float's repr is never long, so this test pins the message unchanged; the next test, with
+    # a float whose repr is long, proves the branch goes through the cut.
+    with pytest.raises(MalformedParamFileError) as raised:
+        integer_value(1.5, "where")
+    assert str(raised.value) == "where: expected an integer, found 1.5."
+
+
+def test_integer_value_message_for_a_fractional_float_goes_through_the_cut() -> None:
+    class LongRepr(float):
+        def __repr__(self) -> str:
+            return "1." + "5" * 600
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        integer_value(LongRepr(1.5), "where")
+    assert str(raised.value) == f"where: expected an integer, found {'1.' + '5' * 498}…."
+
+
+# --- YAML errors -------------------------------------------------------------
+
+_LONG_ALIAS: Final[str] = "a: *" + "x" * 5000 + "\n"
+_LONG_TAG: Final[str] = "a: !" + "x" * 5000 + " 1\n"
+_LONG_ANCHOR: Final[str] = "a: &" + "x" * 5000 + " 1\nb: &" + "x" * 5000 + " 2\n"
+_LONG_HANDLE: Final[str] = "a: !" + "x" * 5000 + "!y 1\n"
+
+
+def _original_yaml_error(text: str) -> yaml.MarkedYAMLError:
+    with pytest.raises(yaml.MarkedYAMLError) as raised:
+        yaml.load(text, Loader=yaml.SafeLoader)
+    return raised.value
+
+
+@pytest.mark.parametrize(
+    ("text", "cls", "field"),
+    [
+        pytest.param(_LONG_ALIAS, yaml.composer.ComposerError, "problem", id="undefined-alias"),
+        pytest.param(_LONG_TAG, yaml.constructor.ConstructorError, "problem", id="unknown-tag"),
+        pytest.param(_LONG_ANCHOR, yaml.composer.ComposerError, "context", id="reused-anchor"),
+        pytest.param(_LONG_HANDLE, yaml.parser.ParserError, "problem", id="long-tag-handle"),
+    ],
+)
+def test_parse_yaml_cuts_a_long_field_of_a_yaml_error(text: str, cls: type, field: str) -> None:
+    original = _original_yaml_error(text)
+    assert type(original) is cls
+
+    with pytest.raises(yaml.MarkedYAMLError) as caught:
+        parse_yaml(text)
+    raised = caught.value
+
+    assert type(raised) is type(original)
+    for name in ("context", "problem", "note"):
+        expected = getattr(original, name)
+        if name == field:
+            assert len(expected) > _DETAIL_CUT
+            expected = _cut_oracle(expected, _DETAIL_CUT)
+        assert getattr(raised, name) == expected
+    assert str(raised.context_mark) == str(original.context_mark)
+    assert str(raised.problem_mark) == str(original.problem_mark)
+    assert (raised.context_mark is None) == (original.context_mark is None)
+    assert (raised.problem_mark is None) == (original.problem_mark is None)
+    cause = raised.__cause__
+    assert type(cause) is type(original)
+    assert getattr(cause, field) == getattr(original, field)
+    assert len(str(raised)) < 1000
+
+
+def test_parse_yaml_raises_a_short_yaml_error_unchanged() -> None:
+    text = "a: [1, 2\n"
+    original = _original_yaml_error(text)
+
+    with pytest.raises(yaml.YAMLError) as caught:
+        parse_yaml(text)
+
+    assert type(caught.value) is type(original)
+    assert caught.value.__cause__ is None
+    assert str(caught.value) == str(original)
+
+
+def _alias_text_with_problem_of_length(length: int) -> str:
+    overhead = len(_original_yaml_error("a: *x\n").problem) - 1
+    return "a: *" + "x" * (length - overhead) + "\n"
+
+
+def test_parse_yaml_does_not_cut_a_field_of_exactly_200_characters() -> None:
+    text = _alias_text_with_problem_of_length(_DETAIL_CUT)
+    original = _original_yaml_error(text)
+    assert len(original.problem) == _DETAIL_CUT
+
+    with pytest.raises(yaml.MarkedYAMLError) as caught:
+        parse_yaml(text)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.problem == original.problem
+    assert str(caught.value) == str(original)
+
+
+def test_parse_yaml_cuts_a_field_of_201_characters() -> None:
+    text = _alias_text_with_problem_of_length(_DETAIL_CUT + 1)
+    original = _original_yaml_error(text)
+    assert len(original.problem) == _DETAIL_CUT + 1
+
+    with pytest.raises(yaml.MarkedYAMLError) as caught:
+        parse_yaml(text)
+
+    assert caught.value.problem == _cut_oracle(original.problem, _DETAIL_CUT)
+    assert caught.value.problem.endswith("…")
+    assert type(caught.value.__cause__) is type(original)
+
+
+def test_load_year_bounds_a_long_yaml_error(tmp_path: Path) -> None:
+    path = _write_federal(tmp_path, _LONG_ALIAS)
+
+    with pytest.raises(MalformedParamFileError) as caught:
+        load_year(2030, tmp_path)
+
+    message = str(caught.value)
+    assert len(message) < 1000 + len(str(path))
+    assert "…" in message
+    assert "line 1, column" in message
+
+
+class _ReprRecorder:
+    """An element that notes whether anyone asked for its repr."""
+
+    def __init__(self) -> None:
+        self.asked = False
+
+    def __repr__(self) -> str:
+        self.asked = True
+        return "recorder"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda later: ("x" * 600, later), id="tuple"),
+        pytest.param(lambda later: ["x" * 600, later], id="list"),
+        pytest.param(lambda later: {"k": "x" * 600, "later": later}, id="dict"),
+        pytest.param(lambda later: MappingProxyType({"k": "x" * 600, "later": later}), id="proxy"),
+        pytest.param(lambda later: (("x" * 600,), later), id="nested"),
+    ],
+)
+def test_shown_value_does_not_write_an_element_after_the_cut(
+    build: Callable[[_ReprRecorder], Any],
+) -> None:
+    later = _ReprRecorder()
+
+    shown = _shown(build(later))
+
+    assert len(shown) == _VALUE_CUT + 1
+    assert not later.asked
+
+
+def _nested(kind: str, depth: int) -> Any:
+    value: Any = 1
+    for _ in range(depth):
+        if kind == "tuple":
+            value = (value,)
+        elif kind == "list":
+            value = [value]
+        elif kind == "dict":
+            value = {"a": value}
+        else:
+            value = MappingProxyType({"a": value})
+    return value
+
+
+@pytest.mark.parametrize("depth", [600, 2000])
+@pytest.mark.parametrize("kind", ["tuple", "list", "dict", "proxy"])
+def test_shown_value_matches_repr_at_any_nesting_depth(kind: str, depth: int) -> None:
+    # Only the tuple and list walks go deep (501 levels); the dict and proxy cases pin the output.
+    # The deep-stack test below proves the walk does not recurse.
+    value = _nested(kind, depth)
+    assert _shown(value) == _cut_oracle(repr(value), _VALUE_CUT)
+
+
+def test_shown_value_ends_on_a_value_that_contains_itself() -> None:
+    # The loader refuses a value that contains itself, so this only pins that the walk ends: every
+    # step writes at least one character and the cut stops it.
+    looped_list: list[Any] = []
+    looped_list.append(looped_list)
+    looped_dict: dict[str, Any] = {}
+    looped_dict["a"] = looped_dict
+    for value in (looped_list, looped_dict):
+        shown = _shown(value)
+        assert len(shown) == _VALUE_CUT + 1
+        assert shown.endswith("…")
+
+
+@pytest.mark.parametrize("kind", ["tuple", "list"])
+def test_shown_value_does_not_recurse_when_called_deep_in_the_stack(kind: str) -> None:
+    value = _nested(kind, 600)
+    expected = _cut_oracle(repr(value), _VALUE_CUT)
+    depth = 0
+    frame: Any = sys._getframe()
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth + 100)
+    try:
+        shown = _shown(value)
+    finally:
+        sys.setrecursionlimit(old_limit)
+
+    assert shown == expected
+
+
+def test_parse_yaml_cuts_a_long_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    import engine.params.loader as loader
+
+    original = yaml.composer.ComposerError(None, None, "p", None, "n" * 300)
+
+    def _raise_error(*_args: object, **_kwargs: object) -> None:
+        raise original
+
+    monkeypatch.setattr(loader._UniqueKeyLoader, "compose_mapping_node", _raise_error)
+
+    with pytest.raises(yaml.composer.ComposerError) as caught:
+        parse_yaml("a: 1\n")
+
+    assert type(caught.value) is yaml.composer.ComposerError
+    assert caught.value.note == "n" * _DETAIL_CUT + "…"
+    assert caught.value.problem == "p"
+    assert caught.value.context is None
+    assert caught.value.__cause__ is original
+    assert original.note == "n" * 300
+
+
+def test_parse_yaml_raises_a_yaml_error_without_marks_unchanged() -> None:
+    text = "a: \x07\n"
+    with pytest.raises(yaml.YAMLError) as original:
+        yaml.load(text, Loader=yaml.SafeLoader)
+    with pytest.raises(yaml.reader.ReaderError) as caught:
+        parse_yaml(text)
+
+    assert type(caught.value) is yaml.reader.ReaderError
+    assert str(caught.value) == str(original.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_shown_value_raises_for_a_long_int_inside_a_subclass_container() -> None:
+    class Row(tuple):  # type: ignore[type-arg]
+        pass
+
+    with pytest.raises(ValueError):
+        _shown(Row((10**700,)))

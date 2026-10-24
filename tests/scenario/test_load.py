@@ -1303,3 +1303,10 @@ def test_a_repeated_json_key_is_shown_cut_at_forty_characters(length: int, shown
         f"request body: key {shown} appears more than once in this object. JSON parsers "
         "differ on which value they keep, so one of them would be discarded silently."
     )
+
+
+def test_scenario_from_text_bounds_a_long_yaml_error() -> None:
+    with pytest.raises(MalformedScenarioFileError) as caught:
+        scenario_from_text("a: *" + "x" * 5000 + "\n", "request body", syntax="yaml")
+    assert len(str(caught.value)) < 1000
+    assert "…" in str(caught.value)
