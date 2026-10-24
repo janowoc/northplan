@@ -9,12 +9,13 @@ why, and no editor call is sent. Run is off while the form is opening or a Pytho
 out. On the API page the calls are separate requests served alongside the run, so the form
 stays usable during a run and Run stays on while a Python edit is out. A Pyodide run is held
 by wrapping ``Worker.prototype.postMessage`` so the simulate message is kept back; an editor
-call is parked the same way by name. A disabled fieldset is read from its attribute, because
-Playwright reports it as enabled.
+call is parked the same way by name. A starting file's request is held with ``page.route``.
+A disabled fieldset is read from its attribute, because Playwright reports it as enabled.
 """
 
 from __future__ import annotations
 
+import pytest
 from form_helpers import (
     ENGINE_TIMEOUT_MS,
     RUN_TIMEOUT_MS,
@@ -23,6 +24,7 @@ from form_helpers import (
     fill,
     goto_ready,
     open_example,
+    problem,
     state,
     textarea,
     wait_clean,
@@ -206,6 +208,42 @@ def test_run_is_off_while_the_form_opens(
     unpark(page)
     wait_clean(page)
     expect(page.locator("#run")).to_be_enabled()
+
+
+@pytest.mark.parametrize(
+    ("name", "file"),
+    [("New scenario", "minimal"), ("Open example", "example")],
+    ids=["new-scenario", "open-example"],
+)
+def test_run_is_off_while_a_starting_file_loads(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site, name: str, file: str
+) -> None:
+    page = ready_page(pyodide_page, pyodide_site)
+    held: list[Route] = []
+    page.route(f"**/{file}.yaml", lambda route: held.append(route))
+    expect(page.locator("#run")).to_be_enabled()
+    button(page, name).click()
+    wait_until_held(page, held)
+    expect(page.locator("#run")).to_be_disabled()
+    held[0].fallback()
+    wait_clean(page)
+    expect(page.locator("#run")).to_be_enabled()
+
+
+def test_run_comes_back_when_a_starting_file_fails_to_load(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page = ready_page(pyodide_page, pyodide_site)
+    held: list[Route] = []
+    page.route("**/minimal.yaml", lambda route: held.append(route))
+    button(page, "New scenario").click()
+    wait_until_held(page, held)
+    expect(page.locator("#run")).to_be_disabled()
+    held[0].fulfill(status=404, body="")
+    expect(problem(page)).to_have_text("Could not open the file: minimal.yaml: 404 Not Found")
+    expect(page.locator("#run")).to_be_enabled()
+    for name in OPEN_BUTTONS:
+        expect(button(page, name)).to_be_enabled()
 
 
 def test_run_is_off_while_a_python_edit_is_out(
