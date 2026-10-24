@@ -17,7 +17,7 @@ Invariants:
     * :func:`check` validates YAML, never the mapping: the text :func:`emit` writes for it,
       then, when that passes, the text :func:`emit` writes for the mapping :func:`parse` would
       open from that text. No errors means exactly the returned text passes everything a run
-      checks first.
+      checks first and is at most :data:`MAX_BODY_BYTES` bytes of UTF-8.
     * An edit works on a deep copy and returns it; its argument is never changed. Every
       reader of a mapping tolerates a half-edited one and contributes nothing for a missing
       key, a wrong type or an index out of range.
@@ -68,6 +68,7 @@ from engine.scenario.schema import (
 
 __all__ = [
     "FLATTENED",
+    "MAX_BODY_BYTES",
     "EditRefusedError",
     "add_asset_class",
     "check",
@@ -80,6 +81,10 @@ __all__ = [
     "rename",
     "schema",
 ]
+
+# The most a run's request body may hold on the local server; check refuses YAML over it so
+# that a clean check runs there too.
+MAX_BODY_BYTES = 1 << 20
 
 Kind = Literal["person", "asset-class"]
 
@@ -349,8 +354,10 @@ def check(mapping: Any, *, params_root: Path) -> dict[str, Any]:
 
     Returns:
         ``{"yaml": text, "errors": [...]}``; each error is ``{"loc": [...], "message": str}``.
-        The text is what is validated, so empty ``errors`` means exactly ``yaml`` passes. When
-        the first text has errors, ``yaml`` is that text.
+        The text is what is validated, so empty ``errors`` means exactly ``yaml`` passes and is
+        at most :data:`MAX_BODY_BYTES` bytes of UTF-8. When the first text has errors, ``yaml``
+        is that text. A returned text over that size with no other errors is refused with one
+        error at ``loc`` ``[]``.
 
     Raises:
         yaml.representer.RepresenterError: ``mapping`` holds a value ``yaml.SafeDumper``
@@ -363,7 +370,15 @@ def check(mapping: Any, *, params_root: Path) -> dict[str, Any]:
     if errors or scenario is None:
         return {"yaml": text, "errors": errors}
     typed = emit(_opened(text, scenario))
-    return {"yaml": typed, "errors": _errors(typed, "the form", params_root)[1]}
+    typed_errors = _errors(typed, "the form", params_root)[1]
+    size = len(typed.encode("utf-8"))
+    if not typed_errors and size > MAX_BODY_BYTES:
+        message = (
+            f"the form's YAML is {size:,} bytes, more than the {MAX_BODY_BYTES:,} "
+            "a run's request may hold; a scenario is a few kilobytes."
+        )
+        typed_errors = [{"loc": [], "message": message}]
+    return {"yaml": typed, "errors": typed_errors}
 
 
 # --- the schema -----------------------------------------------------------------------

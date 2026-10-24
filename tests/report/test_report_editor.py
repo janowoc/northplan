@@ -714,6 +714,113 @@ def test_check_validates_the_retyped_text_it_returns(monkeypatch: pytest.MonkeyP
     assert error["message"].startswith("No parameters for tax year 2040")
 
 
+def _accented() -> Any:
+    m = minimal()
+    m["name"] = "Élodie et François"
+    return m
+
+
+def _size_error(n: str, limit: str) -> dict[str, Any]:
+    return {
+        "loc": [],
+        "message": (
+            f"the form's YAML is {n} bytes, more than the {limit} "
+            "a run's request may hold; a scenario is a few kilobytes."
+        ),
+    }
+
+
+def test_check_passes_a_text_of_exactly_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    m = _accented()
+    size = len(check(m, params_root=ROOT)["yaml"].encode("utf-8"))
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", size)
+    assert check(m, params_root=ROOT)["errors"] == []
+
+
+def test_check_refuses_a_text_one_byte_over_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    m = _accented()
+    text = check(m, params_root=ROOT)["yaml"]
+    size = len(text.encode("utf-8"))
+    assert size == 934
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", size - 1)
+    assert len(text) <= size - 1
+    result = check(m, params_root=ROOT)
+    assert result["yaml"] == text
+    assert result["errors"] == [_size_error("934", "933")]
+
+
+def test_check_measures_the_text_it_returns_not_the_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m = minimal()
+    _set_at(m, ("spending", "schedule", 0, "annual"), "1e15")
+    first = len(emit(m).encode("utf-8"))
+    returned = check(m, params_root=ROOT)["yaml"]
+    assert first < len(returned.encode("utf-8"))
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", first)
+    result = check(m, params_root=ROOT)
+    assert result["yaml"] == returned
+    assert result["errors"] == [
+        _size_error(f"{len(returned.encode('utf-8')):,}", f"{first:,}"),
+    ]
+
+
+def test_check_adds_no_size_error_to_a_first_text_with_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    m = minimal()
+    _set_at(m, ("household", "persons", 0, "birth_month"), 13)
+    expected = check(m, params_root=ROOT)
+    assert expected["errors"] != []
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", 1)
+    result = check(m, params_root=ROOT)
+    assert result == expected
+    assert all("bytes" not in error["message"] for error in result["errors"])
+
+
+def test_check_adds_no_size_error_to_a_retyped_text_with_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = editor.emit
+    calls: list[int] = []
+
+    def counting(mapping: Any) -> str:
+        calls.append(1)
+        text = real(mapping)
+        if len(calls) == 2:
+            return changed(text, "start_year: 2026", "start_year: 2040")
+        return text
+
+    monkeypatch.setattr(editor, "emit", counting)
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", 1)
+    m = minimal()
+    _set_at(m, ("seed",), "1_000")
+    result = check(m, params_root=ROOT)
+    assert len(calls) == 2
+    (error,) = result["errors"]
+    assert error["loc"] == []
+    assert error["message"].startswith("No parameters for tax year 2040")
+
+
+@pytest.mark.parametrize(
+    "path", sorted((REPO_ROOT / "scenarios").glob("*.yaml")), ids=lambda p: p.name
+)
+def test_check_differs_from_an_unbounded_check_only_by_the_size_error(
+    path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m = mapping_of(path.read_text(encoding="utf-8"))
+    real = check(m, params_root=ROOT)
+    assert real["errors"] == []
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", 10**12)
+    unbounded = check(m, params_root=ROOT)
+    assert unbounded == real
+    size = len(real["yaml"].encode("utf-8"))
+    monkeypatch.setattr(editor, "MAX_BODY_BYTES", size - 1)
+    refused = check(m, params_root=ROOT)
+    assert refused["yaml"] == real["yaml"]
+    assert refused["errors"] == [_size_error(f"{size:,}", f"{size - 1:,}")]
+
+
 def test_check_passes_a_routed_parameter_error_through(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise RoutedParameterError("x")

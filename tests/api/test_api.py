@@ -1675,6 +1675,30 @@ class TestEditor:
         assert len(errors) == 1
         assert str(tmp_path) in errors[0]["message"]
 
+    def test_check_refuses_a_text_too_large_for_the_local_server(self, client: TestClient) -> None:
+        mapping = editor.parse(
+            api.main.MINIMAL_PATH.read_text(encoding="utf-8"), params_root=api.main.PARAMS_ROOT
+        )["mapping"]
+        mapping["spending"]["schedule"] = [
+            {"from_year": 2026 + i, "annual": "1e15"} for i in range(22_000)
+        ]
+        body = json.dumps({"mapping": mapping}, separators=(",", ":")).encode()
+        assert len(body) <= api.main.MAX_BODY_BYTES
+        response = client.post("/api/editor/check", content=body, headers=JSON)
+        assert response.status_code == 200
+        assert response.json()["errors"] == [
+            {
+                "loc": [],
+                "message": (
+                    "the form's YAML is 1,136,918 bytes, more than the 1,048,576 "
+                    "a run's request may hold; a scenario is a few kilobytes."
+                ),
+            }
+        ]
+
+    def test_the_body_limit_is_the_editors(self) -> None:
+        assert api.main.MAX_BODY_BYTES is editor.MAX_BODY_BYTES
+
     @pytest.mark.parametrize(
         ("path", "headers", "body", "status", "detail"),
         [

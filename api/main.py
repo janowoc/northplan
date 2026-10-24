@@ -75,6 +75,7 @@ from engine.optimize.objective import OBJECTIVE_NAMES, select_objective
 from engine.optimize.search import search
 from engine.params.loader import DEFAULT_PARAMS_ROOT, ParamError
 from engine.scenario.schema import Scenario
+from report.editor import MAX_BODY_BYTES
 from report.editor_calls import answer
 from report.run import (
     PATHS_WITH_DETERMINISTIC,
@@ -90,7 +91,6 @@ MINIMAL_PATH = Path(__file__).resolve().parents[1] / "scenarios" / "minimal.yaml
 PARAMS_ROOT: Path = DEFAULT_PARAMS_ROOT
 TOKEN: str | None = None
 
-MAX_BODY_BYTES = 1 << 20
 _ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
 _RUN_LOCK = threading.Lock()
 
