@@ -177,13 +177,34 @@ def test_parse_reads_an_exponent_float_as_a_float() -> None:
     assert strict(m) == strict(example())
 
 
-def test_parse_normalises_an_integral_float_and_an_integer_flag() -> None:
+def test_parse_normalises_an_integral_float() -> None:
     seed = mapping_of(changed(EXAMPLE_TEXT, "seed: 42 ", "seed: 42.0 "))["seed"]
     assert seed == 42
     assert type(seed) is int
-    flag_text = changed(EXAMPLE_TEXT, "fill_pension_credit: true", "fill_pension_credit: 1")
-    flag = mapping_of(flag_text)["policies"][0]["withdrawal"]["fill_pension_credit"]
-    assert flag is True
+
+
+def test_parse_refuses_a_number_given_for_the_flag() -> None:
+    text = changed(EXAMPLE_TEXT, "fill_pension_credit: true", "fill_pension_credit: 1")
+    result = parse(text, params_root=ROOT)
+    assert result["mapping"] is None
+    assert result["errors"] == [
+        {
+            "loc": ["policies", 0, "withdrawal", "fill_pension_credit"],
+            "message": "Input should be a valid boolean",
+        }
+    ]
+
+
+def test_parse_refuses_a_flag_given_for_a_number() -> None:
+    result = parse(changed(EXAMPLE_TEXT, "seed: 42 ", "seed: true "), params_root=ROOT)
+    assert result["mapping"] is None
+    assert result["errors"] == [
+        {
+            "loc": ["seed"],
+            "message": "Value error, true and false are flags, not numbers; YAML also reads "
+            "yes, no, on and off as flags. Write the number.",
+        }
+    ]
 
 
 def test_parse_refuses_a_set() -> None:

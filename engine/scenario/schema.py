@@ -55,7 +55,15 @@ from types import MappingProxyType
 from typing import Annotated, Any, Final, Literal, Self, TypeVar
 
 import numpy as np
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictBool,
+    model_validator,
+)
 
 from engine.mc.moments import covariance_from_correlation, monthly_log_moments
 
@@ -148,21 +156,48 @@ def _freeze[V](mapping: Mapping[str, V]) -> Mapping[str, V]:
 #: ``FrozenMapping[Finite]``; nests as ``FrozenMapping[FrozenMapping[Finite]]``.
 FrozenMapping = Annotated[Mapping[str, _V], AfterValidator(_freeze)]
 
+
+def _refuse_non_number(value: Any) -> Any:
+    """Return ``value``, refusing a bool or bytes, which pydantic's lax mode reads as a number.
+
+    Raises:
+        ValueError: ``value`` is a bool or bytes.
+    """
+    if isinstance(value, bool):
+        raise ValueError(
+            "true and false are flags, not numbers; YAML also reads yes, no, on and off as "
+            "flags. Write the number."
+        )
+    if isinstance(value, bytes):
+        raise ValueError("binary data (!!binary) is not a number. Write the number.")
+    return value
+
+
+#: Refuses what pydantic would otherwise read as a number: a flag (``true`` as 1) or
+#: ``!!binary`` data (its text as digits). Number text such as ``"1_000"`` still passes; the
+#: scenario editor sends it. Every int and float in this schema is under it, as the last item of
+#: its ``Annotated`` so that the bounds before it stay in the JSON Schema. In the grid it wraps
+#: the ``int | float`` union, whose arms do not carry it: inside an arm it would put this
+#: function's name into that arm's error location.
+_NUMBER_ONLY = BeforeValidator(_refuse_non_number)
+
+#: An int that is not a flag or binary data.
+Integer = Annotated[int, _NUMBER_ONLY]
+
 #: A float that is neither infinite nor nan. Every float in this schema is
-#: finite, either through this alias or through ``allow_inf_nan=False``
-#: alongside its own bounds.
-Finite = Annotated[float, Field(allow_inf_nan=False)]
+#: finite, either through this alias or through its own ``allow_inf_nan=False``.
+Finite = Annotated[float, Field(allow_inf_nan=False), _NUMBER_ONLY]
 
 #: A finite dollar amount that cannot be negative. Real dollars of January of
 #: the scenario's start year, like every amount below except
 #: ``Person.prior_year_net_income`` and ``Person.net_income_two_years_prior``.
-Money = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+Money = Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY]
 
 #: A calendar month, January is 1.
-Month = Annotated[int, Field(ge=1, le=12)]
+Month = Annotated[int, Field(ge=1, le=12), _NUMBER_ONLY]
 
 #: A bare fraction in ``[0, 1]``, never a percentage.
-Fraction = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
+Fraction = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False), _NUMBER_ONLY]
 
 #: A two-letter jurisdiction code, e.g. ``"ab"``. Lower case, so that the
 #: string can be handed to ``ParamYear.province`` and reach a file name
@@ -191,10 +226,10 @@ class Employment(_Base):
         annual: Real dollars per year, before tax.
     """
 
-    from_year: int = Field(
+    from_year: Integer = Field(
         description="First calendar year this income is earned.",
     )
-    to_year: int = Field(
+    to_year: Integer = Field(
         description="Last calendar year this income is earned, inclusive.",
     )
     annual: Money = Field(
@@ -291,7 +326,7 @@ class DbPension(_Base):
         description="A label for this pension, unique for this person, used to tell pensions "
         "apart in results.",
     )
-    start_year: int = Field(
+    start_year: Integer = Field(
         description="Calendar year the pension begins.",
     )
     start_month: Month = Field(
@@ -310,7 +345,7 @@ class DbPension(_Base):
         description="Real dollars a year of a bridge benefit paid on top of the pension until "
         "the bridge age. Zero if there is none.",
     )
-    bridge_to_age_years: int | None = Field(
+    bridge_to_age_years: Integer | None = Field(
         default=None,
         description="Age the bridge benefit stops, usually the age the public pension it "
         "bridges to begins.",
@@ -632,7 +667,7 @@ class Person(_Base):
         description="A short name for this person, unique among every person and beneficiary. "
         "Elections, RESP subscribers and grid paths refer to it.",
     )
-    birth_year: int = Field(
+    birth_year: Integer = Field(
         description="Calendar year of birth.",
     )
     birth_month: Month = Field(
@@ -826,13 +861,13 @@ class Education(_Base):
             the RESP covers it; a shortfall comes from the household.
     """
 
-    start_year: int = Field(
+    start_year: Integer = Field(
         description="Calendar year schooling begins.",
     )
     start_month: Month = Field(
         description="Month schooling begins, 1 to 12; usually 9 for September.",
     )
-    months: Annotated[int, Field(ge=1)] = Field(
+    months: Annotated[int, Field(ge=1), _NUMBER_ONLY] = Field(
         description="Length of the programme in months, at least one.",
     )
     annual_cost: Money = Field(
@@ -859,7 +894,7 @@ class Beneficiary(_Base):
     id: str = Field(
         description="A short name for this beneficiary, unique among every person and beneficiary.",
     )
-    birth_year: int = Field(
+    birth_year: Integer = Field(
         description="Calendar year of birth; it decides grant eligibility.",
     )
     birth_month: Month = Field(
@@ -963,7 +998,7 @@ class SpendingBand(_Base):
         annual: Real dollars a year for the household.
     """
 
-    from_year: int = Field(
+    from_year: Integer = Field(
         description="First calendar year this spending level applies.",
     )
     annual: Money = Field(
@@ -988,9 +1023,11 @@ class Spending(_Base):
         description="Spending levels by year. Each level lasts until the next one begins; the "
         "first must begin at or before the start year, and the last runs to the second death.",
     )
-    survivor_share: Annotated[float, Field(gt=0.0, le=1.0, allow_inf_nan=False)] = Field(
-        description="Fraction of household spending the survivor keeps from the month after the "
-        "first death. Above 0 and at most 1.",
+    survivor_share: Annotated[float, Field(gt=0.0, le=1.0, allow_inf_nan=False), _NUMBER_ONLY] = (
+        Field(
+            description="Fraction of household spending the survivor keeps from the month after "
+            "the first death. Above 0 and at most 1.",
+        )
     )
 
     @model_validator(mode="after")
@@ -1042,21 +1079,23 @@ class AssetClass(_Base):
         description="Expected real annual total return, a fraction (0.05), not a percentage. It "
         "may be negative, but must be above -1.",
     )
-    vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+    vol: Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY] = Field(
         description="Annual standard deviation of the real return. Zero means a riskless class.",
     )
-    interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+    interest_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY] = Field(
         description="Fraction of the balance paid out each year as interest. This is the tax "
         "character of the return, not an addition to it.",
     )
-    dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
+    dividend_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY] = Field(
         description="Fraction of the balance paid out each year as eligible dividends. Part of "
         "the return, not an addition to it.",
     )
-    distributed_gains_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = Field(
-        description="Fraction of the balance paid out each year as realized capital gains. Part "
-        "of the return, not an addition to it; price change is the real mean less the three "
-        "yields.",
+    distributed_gains_yield: Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY] = (
+        Field(
+            description="Fraction of the balance paid out each year as realized capital gains. "
+            "Part of the return, not an addition to it; price change is the real mean less "
+            "the three yields.",
+        )
     )
 
 
@@ -1088,7 +1127,7 @@ class Assumptions(_Base):
             allocation names known classes, is finite, and sums to one.
     """
 
-    inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False)] = Field(
+    inflation: Annotated[float, Field(gt=-1.0, allow_inf_nan=False), _NUMBER_ONLY] = Field(
         description="Annual inflation, a fraction (0.02), not a percentage. Constant for the "
         "run. Returns below are real, so inflation erodes amounts fixed in dollars.",
     )
@@ -1304,13 +1343,13 @@ class WithdrawalRule(_Base):
         description="Account kinds to draw from, in order, each at most once. Mandatory minimum "
         "withdrawals happen regardless of this order.",
     )
-    taxable_ceiling_bracket: Annotated[int, Field(ge=0)] | None = Field(
+    taxable_ceiling_bracket: Annotated[int, Field(ge=0), _NUMBER_ONLY] | None = Field(
         description="Turn on to draw from the RRIF, then the RRSP, every month until this "
         "year's net income, projected from the year to date, reaches the top of this federal "
         "tax bracket, counted from 0, whether or not cash is needed. Suits a household that "
         "is drawing down; off for one that is still contributing.",
     )
-    fill_pension_credit: bool = Field(
+    fill_pension_credit: StrictBool = Field(
         description="Whether to withdraw enough eligible pension income to use the pension "
         "income tax credit.",
     )
@@ -1334,7 +1373,7 @@ class RrifConversion(_Base):
             the whole balance to a minimum.
     """
 
-    age_years: int = Field(
+    age_years: Integer = Field(
         description="Age the conversion happens. The legal deadline is checked against the "
         "start year's parameters.",
     )
@@ -1364,10 +1403,10 @@ class ElectionsSpec(_Base):
         rrif_conversion: The RRSP-to-RRIF conversion, household-wide.
     """
 
-    cpp_start_age_years: FrozenMapping[int] = Field(
+    cpp_start_age_years: FrozenMapping[Integer] = Field(
         description="The age each person starts CPP, by person id.",
     )
-    oas_start_age_years: FrozenMapping[int] = Field(
+    oas_start_age_years: FrozenMapping[Integer] = Field(
         description="The age each person starts OAS, by person id.",
     )
     rrif_conversion: RrifConversion = Field(
@@ -1444,26 +1483,30 @@ class Scenario(_Base):
     name: str = Field(
         description="A label for this scenario, used in export file names.",
     )
-    start_year: int = Field(
+    start_year: Integer = Field(
         description="The year the simulation starts, on 1 January. Every dollar amount in the "
         "scenario is in that January's dollars, except the two prior-year net incomes, and "
         "that year's tax parameters serve the whole run.",
     )
-    n_paths: Annotated[int, Field(ge=1)] = Field(
+    n_paths: Annotated[int, Field(ge=1), _NUMBER_ONLY] = Field(
         description="How many Monte Carlo paths to simulate.",
     )
-    seed: int = Field(
+    seed: Integer = Field(
         description="Seed for the random draws. The same seed reproduces the same results, and "
         "every policy sees the same draws, so policies are compared rather than luck.",
     )
-    risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] | None = Field(
-        default=None,
-        description="Your household's risk preference: a coefficient of relative risk aversion, "
-        "a bare number and not a percentage. Zero means risk neutral. It scores the finished "
-        "results and changes no simulated number. Leave it out and the objectives that need "
-        "it refuse to run instead of choosing a preference for you.",
+    risk_aversion: Annotated[float, Field(ge=0.0, allow_inf_nan=False), _NUMBER_ONLY] | None = (
+        Field(
+            default=None,
+            description="Your household's risk preference: a coefficient of relative risk "
+            "aversion, a bare number and not a percentage. Zero means risk neutral. It scores the "
+            "finished results and changes no simulated number. Leave it out and the objectives "
+            "that need it refuse to run instead of choosing a preference for you.",
+        )
     )
-    estate_utility_shift: Annotated[float, Field(gt=0.0, allow_inf_nan=False)] | None = Field(
+    estate_utility_shift: (
+        Annotated[float, Field(gt=0.0, allow_inf_nan=False), _NUMBER_ONLY] | None
+    ) = Field(
         default=None,
         description="Real dollars added to every path's after-tax estate before the "
         "certainty-equivalent objective scores it, and subtracted again afterwards. Without "
@@ -1484,7 +1527,9 @@ class Scenario(_Base):
     policies: tuple[PolicySpec, ...] = Field(
         description="One or more policies to simulate and compare.",
     )
-    grid: FrozenMapping[tuple[int | Finite, ...]] = Field(
+    grid: FrozenMapping[
+        tuple[Annotated[int | Annotated[float, Field(allow_inf_nan=False)], _NUMBER_ONLY], ...]
+    ] = Field(
         default_factory=lambda: MappingProxyType({}),
         description="Optional. Each key is a dotted path to one number in a policy, and each "
         "value is the list of numbers to try there. Every key must exist on every policy.",

@@ -574,6 +574,17 @@ def test_json_text_gives_the_scenario_the_yaml_gives() -> None:
     assert from_json == scenario_from_text(example_text(), "x", syntax="yaml")
 
 
+def test_json_true_for_a_number_is_refused_naming_the_field() -> None:
+    """A JSON ``true`` where a number belongs is refused at that field's location."""
+    values = json.loads(example_json())
+    values["policies"][0]["elections"]["rrif_conversion"]["age_years"] = True
+    with pytest.raises(InvalidScenarioError) as caught:
+        scenario_from_text(json.dumps(values), "request body", syntax="json")
+    assert "policies.0.elections.rrif_conversion.age_years\n  Value error, true and false" in str(
+        caught.value
+    )
+
+
 def test_a_repeated_top_level_json_key_is_rejected() -> None:
     with pytest.raises(DuplicateKeyError, match="key 'seed'") as caught:
         scenario_from_text('{"seed": 1, "seed": 2}', "request body", syntax="json")

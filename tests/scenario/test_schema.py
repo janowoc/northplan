@@ -738,6 +738,39 @@ REJECTIONS = [
         "estate_utility_shift",
         sets("estate_utility_shift", float("nan")),
     ),
+    # --- A number is a number, and the flag is a flag -------------------------
+    rejected("seed-written-true", "seed", sets("seed", True)),
+    rejected(
+        "birth-month-written-true",
+        "household.persons.0.birth_month",
+        sets("household.persons.0.birth_month", True),
+    ),
+    rejected(
+        "correlation-entry-written-true",
+        "assumptions.correlation.0.0",
+        sets("assumptions.correlation.0.0", True),
+    ),
+    rejected(
+        "allocation-weight-written-true",
+        "assumptions.allocations.default.equity",
+        sets("assumptions.allocations.default.equity", True),
+    ),
+    rejected(
+        "grid-value-written-false",
+        "grid.`elections.rrif_conversion.fraction`.0",
+        sets("grid", {"elections.rrif_conversion.fraction": [False]}),
+    ),
+    rejected("seed-written-as-binary", "seed", sets("seed", b"42")),
+    rejected(
+        "flag-written-as-one",
+        "policies.0.withdrawal.fill_pension_credit",
+        sets("policies.0.withdrawal.fill_pension_credit", 1),
+    ),
+    rejected(
+        "flag-written-as-text",
+        "policies.0.withdrawal.fill_pension_credit",
+        sets("policies.0.withdrawal.fill_pension_credit", "yes"),
+    ),
 ]
 
 
@@ -1139,8 +1172,8 @@ def test_every_float_in_the_scenario_schema_is_finite() -> None:
     """No field anywhere under :class:`Scenario` accepts a bare, non-finite float,
     and the walk can account for every leaf it visits.
 
-    Every float either uses the ``Finite`` alias or carries
-    ``allow_inf_nan=False`` alongside its own bounds — including the elements
+    Every float either uses the ``Finite`` alias or carries its own
+    ``allow_inf_nan=False`` — including the elements
     of a correlation row, an allocation, and a contribution-weight mapping,
     not just the tuple or mapping that holds them. If this ever lists a site
     marked "cannot check", the walk has met a leaf type or a generic origin
@@ -1355,6 +1388,263 @@ def test_the_description_walk_finds_every_undescribed_field_in_a_synthetic_model
         "_SyntheticOptional.overridden (JSON Schema)",
         "_SyntheticWrapped.unwrapped",
     ]
+
+
+# --- A number is a number, and the flag is a flag ---------------------------
+
+
+def _strip_annotated(annotation: Any) -> Any:
+    """``annotation`` without its ``Annotated`` layers."""
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return annotation
+
+
+def _mentions(annotation: Any, kinds: tuple[type, ...]) -> bool:
+    """Whether a type in ``kinds`` appears anywhere in ``annotation``, nested models aside.
+
+    Descends through ``Annotated`` layers and the type arguments of a generic whose origin is
+    in :data:`_CONTAINER_ORIGINS`. ``Literal`` values are not read.
+
+    Every type argument is read, including those after one that holds a member of ``kinds``.
+
+    Raises:
+        AssertionError: ``annotation`` holds a leaf that is not a model, a member of ``kinds``
+            or of :data:`_SAFE_LEAVES`, or ``float``; or a generic other than ``Literal`` whose
+            origin is not in :data:`_CONTAINER_ORIGINS`. A type alias is one of these.
+    """
+    annotation = _strip_annotated(annotation)
+    if isinstance(annotation, type) and issubclass(annotation, pydantic.BaseModel):
+        return False
+    if annotation in kinds:
+        return True
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return False
+    args = get_args(annotation)
+    if origin in _CONTAINER_ORIGINS and args:
+        return any([_mentions(arg, kinds) for arg in args if arg is not Ellipsis])
+    assert annotation in (*_SAFE_LEAVES, float), f"cannot read {annotation!r}"
+    return False
+
+
+def _placed(annotation: Any, leaf: Any, kinds: tuple[type, ...]) -> tuple[Any, tuple[Any, ...]]:
+    """Input for ``annotation`` holding ``leaf`` at its leaf of ``kinds``, and the location
+    pydantic reports for that leaf.
+
+    A union whose arms are all ``kinds`` (the grid's ``int | float``) is one leaf. ``None`` is
+    passed over. A tuple element is placed at index 0 and a mapping value under key ``"k"``.
+
+    Raises:
+        AssertionError: ``annotation`` holds no leaf of ``kinds`` this walk can reach, or more
+            than one union arm holds one.
+    """
+    annotation = _strip_annotated(annotation)
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        arms = [arm for arm in get_args(annotation) if arm is not type(None)]
+        if all(_strip_annotated(arm) in kinds for arm in arms):
+            return leaf, ()
+        reachable = [arm for arm in arms if _mentions(arm, kinds)]
+        assert len(reachable) == 1, f"cannot place a leaf in {annotation!r}"
+        return _placed(reachable[0], leaf, kinds)
+    if origin is tuple:
+        value, loc = _placed(get_args(annotation)[0], leaf, kinds)
+        return [value], (0, *loc)
+    if origin is collections.abc.Mapping:
+        value, loc = _placed(get_args(annotation)[1], leaf, kinds)
+        return {"k": value}, ("k", *loc)
+    assert annotation in kinds, f"cannot place a leaf in {annotation!r}"
+    return leaf, ()
+
+
+def _fields_holding(
+    kinds: tuple[type, ...], root: type[pydantic.BaseModel] = Scenario
+) -> list[tuple[str, FieldInfo]]:
+    """``("Model.field", field)`` for every field under ``root`` holding a type in ``kinds``,
+    sorted by name."""
+    return sorted(
+        (f"{model.__name__}.{name}", field)
+        for model in _models_under(root)
+        for name, field in model.model_fields.items()
+        if _mentions(field.annotation, kinds)
+    )
+
+
+#: Every int or float field under :class:`Scenario`; ``bool`` is not ``int`` here.
+NUMBER_FIELDS = _fields_holding((int, float))
+
+#: Every bool field under :class:`Scenario`.
+FLAG_FIELDS = _fields_holding((bool,))
+
+
+def _errors_for(field: FieldInfo, value: Any) -> list[tuple[tuple[Any, ...], str]]:
+    """``(loc, type)`` of each error validating ``value`` as ``field`` alone; empty if it
+    passes."""
+    adapter = pydantic.TypeAdapter(Annotated[field.annotation, field])
+    try:
+        adapter.validate_python(value)
+    except pydantic.ValidationError as error:
+        return [(tuple(e["loc"]), e["type"]) for e in error.errors()]
+    return []
+
+
+def _keys(node: Any) -> set[str]:
+    """Every dict key at any depth of ``node``."""
+    if isinstance(node, dict):
+        return set(node) | {key for value in node.values() for key in _keys(value)}
+    if isinstance(node, list):
+        return {key for value in node for key in _keys(value)}
+    return set()
+
+
+def test_the_field_walk_reaches_every_shape_a_number_takes() -> None:
+    """The walk finds a plain, a bounded, a mapped, a nested and a grid field, and the one flag."""
+    assert {
+        "Scenario.seed",
+        "Person.birth_month",
+        "Scenario.risk_aversion",
+        "ElectionsSpec.cpp_start_age_years",
+        "Assumptions.allocations",
+        "Assumptions.correlation",
+        "Scenario.grid",
+    } <= {name for name, _ in NUMBER_FIELDS}
+    assert [name for name, _ in FLAG_FIELDS] == ["WithdrawalRule.fill_pension_credit"]
+
+
+@pytest.mark.parametrize("flag", [True, False])
+@pytest.mark.parametrize(("name", "field"), NUMBER_FIELDS, ids=[n for n, _ in NUMBER_FIELDS])
+def test_every_number_refuses_a_flag(name: str, field: FieldInfo, flag: bool) -> None:
+    """A bool in a number's place is one value error at the number's own location."""
+    del name
+    value, loc = _placed(field.annotation, flag, (int, float))
+    assert _errors_for(field, value) == [(loc, "value_error")]
+
+
+@pytest.mark.parametrize(("name", "field"), NUMBER_FIELDS, ids=[n for n, _ in NUMBER_FIELDS])
+def test_every_number_refuses_binary_data(name: str, field: FieldInfo) -> None:
+    """Bytes in a number's place is one value error at the number's own location."""
+    del name
+    value, loc = _placed(field.annotation, b"1", (int, float))
+    assert _errors_for(field, value) == [(loc, "value_error")]
+
+
+@pytest.mark.parametrize("number", [1, 1.0, "1"])
+@pytest.mark.parametrize(("name", "field"), NUMBER_FIELDS, ids=[n for n, _ in NUMBER_FIELDS])
+def test_every_number_still_reads_a_number_and_number_text(
+    name: str, field: FieldInfo, number: Any
+) -> None:
+    """The control: the leaf is placed where the field reads it, and number text passes."""
+    del name
+    value, _ = _placed(field.annotation, number, (int, float))
+    assert _errors_for(field, value) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [1, 0, 1.0, "true", "yes", b"true"],
+    ids=["one", "zero", "one-point-zero", "text-true", "text-yes", "binary-true"],
+)
+@pytest.mark.parametrize(("name", "field"), FLAG_FIELDS, ids=[n for n, _ in FLAG_FIELDS])
+def test_the_flag_refuses_anything_but_true_and_false(
+    name: str, field: FieldInfo, value: Any
+) -> None:
+    """A flag field takes only a bool."""
+    del name
+    assert _errors_for(field, value) == [((), "bool_type")]
+
+
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.parametrize(("name", "field"), FLAG_FIELDS, ids=[n for n, _ in FLAG_FIELDS])
+def test_the_flag_reads_true_and_false(name: str, field: FieldInfo, value: bool) -> None:
+    """A flag field reads true and false."""
+    del name
+    assert _errors_for(field, value) == []
+
+
+class _NestedSyntheticNumbers(pydantic.BaseModel):
+    """Reached only through :class:`_SyntheticNumbers`, so the walk must recurse to find it."""
+
+    inner: int
+
+
+class _SyntheticNumbers(pydantic.BaseModel):
+    """Obviously synthetic, never a real scenario type: one field of each shape the walk reads."""
+
+    bare: int
+    optional: float | None
+    mapped: FrozenMapping[int]
+    rows: tuple[tuple[float, ...], ...]
+    either: tuple[int | float, ...]
+    nested: _NestedSyntheticNumbers
+    text: str
+    choice: Literal["a", "b"]
+    flag: bool
+
+
+type _SyntheticYears = int
+
+
+def test_the_field_walk_finds_every_number_and_flag_in_a_synthetic_model() -> None:
+    """A control model, so a walk that under-visits cannot pass."""
+    assert [name for name, _ in _fields_holding((int, float), _SyntheticNumbers)] == [
+        "_NestedSyntheticNumbers.inner",
+        "_SyntheticNumbers.bare",
+        "_SyntheticNumbers.either",
+        "_SyntheticNumbers.mapped",
+        "_SyntheticNumbers.optional",
+        "_SyntheticNumbers.rows",
+    ]
+    assert [name for name, _ in _fields_holding((bool,), _SyntheticNumbers)] == [
+        "_SyntheticNumbers.flag"
+    ]
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        _SyntheticYears,
+        Any,
+        dict,
+        FrozenMapping,
+        Annotated[_SyntheticYears, "meta"],
+        _SyntheticAlias[int],
+        tuple[int, Any],
+    ],
+    ids=[
+        "type-alias",
+        "any",
+        "bare-dict",
+        "typevar-mapping",
+        "annotated-alias",
+        "parameterised-alias",
+        "unreadable-after-a-number",
+    ],
+)
+def test_the_field_walk_refuses_a_shape_it_cannot_read(annotation: Any) -> None:
+    """A shape the walk has no rule for stops it rather than dropping out of the field lists."""
+    with pytest.raises(AssertionError, match="cannot read"):
+        _mentions(annotation, (int, float))
+
+
+@pytest.mark.parametrize("value", [float("nan"), "abc", None], ids=["nan", "text", "null"])
+def test_a_grid_value_that_is_no_number_is_reported_at_each_union_arm(value: Any) -> None:
+    """The arms are named ``int`` and ``float``, never after the refusal function."""
+    values = example_values()
+    values["grid"] = {"elections.cpp_start_age_years.a": [60, value]}
+    with pytest.raises(pydantic.ValidationError) as caught:
+        Scenario.model_validate(values)
+    assert [tuple(e["loc"]) for e in caught.value.errors()] == [
+        ("grid", "elections.cpp_start_age_years.a", 1, "int"),
+        ("grid", "elections.cpp_start_age_years.a", 1, "float"),
+    ]
+
+
+def test_every_bound_stays_in_the_json_schema() -> None:
+    """The refusal sits after each bound, so the published schema keeps its bound keywords."""
+    keys = _keys(Scenario.model_json_schema())
+    assert not keys & {"ge", "gt", "le", "lt"}
+    assert {"minimum", "maximum", "exclusiveMinimum"} <= keys
 
 
 # --- Risk aversion ------------------------------------------------------
