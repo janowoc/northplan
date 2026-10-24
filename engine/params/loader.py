@@ -32,6 +32,15 @@ is not a repeat. Two keys that read the same once stored as text (``65`` and
 ``"65"``) are refused too, because every key is stored as text. A merged mapping
 keeps one pair per key, as construction would, so merge keys cannot multiply a
 document's size.
+
+A parameter file may hold only what freezes exactly. A mapping key that is neither a ``str`` nor
+an ``int`` (``on``, which YAML reads as true, ``1.5``, a date, a ``!!binary`` key) is refused, as
+is an integer, key or value, with more digits than Python will write in decimal, a set
+(``!!set``), which is mutable and does not keep the order it was written in, a value that
+contains itself through a YAML alias, and a value nested too deeply, through YAML aliases, to be
+frozen. A value reached through several aliases is frozen once and shared, so aliases cannot
+multiply a file's size either. A message shows the key it refuses as its repr cut at 40
+characters, in hex for an integer too long to write in decimal; the path to it is shown in full.
 """
 
 from __future__ import annotations
@@ -81,6 +90,12 @@ _SCALAR_KEY_TAGS: Final[frozenset[str]] = frozenset(
     for suffix in ("str", "int", "float", "bool", "null", "binary", "timestamp")
 )
 
+#: How much of a key a message shows: its repr, cut at this many characters.
+_KEY_SHOWN_CHARACTERS: Final[int] = 40
+
+#: How much of the text of the error PyYAML's construction raised a message shows.
+_DETAIL_SHOWN_CHARACTERS: Final[int] = 200
+
 #: Repository-root ``params/`` directory. Resolved from this file's location so
 #: that it works regardless of the process working directory.
 DEFAULT_PARAMS_ROOT: Final[Path] = Path(__file__).resolve().parents[2] / "params"
@@ -110,9 +125,11 @@ class MalformedParamFileError(ParamError):
 
     An empty file is *not* malformed — a stub awaiting hand-entered values is
     the expected state of a new tax year. A file that is invalid YAML, whose
-    top level is a list or a scalar, that repeats a key within a mapping, or
-    whose mapping holds two keys that are the same once read as text, is
-    malformed.
+    top level is a list or a scalar, that repeats a key within a mapping, whose mapping holds
+    two keys that are the same once read as text, or that holds a mapping key that is neither a
+    ``str`` nor an ``int``, an integer with more digits than Python will write in decimal, a set, a
+    value that contains itself through a YAML alias, or a value nested too deeply, through YAML
+    aliases, to be frozen, is malformed.
     """
 
 
@@ -142,6 +159,21 @@ class YamlConstructionError(yaml.YAMLError):
     """
 
 
+def _shown_key(key: Any) -> str:
+    """``repr(key)`` as a message shows it, with a long one cut.
+
+    An int too long to write in decimal is shown in hex. The text shown, repr or hex, is cut to
+    ``_KEY_SHOWN_CHARACTERS`` characters, followed by "…", when it is longer.
+    """
+    try:
+        shown = repr(key)
+    except ValueError:  # an int past Python's limit on decimal digits
+        shown = hex(key)
+    if len(shown) > _KEY_SHOWN_CHARACTERS:
+        shown = shown[:_KEY_SHOWN_CHARACTERS] + "…"
+    return shown
+
+
 class _UniqueKeyLoader(yaml.SafeLoader):
     """``yaml.SafeLoader`` that refuses a mapping node that repeats a scalar key.
 
@@ -169,7 +201,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):
             if key in seen:
                 raise DuplicateYamlKeyError(
                     f"line {key_node.start_mark.line + 1}, column "
-                    f"{key_node.start_mark.column + 1}: key {key!r} appears more "
+                    f"{key_node.start_mark.column + 1}: key {_shown_key(key)} appears more "
                     "than once in this mapping. YAML forbids it, and PyYAML would keep "
                     "the last, so one of the values would be discarded silently."
                 )
@@ -222,7 +254,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 if key in seen:
                     raise DuplicateYamlKeyError(
                         f"line {key_node.start_mark.line + 1}, column "
-                        f"{key_node.start_mark.column + 1}: key {key!r} appears more "
+                        f"{key_node.start_mark.column + 1}: key {_shown_key(key)} appears more "
                         "than once in this ordered map. YAML forbids it, and PyYAML would "
                         "keep the last, so one of the values would be discarded silently."
                     )
@@ -243,15 +275,15 @@ def parse_yaml(text: str) -> Any:
         Whatever ``yaml.safe_load(text)`` would return for the same text.
 
     Raises:
-        DuplicateYamlKeyError: If one mapping, or one ordered map (``!!omap``), in
-            ``text`` repeats a key. Keys
-            are compared as built, so ``1``, ``1.0`` and ``true`` are one key.
-            A merge key (``<<``) is never counted, even when a mapping has
-            two. A ``ValueError``, not a :class:`yaml.YAMLError`.
-        YamlConstructionError: If PyYAML raises anything other than a
-            :class:`yaml.YAMLError` while building the document, such as a
-            malformed scalar or nesting too deep to build. The original
-            exception is its ``__cause__``.
+        DuplicateYamlKeyError: If one mapping, or one ordered map (``!!omap``), in ``text``
+            repeats a key. Keys are compared as built, so ``1``, ``1.0`` and ``true`` are one
+            key. A merge key (``<<``) is never counted, even when a mapping has two. A
+            ``ValueError``, not a :class:`yaml.YAMLError`. The message shows the key's repr cut
+            at 40 characters, in hex for an int too long to write in decimal.
+        YamlConstructionError: If PyYAML raises anything other than a :class:`yaml.YAMLError`
+            while building the document, such as a malformed scalar or nesting too deep to
+            build. The original exception is its ``__cause__``. The message quotes that
+            exception's text; a text longer than 200 characters is cut to 200, followed by "…".
         yaml.YAMLError: Any other YAML parse failure, unchanged.
 
     A malformed key or a repeated key in a nested mapping may be reported
@@ -264,8 +296,11 @@ def parse_yaml(text: str) -> Any:
     except (DuplicateYamlKeyError, yaml.YAMLError):
         raise
     except Exception as exc:
+        detail = str(exc)
+        if len(detail) > _DETAIL_SHOWN_CHARACTERS:
+            detail = detail[:_DETAIL_SHOWN_CHARACTERS] + "…"
         raise YamlConstructionError(
-            f"the document could not be built: {type(exc).__name__}: {exc}"
+            f"the document could not be built: {type(exc).__name__}: {detail}"
         ) from exc
 
 
@@ -279,40 +314,108 @@ def _freeze(value: Any, *, where: str = "") -> Any:
     the same text (``65`` and ``"65"``) raise :class:`MalformedParamFileError`
     rather than silently discarding one of the two values.
 
+    A mapping's keys are checked in the order the mapping holds them, each before its value. An
+    ``!!omap`` or ``!!pairs`` key is an element of a tuple, not a mapping key, so it is checked
+    as a value. A container reached through several YAML aliases is frozen once, and each place
+    holds the same frozen object.
+
     Args:
-        where: Dotted path of the mapping being frozen, used only for the
-            collision message above. The top level is ``""``.
+        where: Dotted path of the value being frozen, used only in the messages below. The top
+            level is ``""``.
 
     Raises:
-        MalformedParamFileError: If two keys of one mapping read the same
-            once stored as text. The message gives the key path, not the
-            file — construction is over by then, so it cannot give a line
+        MalformedParamFileError: If two keys of one mapping read the same once stored as
+            text; if a mapping key is neither a ``str`` nor an ``int`` (a ``bool`` is refused);
+            if an integer, key or value, has more digits than Python will write in decimal; if
+            a value is a set; if a value is a YAML alias to a value that contains it; or if a
+            value nests too deeply, through YAML aliases, to be frozen within Python's recursion
+            limit, a refusal whose message names ``where`` as the place. The message gives the
+            key path, not the file — construction is over by then, so it cannot give a line
             number either; the caller that has a file prefixes it.
     """
+    try:
+        return _frozen(value, where, set(), {})
+    except RecursionError as exc:
+        place = f"at {where}" if where else "at the top level"
+        raise MalformedParamFileError(
+            f"the value {place} nests too deeply, through YAML aliases, to be frozen."
+        ) from exc
+
+
+def _frozen(value: Any, where: str, open_ids: set[int], done: dict[int, Any]) -> Any:
+    """Freeze ``value``, found at ``where``, as :func:`_freeze` does.
+
+    ``open_ids`` holds the id of every container entered; one not also in ``done`` is on the path
+    to ``value``, so meeting it again is a cycle. ``done`` maps the id of each container already
+    frozen to its result.
+    """
+    place = f"at {where}" if where else "at the top level"
+    if isinstance(value, Mapping) or (
+        isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+    ):
+        if id(value) in done:
+            return done[id(value)]
+        if id(value) in open_ids:
+            raise MalformedParamFileError(
+                f"the value {place} is a YAML alias to a value that contains it, so it has "
+                "no finite value."
+            )
+        open_ids.add(id(value))
     if isinstance(value, Mapping):
         frozen: dict[str, Any] = {}
         originals: dict[str, Any] = {}
-        location = f"at {where}" if where else "at the top level"
         for k, v in value.items():
-            key = str(k)
+            if isinstance(k, bool) or not isinstance(k, (str, int)):
+                raise MalformedParamFileError(
+                    f"key {_shown_key(k)} in the mapping {place} is neither text nor "
+                    "an integer. Write it as plain text, without a tag such as !!binary, "
+                    "and quote it if YAML would read it as something else, as it reads "
+                    "on, 1.5 or 2026-01-01."
+                )
+            try:
+                key = str(k)
+            except ValueError as exc:  # an int past Python's limit on decimal digits
+                raise MalformedParamFileError(
+                    f"key {_shown_key(k)} in the mapping {place} is an integer with "
+                    "more digits than Python will write in decimal."
+                ) from exc
             if key in frozen:
                 raise MalformedParamFileError(
-                    f"{originals[key]!r} and {k!r} both read as {key!r} once "
-                    f"stored as text, in the mapping {location}. Keys are "
+                    f"{_shown_key(originals[key])} and {_shown_key(k)} both read as "
+                    f"{_shown_key(key)} once "
+                    f"stored as text, in the mapping {place}. Keys are "
                     "stored as text, so one of the two values would be "
                     "discarded silently."
                 )
             originals[key] = k
             child_where = f"{where}{PATH_SEP}{key}" if where else key
-            frozen[key] = _freeze(v, where=child_where)
-        return MappingProxyType(frozen)
+            frozen[key] = _frozen(v, child_where, open_ids, done)
+        result: Any = MappingProxyType(frozen)
+        done[id(value)] = result
+        return result
+    if isinstance(value, set):
+        raise MalformedParamFileError(
+            f"the value {place} is a set (!!set), which does not keep the order it was "
+            "written in. Write it as a list."
+        )
+    if isinstance(value, int) and not isinstance(value, bool):
+        try:
+            str(value)
+        except ValueError as exc:  # an int past Python's limit on decimal digits
+            raise MalformedParamFileError(
+                f"the value {place} is an integer with more digits than Python will "
+                "write in decimal."
+            ) from exc
+        return value
     if isinstance(value, (str, bytes)):
         return value
     if isinstance(value, Sequence):
-        return tuple(
-            _freeze(v, where=f"{where}{PATH_SEP}{i}" if where else str(i))
+        result = tuple(
+            _frozen(v, f"{where}{PATH_SEP}{i}" if where else str(i), open_ids, done)
             for i, v in enumerate(value)
         )
+        done[id(value)] = result
+        return result
     return value
 
 
@@ -504,7 +607,8 @@ class ParamSet:
         Raises:
             MissingParameterError: If the parameter is absent.
             MalformedParamFileError: If the value is not a mapping, the
-                mapping is empty, or a key is not an integer in plain decimal.
+                mapping is empty, or a key is not an integer in plain decimal or has more
+                digits than Python will read in decimal.
         """
         table = self.get(path)
         if not isinstance(table, Mapping):
@@ -520,10 +624,16 @@ class ParamSet:
         for key in table:
             if not re.fullmatch(r"0|-?[1-9][0-9]*", key):
                 raise MalformedParamFileError(
-                    f"{self._where(path)}: key {key!r} is not an integer written in "
+                    f"{self._where(path)}: key {_shown_key(key)} is not an integer written in "
                     f"plain decimal, such as 71."
                 )
-            keys.append(int(key))
+            try:
+                keys.append(int(key))
+            except ValueError as exc:  # past Python's limit on decimal digits
+                raise MalformedParamFileError(
+                    f"{self._where(path)}: key {_shown_key(key)} is an integer with more "
+                    "digits than Python will read in decimal."
+                ) from exc
         return tuple(keys)
 
     def has(self, path: str) -> bool:
@@ -779,8 +889,11 @@ def load_year(year: int, root: Path | str = DEFAULT_PARAMS_ROOT) -> ParamYear:
             operating system cannot open or read it.
         MalformedParamFileError: If any file in the directory is not valid
             UTF-8, is not valid YAML, is not a YAML mapping, repeats a key
-            within a mapping, or holds two keys in one mapping that are the
-            same once read as text.
+            within a mapping, holds two keys in one mapping that are the
+            same once read as text, or holds a mapping key that is neither a ``str`` nor an
+            ``int``, an integer with more digits than Python will write in decimal, a set, a
+            value that contains itself through a YAML alias, or a value nested too deeply,
+            through YAML aliases, to be frozen.
     """
     root = Path(root)
     year_dir = root / str(year)

@@ -12,6 +12,7 @@ plausible wrong number.
 
 from __future__ import annotations
 
+import base64
 import datetime
 import errno
 import inspect
@@ -1741,3 +1742,534 @@ def test_integer_matches_number_on_every_integer_like_repository_key() -> None:
                 assert type(ps.integer(path)) is int, (ps.name, path)
                 checked += 1
     assert checked >= _MIN_INTEGER_LIKE_LEAVES
+
+
+# =============================================================================
+# Keys and values a parameter file may not hold (issue 99)
+# =============================================================================
+
+
+@pytest.fixture
+def int_digit_limit() -> Iterator[None]:
+    """Pin Python's limit on integer digits to its minimum for one test.
+
+    ``PYTHONINTMAXSTRDIGITS`` then cannot change whether an integer is "too
+    long to write in decimal".
+    """
+    old = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(640)
+    try:
+        yield
+    finally:
+        sys.set_int_max_str_digits(old)
+
+
+def _write_federal(tmp_path: Path, text: str) -> Path:
+    year = tmp_path / "2030"
+    year.mkdir(exist_ok=True)
+    path = year / "federal.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _cut(shown: str) -> str:
+    return shown[:40] + "…"
+
+
+def _oracle_hex_key(literal: str) -> str:
+    """The shown form of an integer key, built from what PyYAML makes of ``literal``."""
+    (value,) = yaml.safe_load(f"? {literal}\n: 1\n")
+    return _cut(hex(value))
+
+
+_HUGE_INT_SPELLINGS: Final[tuple[Any, ...]] = (
+    pytest.param("0x" + "f" * 600, id="hex"),
+    pytest.param("-0x" + "f" * 600, id="negative-hex"),
+    pytest.param("0b" + "1" * 2200, id="binary"),
+    pytest.param("0" + "7" * 800, id="octal"),
+    pytest.param("1" + ":59" * 400, id="base-60"),
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "place"),
+    [
+        pytest.param("a: !!set {x, y}\n", "at a", id="in-a-mapping"),
+        pytest.param("a: !!set {}\n", "at a", id="empty"),
+        pytest.param("a: [1, !!set {x}]\n", "at a.1", id="in-a-list"),
+        pytest.param("a: {b: !!set {x}}\n", "at a.b", id="nested"),
+    ],
+)
+def test_a_set_value_is_refused_naming_its_place(tmp_path: Path, text: str, place: str) -> None:
+    path = _write_federal(tmp_path, text)
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(excinfo.value) == (
+        f"{path}: the value {place} is a set (!!set), which does not keep the order it was "
+        "written in. Write it as a list."
+    )
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+
+
+_NOT_TEXT_MESSAGE: Final[str] = (
+    "key {shown} in the mapping {location} is neither text nor an integer. Write it as "
+    "plain text, without a tag such as !!binary, and quote it if YAML would read it as "
+    "something else, as it reads on, 1.5 or 2026-01-01."
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        pytest.param("!!binary aw==: 1\n", "b'k'", id="binary"),
+        pytest.param("on: 1\n", "True", id="bool"),
+        pytest.param("1.5: 1\n", "1.5", id="float"),
+        pytest.param("~: 1\n", "None", id="null"),
+        pytest.param("2026-01-01: 1\n", "datetime.date(2026, 1, 1)", id="date"),
+        pytest.param(
+            "2026-01-01 10:00:00: 1\n",
+            "datetime.datetime(2026, 1, 1, 10, 0)",
+            id="timestamp",
+        ),
+    ],
+)
+def test_a_mapping_key_that_is_neither_text_nor_an_integer_is_refused(
+    tmp_path: Path, text: str, shown: str
+) -> None:
+    path = _write_federal(tmp_path, text)
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _NOT_TEXT_MESSAGE.format(shown=shown, location="at the top level")
+    assert str(excinfo.value) == f"{path}: {expected}"
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+
+
+def test_a_nested_key_that_is_not_text_names_its_mapping(tmp_path: Path) -> None:
+    path = _write_federal(tmp_path, "outer:\n  - {true: 1}\n")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _NOT_TEXT_MESSAGE.format(shown="True", location="at outer.0")
+    assert str(excinfo.value) == f"{path}: {expected}"
+
+
+def test_a_long_key_that_is_not_text_is_shown_cut(tmp_path: Path) -> None:
+    encoded = base64.b64encode(b"k" * 100).decode("ascii")
+    path = _write_federal(tmp_path, f"? !!binary {encoded}\n: 1\n")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _NOT_TEXT_MESSAGE.format(shown=_cut(repr(b"k" * 100)), location="at the top level")
+    assert str(excinfo.value) == f"{path}: {expected}"
+
+
+_HUGE_KEY_MESSAGE: Final[str] = (
+    "key {shown} in the mapping {location} is an integer with more digits than Python "
+    "will write in decimal."
+)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+@pytest.mark.parametrize("literal", _HUGE_INT_SPELLINGS)
+def test_an_integer_key_too_long_for_decimal_is_refused_shown_in_hex(
+    tmp_path: Path, literal: str
+) -> None:
+    path = _write_federal(tmp_path, f"? {literal}\n: 1\n")
+    shown = _oracle_hex_key(literal)
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _HUGE_KEY_MESSAGE.format(shown=shown, location="at the top level")
+    assert str(excinfo.value) == f"{path}: {expected}"
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+    assert isinstance(excinfo.value.__cause__.__cause__, ValueError)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_a_nested_integer_key_too_long_for_decimal_names_its_mapping(tmp_path: Path) -> None:
+    literal = "0x" + "f" * 600
+    path = _write_federal(tmp_path, f"a:\n  ? {literal}\n  : 1\n")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _HUGE_KEY_MESSAGE.format(shown=_oracle_hex_key(literal), location="at a")
+    assert str(excinfo.value) == f"{path}: {expected}"
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_the_last_integer_that_can_be_written_in_decimal_loads_as_key_and_value(
+    tmp_path: Path,
+) -> None:
+    largest = 10**640 - 1
+    _write_federal(tmp_path, f"? {hex(largest)}\n: 1\nv: {hex(largest)}\n")
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("9" * 640) == 1
+    assert federal.get("v") == largest
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_the_first_integer_that_cannot_be_written_in_decimal_is_refused(tmp_path: Path) -> None:
+    smallest = 10**640
+    _write_federal(tmp_path, f"? {hex(smallest)}\n: 1\n")
+    with pytest.raises(MalformedParamFileError, match="an integer with more digits"):
+        load_year(2030, tmp_path)
+
+    _write_federal(tmp_path, f"v: {hex(smallest)}\n")
+    with pytest.raises(MalformedParamFileError, match="the value at v is an integer"):
+        load_year(2030, tmp_path)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+@pytest.mark.parametrize(
+    ("template", "place"),
+    [
+        pytest.param("a: {literal}\n", "at a", id="mapping-value"),
+        pytest.param("b: [1, {literal}]\n", "at b.1", id="list-element"),
+        pytest.param("o: !!omap\n- ? {literal}\n  : 1\n", "at o.0.0", id="omap-key"),
+    ],
+)
+def test_an_integer_value_too_long_for_decimal_is_refused(
+    tmp_path: Path, template: str, place: str
+) -> None:
+    path = _write_federal(tmp_path, template.format(literal="0x" + "f" * 600))
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(excinfo.value) == (
+        f"{path}: the value {place} is an integer with more digits than Python will write "
+        "in decimal."
+    )
+    assert isinstance(excinfo.value.__cause__.__cause__, ValueError)
+
+
+def test_a_key_is_checked_before_its_value(tmp_path: Path) -> None:
+    path = _write_federal(tmp_path, "? !!binary aw==\n: !!set {x}\n")
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    expected = _NOT_TEXT_MESSAGE.format(shown="b'k'", location="at the top level")
+    assert str(excinfo.value) == f"{path}: {expected}"
+
+
+@pytest.mark.parametrize("tag", ["!!omap", "!!pairs"])
+def test_an_omap_or_pairs_key_is_not_checked_for_text(tmp_path: Path, tag: str) -> None:
+    """Control: such a key is a tuple element, so only its value-hood is checked."""
+    _write_federal(tmp_path, f"o: {tag}\n- !!binary aw==: 1\n")
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("o") == ((b"k", 1),)
+
+
+_REPEAT_MAPPING_TAIL: Final[str] = (
+    " appears more than once in this mapping. YAML forbids it, and PyYAML would keep "
+    "the last, so one of the values would be discarded silently."
+)
+_REPEAT_OMAP_TAIL: Final[str] = (
+    " appears more than once in this ordered map. YAML forbids it, and PyYAML would "
+    "keep the last, so one of the values would be discarded silently."
+)
+
+
+def test_a_repeated_long_key_is_shown_cut_in_a_mapping() -> None:
+    encoded = base64.b64encode(b"k" * 3000).decode("ascii")
+    text = f"? !!binary {encoded}\n: 1\n? !!binary {encoded}\n: 2\n"
+
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    shown = _cut(repr(b"k" * 3000))
+    assert str(excinfo.value) == f"line 3, column 3: key {shown}{_REPEAT_MAPPING_TAIL}"
+
+
+def test_a_repeated_long_key_is_shown_cut_in_an_omap() -> None:
+    encoded = base64.b64encode(b"k" * 3000).decode("ascii")
+    text = f"o: !!omap\n- ? !!binary {encoded}\n  : 1\n- ? !!binary {encoded}\n  : 2\n"
+
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(text)
+
+    shown = _cut(repr(b"k" * 3000))
+    assert str(excinfo.value) == f"line 4, column 5: key {shown}{_REPEAT_OMAP_TAIL}"
+
+
+@pytest.mark.parametrize(
+    ("length", "shown"),
+    [
+        pytest.param(38, repr("x" * 38), id="exactly-forty-characters"),
+        pytest.param(39, repr("x" * 39)[:40] + "…", id="one-over"),
+    ],
+)
+def test_the_cut_of_a_repeated_key_falls_after_forty_characters(length: int, shown: str) -> None:
+    key = "x" * length
+
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(f"{key}: 1\n{key}: 2\n")
+
+    assert len(repr(key)) == length + 2
+    assert str(excinfo.value) == f"line 2, column 1: key {shown}" + _REPEAT_MAPPING_TAIL
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+@pytest.mark.parametrize(
+    ("template", "where", "tail"),
+    [
+        pytest.param(
+            "? {k}\n: 1\n? {k}\n: 2\n", "line 3, column 3", _REPEAT_MAPPING_TAIL, id="mapping"
+        ),
+        pytest.param(
+            "o: !!omap\n- ? {k}\n  : 1\n- ? {k}\n  : 2\n",
+            "line 4, column 5",
+            _REPEAT_OMAP_TAIL,
+            id="omap",
+        ),
+    ],
+)
+def test_a_repeated_integer_key_too_long_for_decimal_is_reported_as_a_repeat(
+    template: str, where: str, tail: str
+) -> None:
+    literal = "0x" + "f" * 5000
+    (value,) = yaml.safe_load(f"? {literal}\n: 1\n")
+
+    with pytest.raises(DuplicateYamlKeyError) as excinfo:
+        parse_yaml(template.format(k=literal))
+
+    assert str(excinfo.value) == f"{where}: key {hex(value)[:40]}…{tail}"
+
+
+def test_a_collision_message_shows_each_key_cut(tmp_path: Path) -> None:
+    digits = "1" * 100
+    path = _write_federal(tmp_path, f'"{digits}": a\n{digits}: b\n')
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    s = _cut(repr(digits))
+    i = _cut(repr(int(digits)))
+    assert str(excinfo.value) == (
+        f"{path}: {s} and {i} both read as {s} once stored as text, in the mapping at the "
+        "top level. Keys are stored as text, so one of the two values would be discarded "
+        "silently."
+    )
+
+
+# =============================================================================
+# Aliases, a construction error's text, integer keys, and the stack (issue 99)
+# =============================================================================
+
+_CYCLE_MESSAGE: Final[str] = (
+    "the value {place} is a YAML alias to a value that contains it, so it has no finite value."
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "place"),
+    [
+        pytest.param("a: &x [*x]\n", "at a.0", id="list-in-itself"),
+        pytest.param("a: &x {b: *x}\n", "at a.b", id="mapping-in-itself"),
+        pytest.param("a: &x !!omap [{k: *x}]\n", "at a.0.1", id="omap-in-itself"),
+        pytest.param("a: &x [1, [2, *x]]\n", "at a.1.1", id="two-levels-down"),
+        pytest.param("top: &t\n  b: *t\n", "at top.b", id="block-mapping"),
+        pytest.param("a: &x {b: [*x]}\nc: *x\n", "at a.b.0", id="mapping-through-a-list"),
+        pytest.param("a: &x {b: 1, c: {<<: *x}}\n", "at a.c.c", id="through-a-merge"),
+        pytest.param("a: &x !!pairs [{k: *x}]\n", "at a.0.1", id="pairs-in-itself"),
+    ],
+)
+def test_a_value_that_contains_itself_is_refused_naming_its_place(
+    tmp_path: Path, text: str, place: str
+) -> None:
+    path = _write_federal(tmp_path, text)
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(excinfo.value) == f"{path}: " + _CYCLE_MESSAGE.format(place=place)
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+
+
+def test_a_container_reached_through_two_aliases_is_not_a_cycle(tmp_path: Path) -> None:
+    _write_federal(tmp_path, "a: &x [1, 2]\nb: [*x, *x]\n")
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("b") == ((1, 2), (1, 2))
+    assert federal.get("b")[0] is federal.get("b")[1] is federal.get("a")
+
+
+def test_a_mapping_reached_through_two_aliases_is_not_a_cycle(tmp_path: Path) -> None:
+    _write_federal(tmp_path, "a: &x {k: 1}\nb: [*x, *x]\n")
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("b")[0] is federal.get("b")[1] is federal.get("a")
+
+
+def test_a_container_reached_through_many_aliases_is_frozen_once(tmp_path: Path) -> None:
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, 6):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    _write_federal(tmp_path, "\n".join(lines) + "\n")
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    for i in range(1, 6):
+        assert all(element is federal.get(f"l{i - 1}") for element in federal.get(f"l{i}"))
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_integer_keys_refuses_a_key_with_too_many_digits_to_read() -> None:
+    key = "1" * 700
+    ps = _synthetic({"table": MappingProxyType({key: 1.0})})
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        ps.integer_keys("table")
+
+    assert str(raised.value) == (
+        f"{_where('table')}: key {repr(key)[:40]}… is an integer with more digits than Python "
+        "will read in decimal."
+    )
+    assert isinstance(raised.value.__cause__, ValueError)
+
+
+@pytest.mark.usefixtures("int_digit_limit")
+def test_integer_keys_reads_the_longest_key_python_will_read() -> None:
+    ps = _synthetic({"table": MappingProxyType({"9" * 640: 1.0})})
+
+    assert ps.integer_keys("table") == (int("9" * 640),)
+
+
+def test_integer_keys_shows_a_long_key_that_is_not_decimal_cut() -> None:
+    key = "x" * 3000
+    ps = _synthetic({"table": MappingProxyType({key: 1.0})})
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        ps.integer_keys("table")
+
+    assert str(raised.value) == (
+        f"{_where('table')}: key {repr(key)[:40]}… is not an integer written in plain "
+        "decimal, such as 71."
+    )
+
+
+_FLOAT_ERROR_PREFIX_LENGTH: Final[int] = len("could not convert string to float: ''")
+_DETAIL_LIMIT: Final[int] = 200
+
+
+@pytest.mark.parametrize(
+    ("digits", "cause_length"),
+    [
+        pytest.param(_DETAIL_LIMIT - _FLOAT_ERROR_PREFIX_LENGTH - 1, 200, id="exactly-200"),
+        pytest.param(_DETAIL_LIMIT - _FLOAT_ERROR_PREFIX_LENGTH, 201, id="one-over"),
+        pytest.param(3000, None, id="long"),
+    ],
+)
+def test_a_construction_error_quotes_at_most_200_characters(
+    digits: int, cause_length: int | None
+) -> None:
+    with pytest.raises(YamlConstructionError) as excinfo:
+        parse_yaml(f"a: !!float {'9' * digits}x\n")
+
+    text = str(excinfo.value.__cause__)
+    if cause_length is not None:
+        assert len(text) == cause_length
+    shown = text if len(text) <= 200 else text[:200] + "…"
+    assert str(excinfo.value) == "the document could not be built: ValueError: " + shown
+
+
+def _flow_sequence(depth: int) -> str:
+    return "a: " + "[" * depth + "1" + "]" * depth + "\n"
+
+
+def _flow_mapping(depth: int) -> str:
+    return "a: " + "{a: " * depth + "1" + "}" * depth + "\n"
+
+
+def _deepest_that_parses(shape: Callable[[int], str]) -> int:
+    """The largest depth ``parse_yaml`` builds, found by bisection."""
+    low, high = 1, sys.getrecursionlimit()
+    while low < high:
+        middle = (low + high + 1) // 2
+        try:
+            parse_yaml(shape(middle))
+        except YamlConstructionError:
+            high = middle - 1
+        else:
+            low = middle
+    return low
+
+
+@pytest.mark.parametrize("shape", [_flow_sequence, _flow_mapping], ids=["sequence", "mapping"])
+def test_freezing_never_runs_out_of_stack_where_parsing_did_not(
+    tmp_path: Path, shape: Callable[[int], str]
+) -> None:
+    deepest = _deepest_that_parses(shape)
+
+    _write_federal(tmp_path, shape(deepest - 3))
+    load_year(2030, tmp_path)
+    for depth in range(deepest - 2, deepest + 1):
+        _write_federal(tmp_path, shape(depth))
+        try:
+            load_year(2030, tmp_path)
+        except MalformedParamFileError as exc:
+            assert isinstance(exc.__cause__, YamlConstructionError), depth
+
+
+_TOO_DEEP_MESSAGE: Final[str] = (
+    "the value {place} nests too deeply, through YAML aliases, to be frozen."
+)
+
+
+def _merge_reordered_chain(levels: int) -> str:
+    """Each anchor holds the one before; a merge key puts the deepest alias first."""
+    lines = ["m:", "  k0: &l0 [1]"]
+    lines += [f"  k{i}: &l{i} [*l{i - 1}]" for i in range(1, levels)]
+    lines.append(f"  <<: {{deep: *l{levels - 1}}}")
+    return "\n".join(lines) + "\n"
+
+
+def test_a_chain_of_aliases_too_deep_to_freeze_is_refused(tmp_path: Path) -> None:
+    path = _write_federal(tmp_path, _merge_reordered_chain(sys.getrecursionlimit()))
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        load_year(2030, tmp_path)
+
+    assert str(excinfo.value) == f"{path}: " + _TOO_DEEP_MESSAGE.format(place="at the top level")
+    assert isinstance(excinfo.value.__cause__, MalformedParamFileError)
+    assert isinstance(excinfo.value.__cause__.__cause__, RecursionError)
+
+
+def test_a_short_merge_reordered_chain_of_aliases_loads(tmp_path: Path) -> None:
+    _write_federal(tmp_path, _merge_reordered_chain(10))
+
+    federal = load_year(2030, tmp_path)["federal"]
+
+    assert federal.get("m.deep") is federal.get("m.k9")
+    assert federal.get("m.k1") == ((1,),)
+
+
+def test_too_deep_to_freeze_is_reported_at_the_place_given() -> None:
+    import engine.params.loader as loader
+
+    nested: list[Any] = []
+    innermost = nested
+    for _ in range(sys.getrecursionlimit()):
+        innermost.append([])
+        innermost = innermost[0]
+
+    with pytest.raises(MalformedParamFileError) as excinfo:
+        loader._freeze(nested, where="m.n")
+
+    assert str(excinfo.value) == _TOO_DEEP_MESSAGE.format(place="at m.n")
+    assert isinstance(excinfo.value.__cause__, RecursionError)

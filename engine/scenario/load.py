@@ -66,7 +66,7 @@ MAX_DOCUMENT_CHARACTERS = 1_000_000
 # hundreds of thousands, and the message would be tens of megabytes.
 MAX_REPORTED_ERRORS = 20
 
-# How much of a key that is not text its message shows.
+# How much of a key a message shows: a key that is not text, or a repeated JSON key.
 _KEY_SHOWN_CHARACTERS = 40
 
 
@@ -197,12 +197,18 @@ def validation_message(exc: ValidationError) -> str:
 
 
 def _unique_json_object(source: str, pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """``object_pairs_hook`` that refuses a repeated key rather than keeping the last."""
+    """``object_pairs_hook`` that refuses a repeated key rather than keeping the last.
+
+    The message shows the key's repr cut at ``_KEY_SHOWN_CHARACTERS`` characters.
+    """
     out: dict[str, object] = {}
     for key, value in pairs:
         if key in out:
+            shown = repr(key)
+            if len(shown) > _KEY_SHOWN_CHARACTERS:
+                shown = shown[:_KEY_SHOWN_CHARACTERS] + "…"
             raise DuplicateKeyError(
-                f"{source}: key {key!r} appears more than once in this object. JSON parsers "
+                f"{source}: key {shown} appears more than once in this object. JSON parsers "
                 "differ on which value they keep, so one of them would be discarded silently."
             )
         out[key] = value

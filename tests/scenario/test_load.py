@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 import engine.scenario
@@ -1253,4 +1254,41 @@ def test_load_scenario_refuses_a_set_naming_the_file(tmp_path: Path) -> None:
         load_scenario(path)
     assert (
         str(caught.value) == f"{path}: the value at policies.0.contribution.spill_order" + SET_TAIL
+    )
+
+
+@pytest.mark.usefixtures("default_int_digit_limit")
+def test_a_repeated_integer_key_too_long_for_decimal_is_a_duplicate_key() -> None:
+    """The message shows the key in hex rather than failing to write it in decimal."""
+    literal = "0x" + "f" * 5000
+    text = f"? {literal}\n: 1\n? {literal}\n: 2\n"
+    (value,) = yaml.safe_load(f"? {literal}\n: 1\n")
+
+    with pytest.raises(DuplicateKeyError) as excinfo:
+        scenario_from_text(text, "request body", syntax="yaml")
+
+    assert str(excinfo.value) == (
+        f"request body: line 3, column 3: key {hex(value)[:40]}… appears more than once in this "
+        "mapping. YAML forbids it, and PyYAML would keep the last, so one of the values would be "
+        "discarded silently."
+    )
+
+
+@pytest.mark.parametrize(
+    ("length", "shown"),
+    [
+        pytest.param(3000, repr("x" * 3000)[:40] + "…", id="long"),
+        pytest.param(38, repr("x" * 38), id="exactly-forty-characters"),
+        pytest.param(39, repr("x" * 39)[:40] + "…", id="one-over"),
+    ],
+)
+def test_a_repeated_json_key_is_shown_cut_at_forty_characters(length: int, shown: str) -> None:
+    key = "x" * length
+
+    with pytest.raises(DuplicateKeyError) as excinfo:
+        scenario_from_text(f'{{"{key}": 1, "{key}": 2}}', "request body", syntax="json")
+
+    assert str(excinfo.value) == (
+        f"request body: key {shown} appears more than once in this object. JSON parsers "
+        "differ on which value they keep, so one of them would be discarded silently."
     )
