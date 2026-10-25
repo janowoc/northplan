@@ -49,6 +49,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from engine.core.indexation import RealParamSet
+from engine.params.loader import shown_value
 
 __all__ = ["band_threshold_annual", "in_band", "is_modelled"]
 
@@ -72,7 +73,8 @@ def is_modelled(params: RealParamSet) -> bool:
     modelled = params.get("gis.modelled")
     if not isinstance(modelled, bool):
         raise TypeError(
-            f"gis.modelled must be a boolean, got {type(modelled).__name__}: {modelled!r}"
+            f"gis.modelled must be a boolean, got {type(modelled).__name__}: "
+            f"{shown_value(modelled)}"
         )
     return modelled
 

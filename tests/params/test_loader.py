@@ -2291,9 +2291,9 @@ def _cut_oracle(text: str, n: int) -> str:
 
 
 def _shown(value: Any) -> str:
-    from engine.params.loader import _shown_value
+    from engine.params.loader import shown_value
 
-    return _shown_value(value)
+    return shown_value(value)
 
 
 def _repr_of_length(wrap: Callable[[str], Any], length: int) -> Any:

@@ -43,7 +43,7 @@ from numpy.typing import ArrayLike, NDArray
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet, nominal_carry_factor
 from engine.core.state import RespState, updated
-from engine.params.loader import is_finite
+from engine.params.loader import is_finite, shown_value
 
 #: Net-income fields ``PersonState`` carries (``prior_year_net_income``,
 #: ``net_income_two_years_prior``) — a structural fact about the state, not a
@@ -203,7 +203,8 @@ def governing_income_year_offset(params: RealParamSet) -> int:
         or not float(value).is_integer()
     ):
         raise ValueError(
-            f"{params.raw.source}[{path}]: expected a whole number of years, found {value!r}."
+            f"{params.raw.source}[{path}]: expected a whole number of years, "
+            f"found {shown_value(value)}."
         )
     offset = int(value)
     if offset != -_NET_INCOME_FIELDS:

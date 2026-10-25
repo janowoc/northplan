@@ -87,6 +87,7 @@ __all__ = [
     "is_finite",
     "load_year",
     "parse_yaml",
+    "shown_value",
 ]
 
 #: The YAML 1.1 value-key tag, which PyYAML's resolver gives a plain ``=``
@@ -271,7 +272,7 @@ def _pieces(value: Any) -> Iterator[tuple[bool, Any]]:
 
 
 def _write_value(value: Any, parts: list[str]) -> None:
-    """Append to ``parts`` the text of ``value`` as :func:`_shown_value` shows it, before the cut.
+    """Append to ``parts`` the text of ``value`` as :func:`shown_value` shows it, before the cut.
 
     A tuple, list, dict or read-only mapping of exactly that type is written piece by piece with
     an explicit stack, so nesting them to any depth does not recurse; a read-only mapping is
@@ -303,7 +304,7 @@ def _write_value(value: Any, parts: list[str]) -> None:
             stack.pop()
 
 
-def _shown_value(value: Any) -> str:
+def shown_value(value: Any) -> str:
     """``repr(value)`` as a message shows it, with a long one cut.
 
     For a value the loader builds (scalars, tuples, lists, dicts and read-only mappings over
@@ -645,14 +646,14 @@ def integer_value(value: Any, where: str) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MalformedParamFileError(
-            f"{where}: expected an integer, found {type(value).__name__} ({_shown_value(value)})."
+            f"{where}: expected an integer, found {type(value).__name__} ({shown_value(value)})."
         )
     if not is_finite(value):
         raise MalformedParamFileError(
-            f"{where}: expected a finite number, found {_shown_value(value)}."
+            f"{where}: expected a finite number, found {shown_value(value)}."
         )
     if not float(value).is_integer():
-        raise MalformedParamFileError(f"{where}: expected an integer, found {_shown_value(value)}.")
+        raise MalformedParamFileError(f"{where}: expected an integer, found {shown_value(value)}.")
     if isinstance(value, int):
         return value
     return int(value)
@@ -730,11 +731,11 @@ class ParamSet:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise MalformedParamFileError(
                 f"{self._where(path)}: expected a number, found "
-                f"{type(value).__name__} ({_shown_value(value)})."
+                f"{type(value).__name__} ({shown_value(value)})."
             )
         if not is_finite(value):
             raise MalformedParamFileError(
-                f"{self._where(path)}: expected a finite number, found {_shown_value(value)}."
+                f"{self._where(path)}: expected a finite number, found {shown_value(value)}."
             )
         return float(value)
 
@@ -754,7 +755,7 @@ class ParamSet:
         if not isinstance(value, tuple):
             raise MalformedParamFileError(
                 f"{self._where(path)}: expected a list, found "
-                f"{type(value).__name__} ({_shown_value(value)})."
+                f"{type(value).__name__} ({shown_value(value)})."
             )
         return value
 
@@ -772,11 +773,11 @@ class ParamSet:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise MalformedParamFileError(
                     f"{self._where(path)}: element {index} is "
-                    f"{type(value).__name__} ({_shown_value(value)}), expected a number."
+                    f"{type(value).__name__} ({shown_value(value)}), expected a number."
                 )
             if not is_finite(value):
                 raise MalformedParamFileError(
-                    f"{self._where(path)}: element {index} is {_shown_value(value)}, "
+                    f"{self._where(path)}: element {index} is {shown_value(value)}, "
                     "expected a finite number."
                 )
             out.append(float(value))
@@ -812,7 +813,7 @@ class ParamSet:
         if not isinstance(table, Mapping):
             raise MalformedParamFileError(
                 f"{self._where(path)}: expected a mapping, found "
-                f"{type(table).__name__} ({_shown_value(table)})."
+                f"{type(table).__name__} ({shown_value(table)})."
             )
         if not table:
             raise MalformedParamFileError(

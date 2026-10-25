@@ -50,6 +50,7 @@ from engine.params.loader import (
     ParamSet,
     ParamYear,
     is_finite,
+    shown_value,
 )
 
 __all__ = [
@@ -288,7 +289,7 @@ def schedule(name: str, params: ParamSet) -> tuple[int, tuple[str, ...]]:
         if not isinstance(entry, str):
             raise MalformedParamFileError(
                 f"{params.source}[{where}.applies_to]: element {index} is "
-                f"{type(entry).__name__} ({entry!r}), expected a dotted path."
+                f"{type(entry).__name__} ({shown_value(entry)}), expected a dotted path."
             )
     return len(months), tuple(applies_to)
 
@@ -538,11 +539,12 @@ class RealParamSet:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise MalformedParamFileError(
                     f"{self.raw.source}[{concrete}]: expected a number, found "
-                    f"{type(value).__name__} ({value!r})."
+                    f"{type(value).__name__} ({shown_value(value)})."
                 )
             if not is_finite(value):
                 raise MalformedParamFileError(
-                    f"{self.raw.source}[{concrete}]: expected a finite number, found {value!r}."
+                    f"{self.raw.source}[{concrete}]: expected a finite number, "
+                    f"found {shown_value(value)}."
                 )
             out.append(float(value) * factor)
         return tuple(out)

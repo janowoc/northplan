@@ -40,7 +40,9 @@ from engine.params.loader import (
     MalformedParamFileError,
     MissingParameterError,
     ParamError,
+    ParamSet,
     load_year,
+    shown_value,
 )
 
 #: A year that doubles the price level every month, so a month of erosion is a
@@ -703,3 +705,137 @@ def test_integer_keys_passes_through_an_unrouted_path(tmp_path: Path) -> None:
 def test_integer_keys_refuses_a_routed_path(real: RealParamSet) -> None:
     with pytest.raises(RoutedParameterError, match="undeflated"):
         real.integer_keys("credits.basic_amount_annual")
+
+
+def _fan_out_text(levels: int) -> str:
+    # The tenfold YAML alias fan-out: level i is ten aliases of level i - 1.
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, levels):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def _applies_to_params(root: Path, entry: str, before: str = "") -> ParamSet:
+    """Load a ``federal`` file whose ``yearly`` schedule applies to the one given YAML entry."""
+    _write(
+        root,
+        "federal",
+        before + "# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.\n"
+        "indexation:\n"
+        "  yearly:\n"
+        "    adjustment_months: [1]\n"
+        f"    applies_to: [{entry}]\n",
+    )
+    return load_year(2026, root).federal
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["3", "[1, 2]", "{a: 1}"],
+    ids=["number", "list", "mapping"],
+)
+def test_a_path_that_is_not_a_string_shows_a_short_value_whole(
+    tmp_path: Path, written: str
+) -> None:
+    params = _applies_to_params(tmp_path, written)
+    entry = params.get("indexation.yearly.applies_to")[0]
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        schedule("yearly", params)
+
+    assert str(raised.value) == (
+        f"{params.source}[indexation.yearly.applies_to]: element 0 is "
+        f"{type(entry).__name__} ({entry!r}), expected a dotted path."
+    )
+
+
+def test_a_path_that_is_not_a_string_cuts_a_long_value(tmp_path: Path) -> None:
+    params = _applies_to_params(tmp_path, "*l5", _fan_out_text(6))
+    entry = params.get("indexation.yearly.applies_to")[0]
+    assert shown_value(entry).endswith("…")
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        schedule("yearly", params)
+
+    assert str(raised.value) == (
+        f"{params.source}[indexation.yearly.applies_to]: element 0 is "
+        f"{type(entry).__name__} ({shown_value(entry)}), expected a dotted path."
+    )
+    assert len(str(raised.value)) < 1000
+
+
+def _wildcard_table(root: Path, element: str, before: str = "") -> RealParamSet:
+    """Load a ``federal`` file whose one-row table ``t`` has ``m`` set to the given YAML."""
+    _write(
+        root,
+        "federal",
+        before + "# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.\n"
+        "indexation:\n"
+        "  yearly:\n"
+        "    adjustment_months: [1]\n"
+        "    applies_to:\n"
+        "      - t.*.m\n"
+        "t:\n"
+        f"  - m: {element}\n",
+    )
+    return real_year(load_year(2026, root), 0).federal
+
+
+@pytest.mark.parametrize(
+    "written",
+    ['"abc"', "[1, 2]", "{a: 1}"],
+    ids=["string", "list", "mapping"],
+)
+def test_a_wildcard_table_refuses_an_element_that_is_not_a_number(
+    tmp_path: Path, written: str
+) -> None:
+    federal = _wildcard_table(tmp_path, written)
+    value = federal.raw.get("t")[0]["m"]
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amounts("t.*.m", 0)
+
+    assert str(raised.value) == (
+        f"{federal.raw.source}[t.0.m]: expected a number, found {type(value).__name__} ({value!r})."
+    )
+
+
+def test_a_wildcard_table_refuses_a_boolean_element(tmp_path: Path) -> None:
+    federal = _wildcard_table(tmp_path, "true")
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amounts("t.*.m", 0)
+
+    assert (
+        str(raised.value) == f"{federal.raw.source}[t.0.m]: expected a number, found bool (True)."
+    )
+
+
+def test_a_wildcard_table_cuts_a_long_element(tmp_path: Path) -> None:
+    federal = _wildcard_table(tmp_path, "*l5", _fan_out_text(6))
+    value = federal.raw.get("t")[0]["m"]
+    assert shown_value(value).endswith("…")
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amounts("t.*.m", 0)
+
+    assert str(raised.value) == (
+        f"{federal.raw.source}[t.0.m]: expected a number, "
+        f"found {type(value).__name__} ({shown_value(value)})."
+    )
+    assert len(str(raised.value)) < 1000
+
+
+def test_a_wildcard_table_cuts_a_long_element_that_is_not_finite(tmp_path: Path) -> None:
+    federal = _wildcard_table(tmp_path, "1" + "0" * 1000)
+    value = federal.raw.get("t")[0]["m"]
+    assert type(value) is int
+    assert len(repr(value)) > 500
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.amounts("t.*.m", 0)
+
+    assert str(raised.value) == (
+        f"{federal.raw.source}[t.0.m]: expected a finite number, found {shown_value(value)}."
+    )
+    assert len(str(raised.value)) < 1000

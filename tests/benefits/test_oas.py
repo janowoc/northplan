@@ -22,7 +22,7 @@ from engine.benefits.oas import (
 from engine.core.indexation import erosion_factor, real_year, schedule
 from engine.core.state import BenefitState
 from engine.core.timeline import MONTHS_PER_YEAR
-from engine.params.loader import MalformedParamFileError, load_year
+from engine.params.loader import MalformedParamFileError, load_year, shown_value
 
 JANUARY = 0
 MONTH = 0
@@ -546,3 +546,131 @@ def test_band_start_must_be_an_integer(tmp_path: Path, written: str, message: st
     with pytest.raises(MalformedParamFileError) as raised:
         _band_max(800, JANUARY, oas)
     assert str(raised.value) == f"{oas.raw.source}[pension.age_bands.1.from_age_months]: {message}"
+
+
+def _fan_out_text(levels: int) -> str:
+    # The tenfold YAML alias fan-out: level i is ten aliases of level i - 1.
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, levels):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    return "\n".join(lines) + "\n"
+
+
+_BANDS_HEADER = (
+    "# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.\n"
+    "indexation:\n"
+    "  pension:\n"
+    "    adjustment_months: [1, 4, 7, 10]\n"
+    "    applies_to:\n"
+    "      - pension.age_bands.*.maximum_monthly\n"
+)
+
+#: One band, anchored so that many aliases of it make a long band table.
+_ANCHORED_BAND = "bands: &b {from_age_months: 780, maximum_monthly: 100}\n"
+
+
+def _band_params(root: Path, bands_yaml: str, before: str = ""):
+    """Load an ``oas`` file whose ``pension.age_bands`` is the given YAML flow list."""
+    text = before + _BANDS_HEADER + f"pension:\n  age_bands: {bands_yaml}\n"
+    _write(root, "oas", text)
+    return real_year(load_year(2026, root), 0.0).oas
+
+
+@pytest.mark.parametrize(
+    "written",
+    ['"abc"', "999", "[1, 2]"],
+    ids=["string", "number", "list"],
+)
+def test_band_max_shows_a_short_band_that_is_not_a_mapping_whole(
+    tmp_path: Path, written: str
+) -> None:
+    from engine.benefits.oas import _band_max
+
+    params = _band_params(tmp_path, f"[{written}]")
+    value = params.raw.get("pension.age_bands")[0]
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        _band_max(800, JANUARY, params)
+
+    assert str(raised.value) == (
+        f"{params.raw.source}[pension.age_bands.0]: expected a mapping, "
+        f"found {type(value).__name__} ({value!r})."
+    )
+
+
+def test_band_max_cuts_a_long_band_that_is_not_a_mapping(tmp_path: Path) -> None:
+    from engine.benefits.oas import _band_max
+
+    params = _band_params(tmp_path, "[*l5]", _fan_out_text(6))
+    value = params.raw.get("pension.age_bands")[0]
+    assert shown_value(value).endswith("…")
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        _band_max(800, JANUARY, params)
+
+    assert str(raised.value) == (
+        f"{params.raw.source}[pension.age_bands.0]: expected a mapping, "
+        f"found {type(value).__name__} ({shown_value(value)})."
+    )
+    assert len(str(raised.value)) < 1000
+
+
+def test_band_max_cuts_long_starting_ages_and_maxima_on_a_count_mismatch(tmp_path: Path) -> None:
+    from engine.benefits.oas import _band_max
+
+    aliases = ", ".join(["*b"] * 150)
+    params = _band_params(tmp_path, f"[{aliases}, {{from_age_months: 900}}]", _ANCHORED_BAND)
+    from_ages = [780] * 150 + [900]
+    maxima = params.amounts("pension.age_bands.*.maximum_monthly", JANUARY)
+    assert len(repr(from_ages)) > 500
+    assert len(repr(maxima)) > 500
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        _band_max(800, JANUARY, params)
+
+    assert str(raised.value) == (
+        f"{params.raw.source}[pension.age_bands]: 151 band starting "
+        f"ages but 150 maxima; each band needs exactly one of each. "
+        f"from_age_months={shown_value(from_ages)}, maxima={shown_value(maxima)}."
+    )
+    assert len(str(raised.value)) < 1500
+
+
+def test_band_max_cuts_long_starting_ages_that_do_not_ascend(tmp_path: Path) -> None:
+    from engine.benefits.oas import _band_max
+
+    aliases = ", ".join(["*b"] * 150)
+    params = _band_params(tmp_path, f"[{aliases}]", _ANCHORED_BAND)
+    from_ages = [780] * 150
+    assert len(repr(from_ages)) > 500
+
+    with pytest.raises(MalformedParamFileError) as raised:
+        _band_max(800, JANUARY, params)
+
+    assert str(raised.value) == (
+        f"{params.raw.source}[pension.age_bands]: from_age_months must strictly "
+        f"ascend, got {shown_value(from_ages)}."
+    )
+    assert len(str(raised.value)) < 1000
+
+
+def test_band_max_shows_short_starting_ages_and_maxima_whole(
+    synth_oas_mismatched, synth_oas_non_ascending
+) -> None:
+    from engine.benefits.oas import _band_max
+
+    with pytest.raises(MalformedParamFileError) as mismatched:
+        _band_max(800, JANUARY, synth_oas_mismatched)
+    maxima = synth_oas_mismatched.amounts("pension.age_bands.*.maximum_monthly", JANUARY)
+    assert str(mismatched.value) == (
+        f"{synth_oas_mismatched.raw.source}[pension.age_bands]: 3 band starting "
+        f"ages but 2 maxima; each band needs exactly one of each. "
+        f"from_age_months={[780, 900, 1000]!r}, maxima={maxima!r}."
+    )
+
+    with pytest.raises(MalformedParamFileError) as descending:
+        _band_max(800, JANUARY, synth_oas_non_ascending)
+    assert str(descending.value) == (
+        f"{synth_oas_non_ascending.raw.source}[pension.age_bands]: from_age_months must "
+        f"strictly ascend, got {[900, 780]!r}."
+    )

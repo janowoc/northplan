@@ -50,7 +50,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from engine.core.indexation import RealParamSet
 from engine.core.state import BenefitState
-from engine.params.loader import MalformedParamFileError, integer_value
+from engine.params.loader import MalformedParamFileError, integer_value, shown_value
 
 
 def deferral_factor(start_age_months: ArrayLike, params: RealParamSet) -> NDArray[np.float64]:
@@ -104,7 +104,7 @@ def _band_max(age_months: float, month_index: int, params: RealParamSet) -> floa
         if not isinstance(band, Mapping):
             raise MalformedParamFileError(
                 f"{params.raw.source}[pension.age_bands.{band_index}]: expected a "
-                f"mapping, found {type(band).__name__} ({band!r})."
+                f"mapping, found {type(band).__name__} ({shown_value(band)})."
             )
         if "from_age_months" not in band:
             raise MalformedParamFileError(
@@ -121,12 +121,12 @@ def _band_max(age_months: float, month_index: int, params: RealParamSet) -> floa
         raise MalformedParamFileError(
             f"{params.raw.source}[pension.age_bands]: {len(from_ages)} band starting "
             f"ages but {len(maxima)} maxima; each band needs exactly one of each. "
-            f"from_age_months={from_ages!r}, maxima={maxima!r}."
+            f"from_age_months={shown_value(from_ages)}, maxima={shown_value(maxima)}."
         )
     if any(a >= b for a, b in itertools.pairwise(from_ages)):
         raise MalformedParamFileError(
             f"{params.raw.source}[pension.age_bands]: from_age_months must strictly "
-            f"ascend, got {from_ages!r}."
+            f"ascend, got {shown_value(from_ages)}."
         )
     index = 0
     for i, from_age in enumerate(from_ages):

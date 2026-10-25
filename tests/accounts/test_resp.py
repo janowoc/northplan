@@ -30,7 +30,7 @@ import pytest
 from engine.accounts import resp
 from engine.core.indexation import real_year
 from engine.core.state import RespState
-from engine.params.loader import load_year
+from engine.params.loader import load_year, shown_value
 
 JANUARY_YEAR_1 = 0
 JANUARY_YEAR_2 = 12
@@ -870,3 +870,58 @@ def test_governing_income_year_offset_raises_on_an_int_too_large_for_a_float(
     assert "grant.enhanced.income_year_offset" in message, message
     assert str(huge.raw.source) in message, message
     assert "expected a whole number of years" in message, message
+
+
+def _fan_out_text(levels: int) -> str:
+    # The tenfold YAML alias fan-out: level i is ten aliases of level i - 1.
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, levels):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    return "\n".join(lines) + "\n"
+
+
+_OFFSET_PATH = "grant.enhanced.income_year_offset"
+
+
+def test_governing_income_year_offset_cuts_a_long_value(tmp_path: Path) -> None:
+    text = "# SYNTHETIC TEST FIXTURE — these are not tax parameters and never were.\n"
+    text += _fan_out_text(6) + SYNTHETIC.replace(
+        "income_year_offset: -1", "income_year_offset: *l5"
+    )
+    _write(tmp_path, "resp", text)
+    long_value = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(long_value)
+
+    value = long_value.raw.get(_OFFSET_PATH)
+    assert shown_value(value).endswith("…")
+    assert str(excinfo.value) == (
+        f"{long_value.raw.source}[{_OFFSET_PATH}]: expected a whole number of years, "
+        f"found {shown_value(value)}."
+    )
+    assert len(str(excinfo.value)) < 1000
+
+
+@pytest.mark.parametrize(
+    "written",
+    ['"two"', "[1, 2]", "{a: 1}"],
+    ids=["string", "list", "mapping"],
+)
+def test_governing_income_year_offset_shows_a_short_value_whole(
+    tmp_path: Path, written: str
+) -> None:
+    _write(
+        tmp_path,
+        "resp",
+        SYNTHETIC.replace("income_year_offset: -1", f"income_year_offset: {written}"),
+    )
+    short = real_year(load_year(2026, tmp_path), 0.0).resp
+
+    with pytest.raises(ValueError) as excinfo:
+        resp.governing_income_year_offset(short)
+
+    value = short.raw.get(_OFFSET_PATH)
+    assert str(excinfo.value) == (
+        f"{short.raw.source}[{_OFFSET_PATH}]: expected a whole number of years, found {value!r}."
+    )

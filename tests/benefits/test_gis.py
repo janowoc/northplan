@@ -16,7 +16,7 @@ import pytest
 
 from engine.benefits.gis import band_threshold_annual, in_band, is_modelled
 from engine.core.indexation import erosion_factor, real_year, schedule
-from engine.params.loader import load_year
+from engine.params.loader import load_year, shown_value
 
 JANUARY = 0
 
@@ -120,3 +120,48 @@ def test_in_band_all_false_when_gis_modelled(synth_oas_modelled) -> None:
     )
     assert not np.any(result)
     assert result.shape == (2,)
+
+
+def _fan_out_text(levels: int) -> str:
+    # The tenfold YAML alias fan-out: level i is ten aliases of level i - 1.
+    lines = ["l0: &l0 [" + ", ".join(["x"] * 10) + "]"]
+    for i in range(1, levels):
+        lines.append(f"l{i}: &l{i} [" + ", ".join([f"*l{i - 1}"] * 10) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def _modelled_params(root: Path, written: str, prefix: str = ""):
+    text = SYNTHETIC_OAS_MODELLED.replace("modelled: true", f"modelled: {written}")
+    _write(root, "oas", prefix + text)
+    return real_year(load_year(2026, root), 0.0).oas
+
+
+@pytest.mark.parametrize(
+    "written",
+    ['"no"', "0", "[1, 2]"],
+    ids=["string", "integer", "list"],
+)
+def test_is_modelled_refuses_a_value_that_is_not_a_boolean(tmp_path: Path, written: str) -> None:
+    params = _modelled_params(tmp_path, written)
+    value = params.raw.get("gis.modelled")
+
+    with pytest.raises(TypeError) as raised:
+        is_modelled(params)
+
+    assert str(raised.value) == (
+        f"gis.modelled must be a boolean, got {type(value).__name__}: {value!r}"
+    )
+
+
+def test_is_modelled_cuts_a_long_value(tmp_path: Path) -> None:
+    params = _modelled_params(tmp_path, "*l5", _fan_out_text(6))
+    value = params.raw.get("gis.modelled")
+    assert shown_value(value).endswith("…")
+
+    with pytest.raises(TypeError) as raised:
+        is_modelled(params)
+
+    assert str(raised.value) == (
+        f"gis.modelled must be a boolean, got {type(value).__name__}: {shown_value(value)}"
+    )
+    assert len(str(raised.value)) < 1000
