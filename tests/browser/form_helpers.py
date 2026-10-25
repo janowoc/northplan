@@ -100,16 +100,23 @@ def native_errors(mapping: Any) -> list[str]:
     return lines(editor.check(mapping, params_root=DEFAULT_PARAMS_ROOT)["errors"])
 
 
+def _wait_state(page: Page, text: str | re.Pattern[str]) -> None:
+    """Wait until the form's state line is shown and reads ``text``. The line is hidden while the
+    form is closed and nothing is opening it or holding it off for a run, and it then still reads
+    "No errors.", so a wait on its text alone would pass."""
+    expect(state(page).filter(visible=True)).to_have_text(text)
+
+
 def wait_settled(page: Page) -> None:
-    expect(state(page)).to_have_text(SETTLED)
+    _wait_state(page, SETTLED)
 
 
 def wait_clean(page: Page) -> None:
-    expect(state(page)).to_have_text("No errors.")
+    _wait_state(page, "No errors.")
 
 
 def wait_errors(page: Page) -> None:
-    expect(state(page)).to_have_text(ERRORS_TEXT)
+    _wait_state(page, ERRORS_TEXT)
 
 
 def open_text(page: Page, text: str) -> None:
