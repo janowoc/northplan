@@ -326,7 +326,7 @@ def test_parse_yaml_reports_a_construction_error_ahead_of_a_later_syntax_error()
         pytest.param("x: !!timestamp abc\n", AttributeError, id="timestamp"),
         pytest.param("rate: !!float\n", IndexError, id="float-no-value"),
         pytest.param('x: !!int ""\n', IndexError, id="int-empty-string"),
-        pytest.param("x: !!float 1" + ":1" * 400 + "\n", OverflowError, id="base-60-overflow"),
+        pytest.param("x: !!float 1" + ":1" * 400 + "\n", ValueError, id="base-60"),
         pytest.param("[" * (sys.getrecursionlimit() + 1), RecursionError, id="deep-nesting"),
     ],
 )
@@ -1786,8 +1786,6 @@ _HUGE_INT_SPELLINGS: Final[tuple[Any, ...]] = (
     pytest.param("0x" + "f" * 600, id="hex"),
     pytest.param("-0x" + "f" * 600, id="negative-hex"),
     pytest.param("0b" + "1" * 2200, id="binary"),
-    pytest.param("0" + "7" * 800, id="octal"),
-    pytest.param("1" + ":59" * 400, id="base-60"),
 )
 
 
@@ -2760,3 +2758,194 @@ def test_shown_value_raises_for_a_long_int_inside_a_subclass_container() -> None
 
     with pytest.raises(ValueError):
         _shown(Row((10**700,)))
+
+
+# --- YAML 1.1 octal and base-60 numbers are read as text ---------------------
+
+_NUMBER_FORMS_SAFELOADER_AND_PARSE_YAML_SHARE: Final[tuple[str, ...]] = (
+    "0",
+    "-0",
+    "+0",
+    "08",
+    "09",
+    "1",
+    "-1",
+    "+12",
+    "1_000",
+    "0b101",
+    "-0b1",
+    "0x1F",
+    "0xff_ff",
+    "0o17",
+    "1:60",
+    "0:40",
+    "0.5",
+    "00.5",
+    "010.5",
+    "-0.0",
+    ".5",
+    "1.",
+    "1e5",
+    "1.0e+5",
+    "1.0e5",
+    ".inf",
+    "-.inf",
+    ".nan",
+    "2026-01-01",
+    '"2026-01-01 10:00:00"',
+    "true",
+    "on",
+    "~",
+    "null",
+    "100",
+    "abc",
+    "'010'",
+    '"1:40"',
+)
+
+_TAGGED_NUMBERS_SAFELOADER_AND_PARSE_YAML_SHARE: Final[tuple[str, ...]] = (
+    "!!int 0",
+    "!!int -0",
+    "!!int 0x1f",
+    "!!int 0b101",
+    "!!int 0o17",
+    "!!int 1_000",
+    "!!int 7",
+    "!!float 010",
+    "!!float 1",
+    "!!float .inf",
+    "!!float -.inf",
+    "!!float .nan",
+    "!!float 1_0.5",
+)
+
+_OCTAL_SPELLINGS: Final[tuple[str, ...]] = ("00", "07", "010", "-010", "+010", "0_7", "012")
+_BASE_60_INT_SPELLINGS: Final[tuple[str, ...]] = (
+    "1:40",
+    "190:20:30",
+    "-1:30",
+    "12:30",
+    "1:2:3",
+)
+_BASE_60_FLOAT_SPELLINGS: Final[tuple[str, ...]] = ("1:30.5", "-1:30.5", "+1:30.5")
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Equality that reads NaN as equal to NaN, and an int as unequal to a bool."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return list(a) == list(b) and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return True
+    return type(a) is type(b) and a == b
+
+
+@pytest.mark.parametrize("spelling", _NUMBER_FORMS_SAFELOADER_AND_PARSE_YAML_SHARE)
+def test_parse_yaml_reads_an_unchanged_spelling_as_safe_load_does(spelling: str) -> None:
+    for text in (f"v: {spelling}\n", f"? {spelling}\n: 1\n"):
+        assert _same(parse_yaml(text), yaml.safe_load(text)), text
+
+
+@pytest.mark.parametrize("tagged", _TAGGED_NUMBERS_SAFELOADER_AND_PARSE_YAML_SHARE)
+def test_parse_yaml_reads_an_explicit_number_tag_as_safe_load_does(tagged: str) -> None:
+    text = f"v: {tagged}\n"
+    assert _same(parse_yaml(text), yaml.safe_load(text)), text
+
+
+def test_the_unchanged_corpus_reaches_every_kind_of_value() -> None:
+    kinds = {
+        type(yaml.safe_load(f"v: {s}\n")["v"])
+        for s in _NUMBER_FORMS_SAFELOADER_AND_PARSE_YAML_SHARE
+    }
+    assert {int, float, str, bool, type(None), datetime.date} <= kinds
+    assert math.isnan(parse_yaml("v: .nan\n")["v"])
+
+
+@pytest.mark.parametrize("spelling", _OCTAL_SPELLINGS)
+def test_a_plain_octal_spelling_loads_as_its_text(spelling: str) -> None:
+    assert yaml.safe_load(f"v: {spelling}\n")["v"] != spelling, "the oracle reads it as a number"
+    assert parse_yaml(f"v: {spelling}\n") == {"v": spelling}
+    assert parse_yaml(f"? {spelling}\n: 1\n") == {spelling: 1}
+
+
+@pytest.mark.parametrize("spelling", _BASE_60_INT_SPELLINGS + _BASE_60_FLOAT_SPELLINGS)
+def test_a_plain_base_60_spelling_loads_as_its_text(spelling: str) -> None:
+    assert yaml.safe_load(f"v: {spelling}\n")["v"] != spelling, "the oracle reads it as a number"
+    assert parse_yaml(f"v: {spelling}\n") == {"v": spelling}
+    assert parse_yaml(f"? {spelling}\n: 1\n") == {spelling: 1}
+
+
+def test_a_base_60_float_spelling_is_a_float_to_the_oracle() -> None:
+    assert isinstance(yaml.safe_load("v: 1:30.5\n")["v"], float)
+    assert isinstance(yaml.safe_load("v: 1:40\n")["v"], int)
+
+
+def test_safe_loader_is_untouched_by_importing_and_using_the_loader() -> None:
+    parse_yaml("v: 010\nw: 1:40\n")
+    assert yaml.safe_load("v: 010\nw: 1:40\n") == {"v": 8, "w": 100}
+
+
+def test_keys_that_used_to_collide_no_longer_do() -> None:
+    assert parse_yaml("010: a\n8: b\n") == {"010": "a", 8: "b"}
+
+
+@pytest.mark.parametrize(
+    ("tagged", "expected"),
+    [
+        ("!!int 010", 10),
+        ("!!int -010", -10),
+        ("!!int +010", 10),
+        ("!!int 08", 8),
+        ("!!int 09", 9),
+        ("!!int 0_10", 10),
+        ("!!int 00", 0),
+        ("!!int '010'", 10),
+        ("!!int |\n  010\n", 10),
+        ('!!int "010 "', 10),
+        ('!!int " 010"', 10),
+        ('!!int " -010"', -10),
+        ('!!int "0\u0661\u0660"', 10),
+        ('!!int "\\u001c010"', 10),
+    ],
+)
+def test_an_int_tag_reads_digits_after_a_leading_zero_in_decimal(
+    tagged: str, expected: int
+) -> None:
+    value = parse_yaml(f"v: {tagged}\n")["v"]
+    assert value == expected
+    assert type(value) is int
+
+
+@pytest.mark.parametrize(
+    "tagged",
+    ["!!int 1:40", "!!int -1:40", "!!float 1:30.5", "!!float 1:40"],
+)
+def test_a_base_60_number_under_an_explicit_tag_is_not_built(tagged: str) -> None:
+    with pytest.raises(YamlConstructionError) as raised:
+        parse_yaml(f"v: {tagged}\n")
+    assert isinstance(raised.value.__cause__, ValueError)
+
+
+def _federal_with(tmp_path: Path, text: str) -> ParamSet:
+    year = tmp_path / "2030"
+    year.mkdir()
+    (year / "federal.yaml").write_text(text, encoding="utf-8")
+    return load_year(2030, tmp_path)["federal"]
+
+
+@pytest.mark.parametrize("read", ["number", "integer"])
+def test_a_param_value_written_in_octal_is_refused_as_a_str(tmp_path: Path, read: str) -> None:
+    federal = _federal_with(tmp_path, "rate: 010\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        getattr(federal, read)("rate")
+    assert "found str" in str(raised.value)
+    assert "'010'" in str(raised.value)
+
+
+def test_a_param_table_with_a_plain_octal_key_is_refused_by_integer_keys(tmp_path: Path) -> None:
+    federal = _federal_with(tmp_path, "table:\n  '70': 1.0\n  071: 2.0\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        federal.integer_keys("table")
+    assert str(raised.value) == (
+        f"{federal.source}[table]: key '071' is not an integer written in plain decimal, "
+        "such as 71."
+    )

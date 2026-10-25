@@ -33,6 +33,12 @@ is not a repeat. Two keys that read the same once stored as text (``65`` and
 keeps one pair per key, as construction would, so merge keys cannot multiply a
 document's size.
 
+Two YAML 1.1 number forms that YAML 1.2 dropped are not read as numbers. A plain scalar
+SafeLoader reads as octal (``010``, ``07``) or in base 60 (``1:40``, ``1:30.5``) is loaded as
+its text, as a value or as a key. ``!!int`` reads digits after a leading zero in decimal
+(``!!int 010`` is 10, as YAML 1.2 reads it), and ``!!int`` or ``!!float`` text in base 60
+cannot be built. Every other scalar is read as SafeLoader reads it.
+
 A parameter file may hold only what freezes exactly. A mapping key that is neither a ``str`` nor
 an ``int`` (``on``, which YAML reads as true, ``1.5``, a date, a ``!!binary`` key) is refused, as
 is an integer, key or value, with more digits than Python will write in decimal, a set
@@ -95,6 +101,43 @@ _SCALAR_KEY_TAGS: Final[frozenset[str]] = frozenset(
     f"tag:yaml.org,2002:{suffix}"
     for suffix in ("str", "int", "float", "bool", "null", "binary", "timestamp")
 )
+
+#: The YAML ``int`` implicit-resolver pattern: PyYAML's own, without its leading-zero octal and
+#: base-60 alternatives, so those spellings stay plain text. YAML grammar, not a tax constant.
+_INT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"""^(?:[-+]?0b[0-1_]+
+    |[-+]?(?:0|[1-9][0-9_]*)
+    |[-+]?0x[0-9a-fA-F_]+)$""",
+    re.X,
+)
+
+#: The YAML ``float`` implicit-resolver pattern: PyYAML's own, without its base-60 alternative,
+#: so that spelling stays plain text. YAML grammar, not a tax constant.
+_FLOAT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"""^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?
+    |\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?
+    |[-+]?\.(?:inf|Inf|INF)
+    |\.(?:nan|NaN|NAN))$""",
+    re.X,
+)
+
+#: The YAML tags the two patterns above resolve. YAML tags, not tax constants.
+_INT_TAG: Final[str] = "tag:yaml.org,2002:int"
+_FLOAT_TAG: Final[str] = "tag:yaml.org,2002:float"
+
+
+def _implicit_resolvers() -> dict[str | None, list[tuple[str, re.Pattern[str]]]]:
+    """Copy SafeLoader's implicit resolvers, swapping in the int and float patterns above.
+
+    Returns a new dict of new lists, so SafeLoader's own table is never changed. Each int
+    and float entry keeps its position.
+    """
+    replacement = {_INT_TAG: _INT_PATTERN, _FLOAT_TAG: _FLOAT_PATTERN}
+    return {
+        first: [(tag, replacement.get(tag, pattern)) for tag, pattern in entries]
+        for first, entries in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+
 
 #: How much of a key a message shows: its repr, or its hex for an int too long to write in
 #: decimal, cut at this many characters.
@@ -290,7 +333,11 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     An ordered map (``!!omap``) that repeats a key is refused the same way. After
     merge flattening a mapping keeps one pair per key, with keys compared as
     construction compares them (``1`` and ``1.0`` are one key).
+    Its int and float resolvers and constructors read numbers as the module docstring says;
+    SafeLoader's own tables are left as they are.
     """
+
+    yaml_implicit_resolvers = _implicit_resolvers()
 
     def compose_mapping_node(self, anchor: Any) -> yaml.MappingNode:
         node = super().compose_mapping_node(anchor)
@@ -367,8 +414,36 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 seen.add(key)
         yield from super().construct_yaml_omap(node)
 
+    def construct_yaml_int(self, node: yaml.Node) -> int:
+        """Build an ``!!int`` as SafeLoader does, except for two spellings.
+
+        Digits after a leading zero are read in decimal. Base-60 text is not built: ``int``
+        raises its ``ValueError`` on it.
+        """
+        text = self.construct_scalar(node).replace("_", "")
+        stripped = text.strip()
+        unsigned = stripped[1:] if stripped[:1] in ("+", "-") else stripped
+        if len(unsigned) > 1 and unsigned[0] == "0" and unsigned.isdecimal():
+            return -int(unsigned) if stripped[0] == "-" else int(unsigned)
+        if ":" in text:
+            int(unsigned)  # raises ValueError: base-60 text is not a decimal integer
+        return super().construct_yaml_int(node)
+
+    def construct_yaml_float(self, node: yaml.Node) -> float:
+        """Build a ``!!float`` as SafeLoader does, except that base-60 text is not built.
+
+        ``float`` raises its ``ValueError`` on it.
+        """
+        digits = self.construct_scalar(node).replace("_", "")
+        unsigned = digits[1:] if digits[:1] in ("+", "-") else digits
+        if ":" in unsigned:
+            float(unsigned)  # raises ValueError: base-60 text is not a float
+        return super().construct_yaml_float(node)
+
 
 _UniqueKeyLoader.add_constructor("tag:yaml.org,2002:omap", _UniqueKeyLoader.construct_yaml_omap)
+_UniqueKeyLoader.add_constructor(_INT_TAG, _UniqueKeyLoader.construct_yaml_int)
+_UniqueKeyLoader.add_constructor(_FLOAT_TAG, _UniqueKeyLoader.construct_yaml_float)
 
 
 def parse_yaml(text: str) -> Any:
@@ -378,7 +453,8 @@ def parse_yaml(text: str) -> Any:
         text: YAML document text.
 
     Returns:
-        Whatever ``yaml.safe_load(text)`` would return for the same text.
+        Whatever ``yaml.safe_load(text)`` would return for the same text, except for the two
+        YAML 1.1 number forms the module docstring names.
 
     Raises:
         DuplicateYamlKeyError: If one mapping, or one ordered map (``!!omap``), in ``text``

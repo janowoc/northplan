@@ -1123,8 +1123,8 @@ def test_a_long_key_is_cut_after_forty_characters() -> None:
 
 @pytest.mark.parametrize(
     "spelling",
-    ["0x" + "f" * 5000, "0b" + "1" * 20_000, "0" + "7" * 6000, ":".join(["59"] * 3000)],
-    ids=["hex", "binary", "octal", "base-60"],
+    ["0x" + "f" * 5000, "0b" + "1" * 20_000],
+    ids=["hex", "binary"],
 )
 @pytest.mark.usefixtures("default_int_digit_limit")
 def test_an_integer_key_too_long_for_decimal_is_shown_in_hex(spelling: str) -> None:
@@ -1310,3 +1310,18 @@ def test_scenario_from_text_bounds_a_long_yaml_error() -> None:
         scenario_from_text("a: *" + "x" * 5000 + "\n", "request body", syntax="yaml")
     assert len(str(caught.value)) < 1000
     assert "…" in str(caught.value)
+
+
+def test_a_birth_month_written_010_reads_as_10() -> None:
+    text = example_text().replace("birth_month: 3", "birth_month: 010", 1)
+    assert "birth_month: 010" in text
+    scenario = scenario_from_text(text, "x", syntax="yaml")
+    assert scenario.household.persons[0].birth_month == 10
+
+
+def test_n_paths_written_in_base_60_is_refused_at_n_paths() -> None:
+    text = example_text().replace("n_paths: 10000", "n_paths: 1:40")
+    assert "n_paths: 1:40" in text
+    with pytest.raises(InvalidScenarioError) as caught:
+        scenario_from_text(text, "x", syntax="yaml")
+    assert "n_paths\n" in str(caught.value)
