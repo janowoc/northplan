@@ -174,7 +174,7 @@ def test_a_run_turns_off_the_form_but_not_its_three_exits(
     assert len(sent(page)) == count
     release_and_finish(page)
     expect(page.locator("#form")).not_to_have_attribute("disabled", "disabled")
-    expect(state(page)).to_have_text("No errors.")
+    wait_clean(page)
     expect(page.locator("#run")).to_be_enabled()
     assert sent(page)[before:] == ["simulate"]
 

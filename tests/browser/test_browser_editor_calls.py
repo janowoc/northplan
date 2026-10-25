@@ -170,7 +170,7 @@ def test_a_failed_python_edit_is_shown_and_frees_the_form(
     expect(control(page, "household", "persons", 0, "id")).to_have_value("a")
     expect(page.locator("#form")).not_to_have_attribute("disabled", "disabled")
     expect(control(page, "household", "persons", 0, "id")).to_be_enabled()
-    expect(state(page)).to_have_text("No errors.")
+    wait_clean(page)
 
 
 def test_a_failed_schema_call_is_shown(api_form_page: tuple[Page, Offline]) -> None:

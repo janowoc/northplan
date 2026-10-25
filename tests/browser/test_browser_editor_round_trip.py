@@ -31,7 +31,6 @@ from form_helpers import (
     open_text,
     problem,
     shown_errors,
-    state,
     textarea,
     wait_clean,
 )
@@ -221,5 +220,5 @@ def test_anchors_open_with_a_notice(api_form_page: tuple[Page, Offline]) -> None
     open_text(page, text)
     wait_clean(page)
     assert page.locator(".editor-notices li").all_inner_texts() == [editor.FLATTENED]
-    expect(state(page)).to_have_text("No errors.")
+    wait_clean(page)
     assert control(page, "spending", "survivor_share").input_value() == "1.0"
