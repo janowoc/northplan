@@ -100,10 +100,24 @@ def native_errors(mapping: Any) -> list[str]:
     return lines(editor.check(mapping, params_root=DEFAULT_PARAMS_ROOT)["errors"])
 
 
+_TWO_FRAMES = (
+    "() => new Promise((resolve, reject) => { "
+    "const timer = setTimeout(() => reject(new Error('no animation frame in 5 s')), 5000); "
+    "requestAnimationFrame(() => "
+    "requestAnimationFrame(() => { clearTimeout(timer); resolve(); })); "
+    "})"
+)
+
+
 def _wait_state(page: Page, text: str | re.Pattern[str]) -> None:
     """Wait until the form's state line is shown and reads ``text``. The line is hidden while the
     form is closed and nothing is opening it or holding it off for a run, and it then still reads
-    "No errors.", so a wait on its text alone would pass."""
+    "No errors.", so a wait on its text alone would pass. Alpine hides an ``x-show`` element on the
+    animation frame after the change that hides it, so the wait first lets two frames pass; a line
+    already due to be hidden is then not read as shown. If two frames have not come within 5 s, it
+    raises Playwright's ``Error``; the 5 s is a timer on the page, so it cannot fire while the
+    page's main thread is blocked."""
+    page.evaluate(_TWO_FRAMES)
     expect(state(page).filter(visible=True)).to_have_text(text)
 
 

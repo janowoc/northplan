@@ -194,6 +194,9 @@ def test_run_in_the_form_runs_the_checked_yaml(form_page: tuple[Page, Offline]) 
     page.locator("#run").click()
     expect(page.locator(".summary")).to_be_visible(timeout=RUN_TIMEOUT_MS)
     assert page.locator(".summary p").all_inner_texts()[2].endswith("seed 7")
+    wait_clean(page)
+    expect(control(page, "seed")).to_be_visible()
+    expect(control(page, "seed")).to_have_value("7")
 
 
 def test_the_editor_buttons_wait_for_the_engine(

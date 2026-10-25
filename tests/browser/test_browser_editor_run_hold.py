@@ -15,6 +15,8 @@ A disabled fieldset is read from its attribute, because Playwright reports it as
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from form_helpers import (
     ENGINE_TIMEOUT_MS,
@@ -282,6 +284,47 @@ def test_the_api_pages_form_opens_and_checks_during_a_run(
     wait_clean(page)
     held[0].fallback()
     expect(page.locator("#run")).to_have_text("Run", timeout=RUN_TIMEOUT_MS)
+    wait_clean(page)
+    expect(control(page, "name")).to_be_visible()
+    expect(control(page, "name")).to_have_value("other")
+
+
+@pytest.mark.parametrize(
+    ("handler", "label"),
+    [
+        pytest.param(lambda route: route.abort(), "Error network:", id="unreachable"),
+        pytest.param(
+            lambda route: route.fulfill(status=500, body='{"detail": "the detail"}'),
+            "Error 500:",
+            id="refused",
+        ),
+        pytest.param(
+            lambda route: route.fulfill(status=200, body="not JSON"),
+            "Error client:",
+            id="unreadable",
+        ),
+    ],
+)
+def test_the_api_pages_form_stays_open_after_a_failed_run(
+    api_page: tuple[Page, Offline],
+    api_site: Site,
+    handler: Callable[[Route], None],
+    label: str,
+) -> None:
+    page, _ = api_page
+    goto_ready(page, api_site)
+    open_example(page)
+    wait_clean(page)
+    fill(page, "other", "name")
+    expect(page.locator("#run")).to_be_disabled()
+    wait_clean(page)
+    page.route("**/api/simulate", handler)
+    page.locator("#run").click()
+    expect(page.locator(".error strong")).to_have_text(label)
+    expect(page.locator("#run")).to_have_text("Run")
+    wait_clean(page)
+    expect(control(page, "name")).to_be_visible()
+    expect(control(page, "name")).to_have_value("other")
 
 
 def test_the_api_pages_run_is_on_while_a_python_edit_is_out(
