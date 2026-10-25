@@ -3,14 +3,16 @@
 
 """The scenario form while a run is out, on both pages.
 
-On the Pyodide page one worker answers every Python call in the order it was sent, so a run
-holds it; while a run is held the form and the three open buttons are off, the state line says
-why, and no editor call is sent. Run is off while the form is opening or a Python edit is
-out. On the API page the calls are separate requests served alongside the run, so the form
-stays usable during a run and Run stays on while a Python edit is out. A Pyodide run is held
-by wrapping ``Worker.prototype.postMessage`` so the simulate message is kept back; an editor
-call is parked the same way by name. A starting file's request is held with ``page.route``.
-A disabled fieldset is read from its attribute, because Playwright reports it as enabled.
+On the Pyodide page one worker answers every Python call in the order it was sent, so a run holds
+it; while a run is held the form and the three open buttons are off, the state line says why, and no
+editor call is sent. Run is off while the form is opening or a Python edit is out. On the API page
+the calls are separate requests served alongside the run, so the form stays usable during a run and
+Run stays on while a Python edit is out. A Pyodide run is held by wrapping
+``Worker.prototype.postMessage`` so the simulate message is kept back; an editor call is parked the
+same way by name. A held run is failed either by releasing a run the engine refuses or by answering
+the held message from the test with a reply, a failure or an error the worker never sent. A starting
+file's request is held with ``page.route``. A disabled fieldset is read from its attribute, because
+Playwright reports it as enabled.
 """
 
 from __future__ import annotations
@@ -75,6 +77,16 @@ PARK_CALL = """(call) => {
       post.call(worker, message);
     }
   };
+}"""
+
+ANSWER_HELD = """(data) => {
+  const [worker, message] = window.__held.splice(0)[0];
+  worker.onmessage({ data: { id: message.id, ...data } });
+}"""
+
+CRASH_HELD = """(message) => {
+  const [worker] = window.__held.splice(0)[0];
+  worker.onerror({ message });
 }"""
 
 
@@ -262,6 +274,61 @@ def test_run_is_off_while_a_python_edit_is_out(
     unpark(page)
     wait_clean(page)
     expect(page.locator("#run")).to_be_enabled()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "answer", "label"),
+    [
+        pytest.param(
+            "n_paths",
+            "25001",
+            lambda page: page.evaluate("window.__release()"),
+            "Error 422:",
+            id="refused",
+        ),
+        pytest.param(
+            "name",
+            "other",
+            lambda page: page.evaluate(ANSWER_HELD, {"type": "reply", "payload": "not JSON"}),
+            "Error client:",
+            id="unreadable",
+        ),
+        pytest.param(
+            "name",
+            "other",
+            lambda page: page.evaluate(ANSWER_HELD, {"type": "failed", "detail": "the detail"}),
+            "Error error:",
+            id="stopped",
+        ),
+        pytest.param(
+            "name",
+            "other",
+            lambda page: page.evaluate(CRASH_HELD, "the detail"),
+            "Error error:",
+            id="crashed",
+        ),
+    ],
+)
+def test_the_form_stays_open_after_a_failed_run(
+    pyodide_page: tuple[Page, Offline],
+    pyodide_site: Site,
+    field: str,
+    value: str,
+    answer: Callable[[Page], None],
+    label: str,
+) -> None:
+    page = ready_page(pyodide_page, pyodide_site)
+    open_example(page)
+    wait_clean(page)
+    fill(page, value, field)
+    wait_clean(page)
+    hold_run(page)
+    answer(page)
+    expect(page.locator(".error strong")).to_have_text(label, timeout=RUN_TIMEOUT_MS)
+    expect(page.locator("#run")).to_have_text("Run")
+    wait_clean(page)
+    expect(control(page, field)).to_be_visible()
+    expect(control(page, field)).to_have_value(value)
 
 
 def test_the_api_pages_form_opens_and_checks_during_a_run(
