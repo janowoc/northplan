@@ -36,7 +36,7 @@ from engine.accounts import base
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet
 from engine.core.state import RrifState, updated
-from engine.params.loader import MalformedParamFileError
+from engine.params.loader import MalformedParamFileError, shown_value
 
 
 def minimum_factor(age_at_start_of_year: int, params: RealParamSet) -> float:
@@ -77,7 +77,7 @@ def minimum_factor(age_at_start_of_year: int, params: RealParamSet) -> float:
         if formula_constant < first_age:
             raise MalformedParamFileError(
                 f"{params.raw.source}[{path}]: is {formula_constant!r}, less than the "
-                f"table's first age ({first_age}). Below that age the factor is "
+                f"table's first age ({shown_value(first_age)}). Below that age the factor is "
                 "1 / (formula_constant - age), which is at most 1 only if "
                 "formula_constant is at least the first age."
             )

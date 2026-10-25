@@ -22,6 +22,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from engine.core.indexation import RealParamSet, RealParamYear
 from engine.core.timeline import MONTHS_PER_YEAR
+from engine.params.loader import shown_value
 from engine.tax import federal, provincial
 
 
@@ -40,7 +41,7 @@ def _validated_band_table(
         if edges[0] <= 0:
             raise ValueError(f"first withholding edge must be positive, got {edges[0]}")
         if np.any(np.diff(edges) <= 0):
-            raise ValueError(f"withholding edges must strictly ascend, got {edges}")
+            raise ValueError(f"withholding edges must strictly ascend, got {shown_value(edges)}")
     if rates.size != edges.size + 1:
         raise ValueError(
             f"expected {edges.size + 1} withholding rates for {edges.size} edges "

@@ -21,6 +21,8 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from engine.params.loader import shown_value
+
 
 def _validated_edges(edges: tuple[float, ...]) -> NDArray[np.float64]:
     """``edges`` as a float array, or ``ValueError`` if it is not a valid ladder.
@@ -36,7 +38,7 @@ def _validated_edges(edges: tuple[float, ...]) -> NDArray[np.float64]:
         if edges_arr[0] <= 0:
             raise ValueError(f"first bracket edge must be positive, got {edges_arr[0]}")
         if np.any(np.diff(edges_arr) <= 0):
-            raise ValueError(f"bracket edges must strictly ascend, got {edges_arr}")
+            raise ValueError(f"bracket edges must strictly ascend, got {shown_value(edges_arr)}")
     return edges_arr
 
 

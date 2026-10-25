@@ -19,7 +19,12 @@ import pytest
 from engine.accounts import lif
 from engine.core.indexation import real_year
 from engine.core.state import LifState
-from engine.params.loader import MalformedParamFileError, MissingParameterError, load_year
+from engine.params.loader import (
+    MalformedParamFileError,
+    MissingParameterError,
+    load_year,
+    shown_value,
+)
 
 
 @pytest.fixture
@@ -429,3 +434,32 @@ def test_maximum_withdrawal_refuses_an_empty_table(tmp_path: Path) -> None:
         f"{params.raw.source}[lif.maximum_factors.by_age]: "
         f"the mapping is empty; a table needs at least one row."
     )
+
+
+def test_maximum_withdrawal_below_the_first_row_message_is_exact(tmp_path: Path) -> None:
+    params = _table_params(tmp_path, rows="      60: 0.05\n      61: 0.06\n      62: 0.07\n")
+    with pytest.raises(ValueError) as raised:
+        lif.maximum_withdrawal(np.array([1.0]), 59, params)
+    assert str(raised.value) == (
+        "age 59 is below the LIF maximum table's first row (age 60) "
+        f"for jurisdiction {params.name!r}. "
+        "The maximum is not extrapolated below the table."
+    )
+
+
+def test_maximum_withdrawal_below_the_first_row_message_bounds_a_long_first_age(
+    tmp_path: Path,
+) -> None:
+    big = "1" + "0" * 999
+    assert len(str(int(big))) > 500
+    params = _table_params(tmp_path, rows=f"      {big}: 0.05\n")
+    with pytest.raises(ValueError) as raised:
+        lif.maximum_withdrawal(np.array([1.0]), 60, params)
+    message = str(raised.value)
+    assert message == (
+        "age 60 is below the LIF maximum table's first row "
+        f"(age {shown_value(int(big))}) for jurisdiction {params.name!r}. "
+        "The maximum is not extrapolated below the table."
+    )
+    assert "…" in message
+    assert len(message) < 1000

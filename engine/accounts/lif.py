@@ -37,6 +37,7 @@ from engine.accounts import base
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet
 from engine.core.state import LifState, updated
+from engine.params.loader import shown_value
 
 
 def has_maximum(params: RealParamSet) -> bool:
@@ -112,7 +113,7 @@ def maximum_withdrawal(
     if age_at_start_of_year < first_age:
         raise ValueError(
             f"age {age_at_start_of_year} is below the LIF maximum table's "
-            f"first row (age {first_age}) for jurisdiction {params.name!r}. "
+            f"first row (age {shown_value(first_age)}) for jurisdiction {params.name!r}. "
             "The maximum is not extrapolated below the table."
         )
     if age_at_start_of_year >= terminal_age:

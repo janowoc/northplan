@@ -29,6 +29,7 @@ from numpy.typing import ArrayLike, NDArray
 from engine.core.context import MonthContext
 from engine.core.indexation import RealParamYear
 from engine.core.state import HouseholdState, PersonState
+from engine.params.loader import shown_value
 from engine.policy.base import Transfer
 from engine.tax import federal as federal_mod
 from engine.tax.brackets import room_below_edge
@@ -334,7 +335,7 @@ def _gross_for_net(
     if rates_arr.size > 1 and np.any(np.diff(rates_arr) < 0):
         raise ValueError(
             f"withholding.rates must be non-decreasing for _gross_for_net's first-valid-band "
-            f"search to be correct, got {rates_arr!r}."
+            f"search to be correct, got {shown_value(rates_arr)}."
         )
 
     target_arr = np.asarray(target, dtype=np.float64)

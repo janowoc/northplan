@@ -18,6 +18,7 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
+from engine.params.loader import shown_value
 from engine.tax.brackets import marginal_rate, room_below_edge, tax_on_income
 
 #: Upper bound of every bracket but the last: [0, 100) at 10%, [100, 200) at
@@ -93,6 +94,24 @@ def test_tax_on_income_rejects_length_mismatch() -> None:
 def test_tax_on_income_rejects_non_ascending_edges() -> None:
     with pytest.raises(ValueError, match="ascend"):
         tax_on_income(100.0, (200.0, 100.0), RATES)
+
+
+def test_tax_on_income_non_ascending_message_is_exact() -> None:
+    with pytest.raises(ValueError) as raised:
+        tax_on_income(100.0, (200.0, 100.0), RATES)
+    assert str(raised.value) == "bracket edges must strictly ascend, got array([200., 100.])"
+
+
+def test_tax_on_income_non_ascending_message_bounds_a_long_table() -> None:
+    edges = tuple(float(edge) for edge in range(200, 0, -1))
+    edges_arr = np.asarray(edges, dtype=np.float64)
+    assert len(repr(edges_arr)) > 500
+    with pytest.raises(ValueError) as raised:
+        tax_on_income(100.0, edges, RATES)
+    message = str(raised.value)
+    assert message == f"bracket edges must strictly ascend, got {shown_value(edges_arr)}"
+    assert "…" in message
+    assert len(message) < 1000
 
 
 def test_tax_on_income_rejects_non_positive_first_edge() -> None:

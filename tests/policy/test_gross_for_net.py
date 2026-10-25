@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from engine.params.loader import shown_value
 from engine.policy.withdrawal import _gross_for_net
 
 #: SYNTHETIC, and plainly not the real table (``params/2026/rrif.yaml``'s
@@ -63,6 +64,33 @@ def test_rates_not_ascending_raises() -> None:
         _gross_for_net(
             np.array([500.0]), np.array([0.0]), np.array([0.0]), _EDGES, (0.37, 0.11, 0.23)
         )
+
+
+def test_rates_not_ascending_message_names_the_table_exactly() -> None:
+    with pytest.raises(ValueError) as raised:
+        _gross_for_net(
+            np.array([500.0]), np.array([0.0]), np.array([0.0]), _EDGES, (0.37, 0.11, 0.23)
+        )
+    assert str(raised.value) == (
+        "withholding.rates must be non-decreasing for _gross_for_net's first-valid-band "
+        "search to be correct, got array([0.37, 0.11, 0.23])."
+    )
+
+
+def test_rates_not_ascending_message_bounds_a_long_table() -> None:
+    rates = np.arange(200, 0, -1, dtype=np.float64)
+    assert len(repr(rates)) > 500
+    with pytest.raises(ValueError) as raised:
+        _gross_for_net(
+            np.array([500.0]), np.array([0.0]), np.array([0.0]), _EDGES, tuple(rates.tolist())
+        )
+    message = str(raised.value)
+    assert message == (
+        "withholding.rates must be non-decreasing for _gross_for_net's first-valid-band "
+        f"search to be correct, got {shown_value(rates)}."
+    )
+    assert "…" in message
+    assert len(message) < 1000
 
 
 def test_m_greater_than_zero_with_a_target_above_it_grosses_up_above_the_floor() -> None:

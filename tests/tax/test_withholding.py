@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from engine.core.indexation import real_year
-from engine.params.loader import load_year
+from engine.params.loader import load_year, shown_value
 from engine.tax.withholding import payroll_withholding_monthly, registered_withholding
 
 JANUARY = 0
@@ -219,6 +219,33 @@ def test_registered_withholding_raises_when_edges_do_not_ascend(
 ) -> None:
     with pytest.raises(ValueError, match="ascend"):
         registered_withholding(50.0, synth_rrif_non_ascending_edges, MONTH)
+
+
+def test_registered_withholding_non_ascending_message_is_exact(
+    synth_rrif_non_ascending_edges,
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        registered_withholding(50.0, synth_rrif_non_ascending_edges, MONTH)
+    assert str(raised.value) == "withholding edges must strictly ascend, got array([200., 100.])"
+
+
+def test_registered_withholding_non_ascending_message_bounds_a_long_table(
+    tmp_path: Path,
+) -> None:
+    edges = [float(edge) for edge in range(200, 0, -1)]
+    edges_arr = np.asarray(edges, dtype=np.float64)
+    assert len(repr(edges_arr)) > 500
+    text = SYNTHETIC_RRIF_NON_ASCENDING_EDGES.replace(
+        "edges_each: [200, 100]", f"edges_each: {edges}"
+    ).replace("rates: [0.1, 0.2, 0.3]", f"rates: {[0.1] * (len(edges) + 1)}")
+    _write(tmp_path, "rrif", text)
+    params = real_year(load_year(2026, tmp_path), 0.0).rrif
+    with pytest.raises(ValueError) as raised:
+        registered_withholding(50.0, params, MONTH)
+    message = str(raised.value)
+    assert message == f"withholding edges must strictly ascend, got {shown_value(edges_arr)}"
+    assert "…" in message
+    assert len(message) < 1000
 
 
 def test_registered_withholding_raises_when_first_edge_is_not_positive(

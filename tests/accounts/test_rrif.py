@@ -18,7 +18,12 @@ import pytest
 from engine.accounts import rrif
 from engine.core.indexation import real_year
 from engine.core.state import RrifState
-from engine.params.loader import MalformedParamFileError, MissingParameterError, load_year
+from engine.params.loader import (
+    MalformedParamFileError,
+    MissingParameterError,
+    load_year,
+    shown_value,
+)
 
 JANUARY = 0
 
@@ -445,6 +450,24 @@ def test_minimum_factor_refuses_a_formula_constant_below_the_first_age(
         "1 / (formula_constant - age), which is at most 1 only if formula_constant is at "
         "least the first age."
     )
+
+
+def test_minimum_factor_formula_constant_message_bounds_a_long_first_age(tmp_path: Path) -> None:
+    big = "1" + "0" * 999
+    assert len(str(int(big))) > 500
+    params = _table_params(tmp_path, rows=f"      {big}: 0.05\n")
+    with pytest.raises(MalformedParamFileError) as raised:
+        rrif.minimum_factor(59, params)
+    message = str(raised.value)
+    assert message == (
+        f"{params.raw.source}[rrif.minimum_factors.pre_table.formula_constant]: "
+        f"is 100.0, less than the table's first age ({shown_value(int(big))}). "
+        "Below that age the factor is "
+        "1 / (formula_constant - age), which is at most 1 only if formula_constant is at "
+        "least the first age."
+    )
+    assert "…" in message
+    assert len(message) < 1000
 
 
 def test_minimum_factor_accepts_a_formula_constant_equal_to_the_first_age(
