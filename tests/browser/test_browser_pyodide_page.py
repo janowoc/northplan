@@ -19,6 +19,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from form_helpers import settle_frames
 from offline import PYODIDE_BASE, Offline, Site
 from playwright.sync_api import Locator, Page, Route, expect
 
@@ -104,6 +105,7 @@ def test_it_loads_the_engine_and_the_example(
     expect(years_line(page)).to_have_text("Tax parameters: " + ", ".join(info["parameter_years"]))
     expect(run_button(page)).to_be_enabled()
     expect(run_button(page)).to_have_text("Run")
+    settle_frames(page)
     expect(error_box(page)).to_be_hidden()
     expect(page.locator("#disclaimer")).to_be_visible()
     expect(page.locator(".source a").nth(0)).to_have_attribute(
@@ -176,6 +178,7 @@ def test_each_run_clears_the_last_result_or_error(
         f"Error {expected['status']}:", timeout=RUN_TIMEOUT_MS
     )
     expect(page.locator(".error pre")).to_have_text(expected["detail"])
+    settle_frames(page)
     expect(page.locator(".summary")).to_be_hidden()
     expect(page.locator(".caption")).to_be_hidden()
     assert_chart_purged(page)
@@ -231,6 +234,7 @@ def test_without_build_info_the_years_are_unknown(
     )
     expect(page.locator(".source a").nth(1)).to_have_text("the source")
     expect(page.locator(".source a").nth(1)).to_have_attribute("href", REPOSITORY)
+    settle_frames(page)
     expect(error_box(page)).to_be_hidden()
 
 

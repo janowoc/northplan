@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from form_helpers import settle_frames
 from offline import Offline, Site
 from playwright.sync_api import Locator, Page, Route, expect
 
@@ -84,6 +85,7 @@ def test_it_shows_the_health_and_the_example(
     page.goto(api_site.url)
     expect(page.locator(".status strong")).to_have_text("ok")
     expect(textarea(page)).to_have_value(EXAMPLE)
+    settle_frames(page)
     expect(error_box(page)).to_be_hidden()
 
 
@@ -139,6 +141,7 @@ def test_a_refused_scenario_shows_the_detail_and_clears_the_last_result(
         f"Error {expected.status_code}:", timeout=RUN_TIMEOUT_MS
     )
     expect(page.locator(".error pre")).to_have_text(expected.json()["detail"])
+    settle_frames(page)
     expect(page.locator(".summary")).to_be_hidden()
     expect(page.locator(".caption")).to_be_hidden()
     assert_chart_purged(page)

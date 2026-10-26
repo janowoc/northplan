@@ -30,6 +30,7 @@ from form_helpers import (
     open_new,
     open_text,
     problem,
+    settle_frames,
     shown_errors,
     textarea,
     wait_clean,
@@ -145,6 +146,7 @@ def test_text_the_form_cannot_open_stays_with_its_errors(
     expect(page.locator(".editor-errors li")).to_have_text(expected)
     expect(page.locator(".editor-errors p")).to_have_text("The form cannot open this text:")
     assert shown_errors(page) == expected
+    settle_frames(page)
     expect(page.locator("#form")).to_be_hidden()
     expect(button(page, "Back to YAML")).to_be_hidden()
     expect(textarea(page)).to_have_value(text)
@@ -163,6 +165,7 @@ def test_a_missing_starting_file_is_shown(form_page: tuple[Page, Offline]) -> No
         expected = "Could not open the file: /api/minimal: 404 no minimal here"
     button(page, "New scenario").click()
     expect(problem(page)).to_have_text(expected)
+    settle_frames(page)
     expect(page.locator("#form")).to_be_hidden()
     expect(button(page, "Back to YAML")).to_be_hidden()
 

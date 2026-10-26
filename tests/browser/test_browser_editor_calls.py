@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """How the form treats the editor calls themselves, on the API page: a failed check, parse,
-schema or rename call is shown with its status and detail, a failed rename frees the form again,
-a failed file open or check call clears the errors listed before it, the state reads
-"Checking…" until a check answers, a check that finishes after a newer edit is dropped, and a
-schema node the form does not know is shown as text without a control.
+schema or rename call is shown with its status and detail, and so is a parse or schema reply
+that is not a JSON object; a parse reply the form cannot read is shown as the error it raises;
+a failed rename frees the form again, a failed file open or check call clears the errors listed
+before it, the state reads "Checking…" until a check answers, a check that finishes after a
+newer edit is dropped, and a schema node the form does not know is shown as text without a
+control.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from form_helpers import (
     open_text,
     own,
     problem,
+    settle_frames,
     shown_errors,
     state,
     textarea,
@@ -122,8 +125,42 @@ def test_a_refused_parse_call_is_shown(api_form_page: tuple[Page, Offline]) -> N
     textarea(page).fill(MINIMAL)
     button(page, "Edit in form").click()
     expect(problem(page)).to_have_text("The parse call failed (422): bad arguments")
+    settle_frames(page)
     expect(page.locator("#form")).to_be_hidden()
     expect(textarea(page)).to_be_visible()
+
+
+def test_a_parse_reply_the_page_cannot_read_is_shown(
+    api_form_page: tuple[Page, Offline],
+) -> None:
+    page, _ = api_form_page
+    page.route(
+        "**/api/editor/parse",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"mapping": null, "errors": ["x"]}',
+        ),
+    )
+    textarea(page).fill(MINIMAL)
+    button(page, "Edit in form").click()
+    expect(problem(page)).to_have_text("TypeError: entry.get is not a function")
+    settle_frames(page)
+    expect(page.locator("#form")).to_be_hidden()
+    expect(button(page, "Back to YAML")).to_be_hidden()
+
+
+def test_a_parse_reply_that_is_not_an_object_is_shown(
+    api_form_page: tuple[Page, Offline],
+) -> None:
+    page, _ = api_form_page
+    page.route("**/api/editor/parse", lambda route: route.fulfill(status=200, body="not json"))
+    textarea(page).fill(MINIMAL)
+    button(page, "Edit in form").click()
+    expect(problem(page)).to_have_text("The parse call failed (200): not json")
+    settle_frames(page)
+    expect(page.locator("#form")).to_be_hidden()
+    expect(button(page, "Back to YAML")).to_be_hidden()
 
 
 def test_a_failed_open_clears_the_last_errors(api_form_page: tuple[Page, Offline]) -> None:
@@ -178,6 +215,19 @@ def test_a_failed_schema_call_is_shown(api_form_page: tuple[Page, Offline]) -> N
     page.route("**/api/editor/schema", lambda route: route.fulfill(status=500, body="boom"))
     button(page, "Edit in form").click()
     expect(problem(page)).to_have_text("The schema call failed (500): boom")
+    settle_frames(page)
+    expect(page.locator("#form")).to_be_hidden()
+    expect(button(page, "Back to YAML")).to_be_hidden()
+
+
+def test_a_schema_reply_that_is_not_an_object_is_shown(
+    api_form_page: tuple[Page, Offline],
+) -> None:
+    page, _ = api_form_page
+    page.route("**/api/editor/schema", lambda route: route.fulfill(status=200, body="not json"))
+    button(page, "Edit in form").click()
+    expect(problem(page)).to_have_text("The schema call failed (200): not json")
+    settle_frames(page)
     expect(page.locator("#form")).to_be_hidden()
     expect(button(page, "Back to YAML")).to_be_hidden()
 

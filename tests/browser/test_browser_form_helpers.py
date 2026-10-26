@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """The form helpers' waits on the state line wait for the line to be shown, do not read a line
-Alpine is about to hide as shown, and fail when no animation frame comes."""
+Alpine is about to hide as shown, whether the hide was made before the wait or came with the
+awaited text, and fail when no animation frame comes. ``settle_frames`` applies a hide Alpine
+has pending."""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import time
 from collections.abc import Callable
 
 import pytest
-from form_helpers import open_example, state, wait_clean, wait_settled
+from form_helpers import open_example, settle_frames, state, wait_clean, wait_settled
 from offline import Offline
 from playwright.sync_api import Error, Page, expect
 
@@ -19,6 +21,10 @@ LATE_FRAMES = (
     "window.requestAnimationFrame = (callback) => setTimeout(() => frame(callback), 1000); }"
 )
 NO_FRAMES = "() => { window.requestAnimationFrame = () => 0; }"
+CLOSE_LATER = (
+    "() => setTimeout(() => { const data = Alpine.$data(document.body); "
+    "data.formBusy = false; data.formOpen = false; }, 2500)"
+)
 
 
 @pytest.mark.parametrize(
@@ -47,9 +53,46 @@ def test_a_wait_does_not_pass_on_a_state_line_alpine_is_about_to_hide(
     page.evaluate("() => { Alpine.$data(document.body).formOpen = false; }")
     expect(state(page)).to_be_visible()
     expect(state(page)).to_have_text("No errors.")
+    start = time.monotonic()
     with pytest.raises(AssertionError):
         wait(page)
+    elapsed = time.monotonic() - start
+    assert 6 < elapsed < 20
     expect(state(page)).to_be_hidden()
+
+
+@pytest.mark.parametrize(
+    "wait", [pytest.param(wait_settled, id="settled"), pytest.param(wait_clean, id="clean")]
+)
+def test_a_wait_does_not_pass_on_a_state_line_hidden_as_its_text_comes(
+    api_form_page: tuple[Page, Offline], wait: Callable[[Page], None]
+) -> None:
+    page, _ = api_form_page
+    open_example(page)
+    wait_clean(page)
+    page.evaluate("() => { Alpine.$data(document.body).formBusy = true; }")
+    expect(state(page)).to_have_text("Working…")
+    page.evaluate(LATE_FRAMES)
+    page.evaluate(CLOSE_LATER)
+    start = time.monotonic()
+    with pytest.raises(AssertionError):
+        wait(page)
+    elapsed = time.monotonic() - start
+    assert 8 < elapsed < 20
+    expect(state(page)).to_be_hidden()
+
+
+def test_settle_frames_applies_a_hide_alpine_has_pending(
+    api_form_page: tuple[Page, Offline],
+) -> None:
+    page, _ = api_form_page
+    open_example(page)
+    wait_clean(page)
+    page.evaluate(LATE_FRAMES)
+    page.evaluate("() => { Alpine.$data(document.body).formOpen = false; }")
+    assert state(page).is_visible()
+    settle_frames(page)
+    assert not state(page).is_visible()
 
 
 def test_a_wait_fails_when_no_animation_frame_comes(api_form_page: tuple[Page, Offline]) -> None:

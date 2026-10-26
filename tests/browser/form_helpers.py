@@ -109,15 +109,27 @@ _TWO_FRAMES = (
 )
 
 
-def _wait_state(page: Page, text: str | re.Pattern[str]) -> None:
-    """Wait until the form's state line is shown and reads ``text``. The line is hidden while the
-    form is closed and nothing is opening it or holding it off for a run, and it then still reads
-    "No errors.", so a wait on its text alone would pass. Alpine hides an ``x-show`` element on the
-    animation frame after the change that hides it, so the wait first lets two frames pass; a line
-    already due to be hidden is then not read as shown. If two frames have not come within 5 s, it
-    raises Playwright's ``Error``; the 5 s is a timer on the page, so it cannot fire while the
-    page's main thread is blocked."""
+def settle_frames(page: Page) -> None:
+    """Let two animation frames pass, so that an ``x-show`` change the page has already made
+    is applied. Alpine shows or hides an ``x-show`` element on the animation frame after the
+    change, while ``x-text`` and bound attributes change before that frame, so a check that an
+    element stays shown or stays hidden, made right after a wait on text, could read the
+    element as it was before the change. If two frames have not come within 5 s, it raises
+    Playwright's ``Error``; the 5 s is a timer on the page, so it cannot fire while the page's
+    main thread is blocked."""
     page.evaluate(_TWO_FRAMES)
+
+
+def _wait_state(page: Page, text: str | re.Pattern[str]) -> None:
+    """Wait until the form's state line is shown and reads ``text``, then let two animation frames
+    pass and wait until it does again. The line is hidden while the form is closed and nothing is
+    opening it or holding it off for a run, and it then still reads "No errors.", so a wait on
+    its text alone would pass. A line shown with ``text`` may be about to be hidden, by a change
+    made before the wait or by the change that brought ``text``, so the wait checks again after
+    :func:`settle_frames`. It raises ``AssertionError`` if the line is not shown with ``text``,
+    and Playwright's ``Error`` as :func:`settle_frames` does."""
+    expect(state(page).filter(visible=True)).to_have_text(text)
+    settle_frames(page)
     expect(state(page).filter(visible=True)).to_have_text(text)
 
 
