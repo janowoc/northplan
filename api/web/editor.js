@@ -449,6 +449,8 @@ const northplanEditor = (() => {
       return `The ${name} call failed (${reply.status}): ${detail}`;
     }
 
+    const drawFailure = (error) => `The form could not be drawn: ${String(error)}`;
+
     function errorsOf(list) {
       return (Array.isArray(list) ? list : []).map((entry) => ({
         loc: plain(entry.get('loc')),
@@ -558,15 +560,16 @@ const northplanEditor = (() => {
         }
         if (reply.status === 200) {
           mapping = reply.body;
-          render();
-          changed();
+          if (redraw(host)) {
+            changed();
+          }
         } else if (reply.status === 409 && reply.body instanceof Map) {
           host.formProblem = reply.body.get('detail');
           host.formReferences = (reply.body.get('references') || []).map(dotted);
-          render();
+          redraw(host);
         } else {
           host.formProblem = failure(name, reply);
-          render();
+          redraw(host);
         }
       } finally {
         host.formBusy = false;
@@ -593,9 +596,25 @@ const northplanEditor = (() => {
       return child;
     }
 
+    function redraw(host) {
+      try {
+        render();
+        return true;
+      } catch (error) {
+        version += 1;
+        clearTimeout(timer);
+        timer = null;
+        host.formYaml = null;
+        host.formState = 'errors';
+        host.formProblem = drawFailure(error);
+        return false;
+      }
+    }
+
     function restructure() {
-      render();
-      changed();
+      if (redraw(ui)) {
+        changed();
+      }
     }
 
     function rawCode(parent, value) {
@@ -1167,7 +1186,13 @@ const northplanEditor = (() => {
         host.formOpen = true;
         version += 1;
         host.formState = 'checking';
-        render();
+        try {
+          render();
+        } catch (error) {
+          close(host);
+          host.formProblem = drawFailure(error);
+          return;
+        }
         check();
       } catch (error) {
         host.formProblem = String(error);
