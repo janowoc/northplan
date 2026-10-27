@@ -124,8 +124,13 @@
     function northplan() {
       let worker = null;
       let nextId = 1;
+      let failure = null;
       const pending = new Map();
       const request = (message) => new Promise((resolve, reject) => {
+        if (failure !== null) {
+          reject(new Error(failure));
+          return;
+        }
         const id = nextId;
         nextId += 1;
         worker.postMessage({ ...message, id });
@@ -208,17 +213,24 @@
           worker.onerror = (event) => this.fail(event.message || 'the worker could not start');
         },
         fail(message) {
+          if (failure !== null) {
+            return;
+          }
           const stopped = this.ready;
           this.status = stopped ? 'The engine stopped.' : 'The engine did not load.';
           this.ready = false;
           this.running = false;
           this.error = { status: stopped ? 'error' : 'load', message };
+          failure = message;
           for (const waiting of pending.values()) {
             waiting.reject(new Error(message));
           }
           pending.clear();
         },
         receive(message) {
+          if (failure !== null) {
+            return;
+          }
           if (message.type === 'ready') {
             this.ready = true;
             this.status = 'The engine is ready; it runs in this browser.';

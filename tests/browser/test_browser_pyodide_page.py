@@ -7,6 +7,14 @@ What the page shows after a run is compared with what the native entry point ret
 the same scenario: the summary's policy line, the caption, the chart's years and a
 refusal's status and detail. The estate and depletion lines are matched against their
 pattern instead, because the two platforms' floats differ in the last places.
+
+It also owns the engine stopping while no run is out, and the engine never starting; a stop
+during a run is in test_browser_editor_run_hold.py. Once the engine has failed, the page keeps
+its first report and ignores what the worker sends afterwards.
+
+A test stops a loaded engine by sending the page's own handlers a ``failed`` message or an
+``error`` event on the captured worker. The ``error`` kind terminates the worker first, so that
+a message posted after the stop would never be answered.
 """
 
 from __future__ import annotations
@@ -19,9 +27,22 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from form_helpers import settle_frames
+from form_helpers import (
+    button,
+    control,
+    fill,
+    goto_ready,
+    open_example,
+    problem,
+    settle_frames,
+    state,
+    wait_clean,
+    wait_errors,
+)
 from offline import PYODIDE_BASE, Offline, Site
 from playwright.sync_api import Locator, Page, Route, expect
+from test_browser_editor_names import PERSONS, commit
+from test_browser_editor_run_hold import PARK_CALL, wait_parked
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = (REPO_ROOT / "scenarios" / "example.yaml").read_text(encoding="utf-8")
@@ -33,6 +54,29 @@ REFUSED_TEXT = "- 1\n"
 ENGINE_TIMEOUT_MS = 120_000
 RUN_TIMEOUT_MS = 300_000
 TRACE_NAMES = ["10th percentile", "90th percentile", "Median"]
+OPEN_BUTTONS = ("Edit in form", "New scenario", "Open example")
+
+CAPTURE_WORKER = """(() => {
+  const W = window.Worker;
+  window.__workers = [];
+  window.__sent = [];
+  window.Worker = class extends W {
+    constructor(...args) { super(...args); window.__workers.push(this); }
+    postMessage(message, ...rest) {
+      window.__sent.push(message.type === 'editor' ? 'editor:' + message.call : message.type);
+      return super.postMessage(message, ...rest);
+    }
+  };
+})();"""
+
+STOP_FAILED = (
+    "(detail) => window.__workers[0].dispatchEvent("
+    "new MessageEvent('message', { data: { type: 'failed', detail } }))"
+)
+STOP_ERROR = (
+    "(detail) => { window.__workers[0].terminate(); "
+    "window.__workers[0].dispatchEvent(new ErrorEvent('error', { message: detail })); }"
+)
 
 
 @pytest.fixture(scope="module")
@@ -64,6 +108,19 @@ def textarea(page: Page) -> Locator:
 
 def error_box(page: Page) -> Locator:
     return page.locator(".error")
+
+
+def stop(page: Page, how: str, detail: str = "the detail") -> None:
+    """Stop the captured worker as the page sees it: ``"failed"`` delivers a ``failed`` message
+    through the page's own ``onmessage``; ``"error"`` terminates the worker and then delivers an
+    ``error`` event through its ``onerror``. Any other ``how`` raises ``KeyError``."""
+    scripts = {"failed": STOP_FAILED, "error": STOP_ERROR}
+    page.evaluate(scripts[how], detail)
+
+
+def sent(page: Page) -> list[str]:
+    result: list[str] = page.evaluate("window.__sent")
+    return result
 
 
 def wait_until_ready(page: Page) -> None:
@@ -199,6 +256,178 @@ def test_the_engine_failing_to_load_is_shown(
     expect(page.locator(".error pre")).to_have_text("Error: northplan.zip: HTTP 404")
     expect(run_button(page)).to_be_disabled()
     expect(textarea(page)).to_have_value(EXAMPLE)
+
+
+@pytest.mark.parametrize("how", ["failed", "error"])
+def test_the_engine_stopping_after_it_loaded_is_shown(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site, how: str
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    stop(page, how)
+    expect(status_line(page)).to_have_text("The engine stopped.")
+    expect(page.locator(".error strong")).to_have_text("Error error:")
+    expect(page.locator(".error pre")).to_have_text("the detail")
+    expect(run_button(page)).to_be_disabled()
+    expect(run_button(page)).to_have_text("Run")
+    for name in OPEN_BUTTONS:
+        expect(button(page, name)).to_be_disabled()
+    expect(textarea(page)).to_have_value(EXAMPLE)
+
+
+def test_a_worker_that_does_not_start_is_shown(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.route("**/worker.js", lambda route: route.fulfill(status=404, body=""))
+    page.goto(pyodide_site.url)
+    expect(status_line(page)).to_have_text("The engine did not load.", timeout=ENGINE_TIMEOUT_MS)
+    expect(page.locator(".error strong")).to_have_text("Error load:")
+    expect(page.locator(".error pre")).to_have_text("the worker could not start")
+    expect(run_button(page)).to_be_disabled()
+    expect(textarea(page)).to_have_value(EXAMPLE)
+
+
+def test_a_worker_that_cannot_be_made_is_shown(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script("window.Worker = function () { throw new Error('the detail'); };")
+    page.goto(pyodide_site.url)
+    expect(status_line(page)).to_have_text("The engine did not load.", timeout=ENGINE_TIMEOUT_MS)
+    expect(page.locator(".error strong")).to_have_text("Error load:")
+    expect(page.locator(".error pre")).to_have_text("Error: the detail")
+    expect(run_button(page)).to_be_disabled()
+    expect(textarea(page)).to_have_value(EXAMPLE)
+
+
+def test_opening_the_form_fails_when_the_engine_stops(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    page.evaluate(PARK_CALL, "parse")
+    button(page, "Edit in form").click()
+    wait_parked(page)
+    stop(page, "error")
+    expect(problem(page)).to_have_text("The parse call failed (error): the detail")
+    expect(status_line(page)).to_have_text("The engine stopped.")
+    settle_frames(page)
+    expect(textarea(page)).to_be_visible()
+    expect(page.locator("#form")).to_be_hidden()
+    expect(state(page)).to_be_hidden()
+
+
+def test_a_check_fails_when_the_engine_stops(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    open_example(page)
+    wait_clean(page)
+    page.evaluate(PARK_CALL, "check")
+    fill(page, "other", "name")
+    wait_parked(page)
+    stop(page, "error")
+    expect(problem(page)).to_have_text("The check call failed (error): the detail")
+    wait_errors(page)
+    expect(control(page, "name")).to_be_visible()
+    expect(control(page, "name")).to_have_value("other")
+    expect(button(page, "Back to YAML")).to_be_disabled()
+    expect(button(page, "Download YAML")).to_be_disabled()
+
+
+def test_a_python_edit_fails_when_the_engine_stops(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    open_example(page)
+    wait_clean(page)
+    page.evaluate(PARK_CALL, "rename")
+    commit(page, "z", *PERSONS, 0, "id")
+    wait_parked(page)
+    stop(page, "error")
+    expect(problem(page)).to_have_text("The rename call failed (error): the detail")
+    expect(control(page, *PERSONS, 0, "id")).to_have_value("a")
+    wait_clean(page)
+    expect(button(page, "Back to YAML")).to_be_enabled()
+
+
+def test_a_check_after_the_engine_stopped_fails_at_once(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    open_example(page)
+    wait_clean(page)
+    stop(page, "error")
+    before = len(sent(page))
+    fill(page, "other", "name")
+    expect(problem(page)).to_have_text("The check call failed (error): the detail")
+    wait_errors(page)
+    assert sent(page)[before:] == []
+
+
+def test_a_python_edit_after_the_engine_stopped_fails_at_once(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    open_example(page)
+    wait_clean(page)
+    stop(page, "error")
+    before = len(sent(page))
+    commit(page, "z", *PERSONS, 0, "id")
+    expect(problem(page)).to_have_text("The rename call failed (error): the detail")
+    expect(control(page, *PERSONS, 0, "id")).to_have_value("a")
+    wait_clean(page)
+    assert sent(page)[before:] == []
+
+
+def test_a_ready_after_the_engine_failed_is_ignored(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    held: list[Route] = []
+    page.route(PYODIDE_BASE + "pyodide.mjs", lambda route: held.append(route))
+    page.goto(pyodide_site.url)
+    wait_until_held(page, held)
+    page.evaluate(
+        "window.__workers[0].dispatchEvent(new ErrorEvent('error', { message: 'the detail' }))"
+    )
+    page.evaluate(
+        "window.__workers[0].dispatchEvent(new MessageEvent('message', { data: { type: 'ready' } }))"
+    )
+    settle_frames(page)
+    expect(status_line(page)).to_have_text("The engine did not load.")
+    expect(page.locator(".error strong")).to_have_text("Error load:")
+    expect(page.locator(".error pre")).to_have_text("the detail")
+    expect(run_button(page)).to_be_disabled()
+    for name in OPEN_BUTTONS:
+        expect(button(page, name)).to_be_disabled()
+
+
+def test_a_second_failure_keeps_the_first_report(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    page.add_init_script(CAPTURE_WORKER)
+    goto_ready(page, pyodide_site)
+    stop(page, "error")
+    expect(status_line(page)).to_have_text("The engine stopped.")
+    stop(page, "error", "another detail")
+    settle_frames(page)
+    expect(status_line(page)).to_have_text("The engine stopped.")
+    expect(page.locator(".error strong")).to_have_text("Error error:")
+    expect(page.locator(".error pre")).to_have_text("the detail")
 
 
 def test_a_missing_example_is_shown(pyodide_page: tuple[Page, Offline], pyodide_site: Site) -> None:
