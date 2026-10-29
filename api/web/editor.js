@@ -450,6 +450,7 @@ const northplanEditor = (() => {
     }
 
     const drawFailure = (error) => `The form could not be drawn: ${String(error)}`;
+    const clearFailure = (error) => `The form could not be cleared: ${String(error)}`;
 
     function errorsOf(list) {
       return (Array.isArray(list) ? list : []).map((entry) => ({
@@ -1168,7 +1169,6 @@ const northplanEditor = (() => {
       registry = new Map();
       gridSelect = null;
       gridAdd = null;
-      host.$refs.form.replaceChildren();
       host.formOpen = false;
       host.formYaml = null;
       host.formErrors = [];
@@ -1176,6 +1176,11 @@ const northplanEditor = (() => {
       host.formReferences = [];
       host.formProblem = null;
       host.formState = 'clean';
+      try {
+        host.$refs.form.replaceChildren();
+      } catch (error) {
+        host.formProblem = clearFailure(error);
+      }
     }
 
     async function openText(host, text) {
@@ -1223,6 +1228,7 @@ const northplanEditor = (() => {
         try {
           render();
         } catch (error) {
+          schema = null;
           close(host);
           host.formProblem = drawFailure(error);
           return;
