@@ -48,6 +48,18 @@ newer than the pinned uv knows how to download; CI then fails at `uv sync`, not
 at `tests/test_pins.py`, and the `uv` stage and the `setup-uv` versions move in
 the same pull request.
 
+Dependabot may fail to update setuptools, in a security update or a scheduled
+one: the security update for GHSA-xmj3-9gf7-h52w failed in its job with `No
+files have changed!`, for a reason not known, and opened no pull request. The
+update is then made by hand, moving the build constraint and the lock
+together: set `build-constraint-dependencies` in `pyproject.toml` to
+`["setuptools==<version>"]`, and run
+`uv lock --upgrade-package setuptools==<version>` with the same version. The
+build constraint does not steer the lock:
+`uv lock --upgrade-package setuptools` alone takes the newest release, a plain
+`uv lock` keeps the old one, and `tests/test_pins.py` fails whenever the build
+constraint and the lock differ.
+
 ghcr.io, where the uv image lives, gives Dependabot no release date, so the
 seven-day wait does not hold for the `uv` stage: Dependabot proposes a uv
 release however recent it is, and says at the top of the pull request that the
