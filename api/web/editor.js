@@ -533,20 +533,34 @@ const northplanEditor = (() => {
       if (version !== v) {
         return;
       }
-      if (reply.status === 200 && reply.body instanceof Map) {
-        errorList = errorsOf(reply.body.get('errors'));
-        host.formErrors = errorList.map(lineOf);
-        placeErrors();
-        host.formYaml = errorList.length === 0 ? reply.body.get('yaml') : null;
-        host.formState = errorList.length === 0 ? 'clean' : 'errors';
+      const body = reply.body;
+      let problem;
+      if (
+        reply.status === 200 &&
+        body instanceof Map &&
+        Array.isArray(body.get('errors')) &&
+        (body.get('errors').length > 0 || typeof body.get('yaml') === 'string')
+      ) {
+        try {
+          errorList = errorsOf(body.get('errors'));
+          host.formErrors = errorList.map(lineOf);
+          placeErrors();
+          host.formYaml = errorList.length === 0 ? body.get('yaml') : null;
+          host.formState = errorList.length === 0 ? 'clean' : 'errors';
+          return;
+        } catch (error) {
+          problem = String(error);
+        }
       } else {
-        errorList = [];
-        host.formErrors = [];
-        placeErrors();
-        host.formProblem = failure('check', reply);
-        host.formYaml = null;
-        host.formState = 'errors';
+        problem = failure('check', reply);
       }
+      errorList = [];
+      host.formErrors = [];
+      placeErrors();
+      host.formProblem = problem;
+      host.formReferences = [];
+      host.formYaml = null;
+      host.formState = 'errors';
     }
 
     async function pythonEdit(name, entries) {
@@ -558,19 +572,30 @@ const northplanEditor = (() => {
         if (version !== v) {
           return;
         }
-        if (reply.status === 200) {
-          mapping = reply.body;
+        const body = reply.body;
+        if (reply.status === 200 && body instanceof Map) {
+          mapping = body;
           if (redraw(host)) {
             changed();
           }
-        } else if (reply.status === 409 && reply.body instanceof Map) {
-          host.formProblem = reply.body.get('detail');
-          host.formReferences = (reply.body.get('references') || []).map(dotted);
+        } else if (
+          reply.status === 409 &&
+          body instanceof Map &&
+          typeof body.get('detail') === 'string' &&
+          Array.isArray(body.get('references'))
+        ) {
+          host.formProblem = body.get('detail');
+          host.formReferences = body.get('references').map(dotted);
           redraw(host);
         } else {
           host.formProblem = failure(name, reply);
+          host.formReferences = [];
           redraw(host);
         }
+      } catch (error) {
+        host.formProblem = String(error);
+        host.formReferences = [];
+        redraw(host);
       } finally {
         host.formBusy = false;
       }
@@ -1175,8 +1200,17 @@ const northplanEditor = (() => {
           return;
         }
         const result = reply.body;
+        const errors = result.get('errors');
         if (!(result.get('mapping') instanceof Map)) {
-          host.formErrors = errorsOf(result.get('errors')).map(lineOf);
+          if (!Array.isArray(errors) || errors.length === 0) {
+            host.formProblem = failure('parse', reply);
+            return;
+          }
+          host.formErrors = errorsOf(errors).map(lineOf);
+          return;
+        }
+        if (!Array.isArray(result.get('notices'))) {
+          host.formProblem = failure('parse', reply);
           return;
         }
         mapping = result.get('mapping');

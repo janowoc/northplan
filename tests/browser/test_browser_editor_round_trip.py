@@ -4,8 +4,9 @@
 """Opening a scenario in the form and coming back: the YAML that returns is what Python writes
 for the same mapping, on both pages. It covers the committed scenarios, values JavaScript's
 numbers cannot hold, number text the form sends as text, the two starting files and what happens
-when one is missing, text the form cannot open, the download, Run on the form's scenario, and the
-buttons that wait for the engine.
+when one is missing, text the form cannot open, the download, Run on the form's scenario, a
+starting file requested while the form is still opening another, and the buttons that wait for
+the engine.
 """
 
 from __future__ import annotations
@@ -168,6 +169,25 @@ def test_a_missing_starting_file_is_shown(form_page: tuple[Page, Offline]) -> No
     settle_frames(page)
     expect(page.locator("#form")).to_be_hidden()
     expect(button(page, "Back to YAML")).to_be_hidden()
+
+
+def test_open_file_does_nothing_while_the_form_is_busy(
+    api_form_page: tuple[Page, Offline],
+) -> None:
+    page, _ = api_form_page
+    held: list[Route] = []
+    page.route("**/api/minimal", lambda route: held.append(route))
+    button(page, "New scenario").click()
+    wait_until_held(page, held)
+    requests: list[str] = []
+    page.on("request", lambda request: requests.append(request.url))
+    page.evaluate("Alpine.$data(document.body).openFile('example')")
+    page.wait_for_timeout(300)
+    assert not [url for url in requests if url.endswith("/api/example")]
+    held[0].fallback()
+    wait_clean(page)
+    expect(control(page, "name")).to_have_value("new-scenario")
+    assert not [url for url in requests if url.endswith("/api/example")]
 
 
 def test_download_saves_the_checked_yaml(form_page: tuple[Page, Offline]) -> None:
