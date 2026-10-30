@@ -91,3 +91,40 @@ run keeps every version and leaves no cut-off in the file:
 
     uv lock --exclude-newer <the date seven days ago>T00:00:00Z
     uv lock
+
+## Releasing
+
+The version is written once, as `version` in `pyproject.toml`. A release is
+a commit and then a tag:
+
+1. Set that version, run `uv lock`, and commit `pyproject.toml` and `uv.lock`
+   as `chore(release): X.Y.Z`. The lock changes only northplan's own entry.
+2. Push it to main.
+3. Tag that commit with an annotated tag, and push the tag:
+
+       git tag -a vX.Y.Z -m "northplan X.Y.Z"
+       git push origin vX.Y.Z
+
+   The test job refuses a tag that is not `v` followed by the version in
+   `pyproject.toml`. The run publishes the image as `X.Y.Z`, `X.Y` and
+   `latest`, and deploys the page. The `github-pages` environment allows
+   deployments from `v*` tags as well as from main.
+4. Check that the image and the page both report the new version. The status
+   block of https://janowoc.github.io/northplan/ reads `northplan X.Y.Z`, and
+   this prints `X.Y.Z`:
+
+       docker run --rm --pull always ghcr.io/janowoc/northplan:latest python -c "import importlib.metadata as m; print(m.version('northplan'))"
+
+5. Create the release page on GitHub from the tag.
+
+The page's root serves the `v*` tag with the newest creation date, and
+`main/` serves the head of main. The image's `latest` follows the `v*` tag
+whose run published the image most recently. These are different rules, and
+they can pick different tags: for example when tags are pushed out of the
+order they were created, when two tags' runs overlap, when a tag's run fails,
+or when an older tag's run is re-run. Create and push one tag at a time, each
+after the previous tag's run has finished, and check after each release that
+the image and the page both report the new version (step 4). A backport tagged
+after a newer version, such as v0.2.1 after v0.3.0, becomes both the image's
+`latest` and the page's root.
+[#119](https://github.com/janowoc/northplan/issues/119) is to change that.

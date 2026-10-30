@@ -163,7 +163,10 @@ are the filing month and the indexation schedules. See `CLAUDE.md`.
 
 ## Run it in your browser
 
-https://janowoc.github.io/northplan/
+https://janowoc.github.io/northplan/ runs the latest release.
+https://janowoc.github.io/northplan/main/ is the development build: it
+follows the head of main, and its results can change from one commit to the
+next.
 
 The page runs the engine inside the browser: Python compiled to WebAssembly,
 by Pyodide. The scenario never leaves your machine. The only requests the page

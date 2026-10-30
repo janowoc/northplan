@@ -98,6 +98,25 @@ def years_line(page: Page) -> Locator:
     return page.locator(".status p").nth(1)
 
 
+def version_line(page: Page) -> Locator:
+    return page.locator(".status p").nth(2)
+
+
+def banner(page: Page) -> Locator:
+    return page.locator(".banner")
+
+
+def disclaimer_links(page: Page) -> Locator:
+    return page.locator("#disclaimer a")
+
+
+def expect_disclaimer_links(page: Page, revision: str) -> None:
+    for index, target in enumerate(("docs/limitations.md", "README.md#license", "LICENSE")):
+        expect(disclaimer_links(page).nth(index)).to_have_attribute(
+            "href", f"{REPOSITORY}/blob/{revision}/{target}"
+        )
+
+
 def run_button(page: Page) -> Locator:
     return page.locator("#run")
 
@@ -172,6 +191,13 @@ def test_it_loads_the_engine_and_the_example(
     expect(page.locator(".source a").nth(1)).to_have_attribute(
         "href", f"{REPOSITORY}/tree/{info['commit']}"
     )
+    expect(version_line(page)).to_have_text(
+        "northplan " + info["version"] if info["released"] else "development build"
+    )
+    if info["released"]:
+        expect(banner(page)).to_be_hidden()
+    else:
+        expect(banner(page)).to_be_visible()
 
 
 def test_run_waits_for_the_engine(pyodide_page: tuple[Page, Offline], pyodide_site: Site) -> None:
@@ -465,6 +491,87 @@ def test_without_build_info_the_years_are_unknown(
     expect(page.locator(".source a").nth(1)).to_have_attribute("href", REPOSITORY)
     settle_frames(page)
     expect(error_box(page)).to_be_hidden()
+    expect(banner(page)).to_be_hidden()
+    expect(version_line(page)).to_be_hidden()
+    expect_disclaimer_links(page, "main")
+
+
+BANNER_TEXT = (
+    "Development build, commit aaaaaaa. Its results can change from one commit to the next. "
+    "The released version is at https://janowoc.github.io/northplan/."
+)
+BUILD_COMMIT = "a" * 40
+
+
+def serve_build_info(page: Page, pyodide_site: Site, **changes: object) -> None:
+    """Serve the built site's build-info.json with the commit ``a * 40``, the version
+    ``9.9.9`` and ``changes`` applied; a ``changes`` value of ``None`` removes the key."""
+    assert pyodide_site.directory is not None
+    info = json.loads((pyodide_site.directory / "build-info.json").read_text(encoding="utf-8"))
+    info.update(commit=BUILD_COMMIT, version="9.9.9")
+    for key, value in changes.items():
+        if value is None:
+            info.pop(key, None)
+        else:
+            info[key] = value
+    body = json.dumps(info)
+    page.route(
+        "**/build-info.json",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=body),
+    )
+
+
+def test_a_released_build_names_its_version_and_has_no_banner(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    serve_build_info(page, pyodide_site, released=True)
+    page.goto(pyodide_site.url)
+    wait_until_ready(page)
+    settle_frames(page)
+    expect(error_box(page)).to_be_hidden()
+    expect(version_line(page)).to_have_text("northplan 9.9.9")
+    expect(banner(page)).to_be_hidden()
+    expect_disclaimer_links(page, BUILD_COMMIT)
+
+
+def test_a_development_build_says_so_in_a_banner_above_the_title(
+    pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    serve_build_info(page, pyodide_site, released=False)
+    page.goto(pyodide_site.url)
+    wait_until_ready(page)
+    settle_frames(page)
+    expect(error_box(page)).to_be_hidden()
+    expect(version_line(page)).to_have_text("development build")
+    expect(banner(page)).to_be_visible()
+    expect(banner(page)).to_have_text(BANNER_TEXT)
+    expect(page.get_by_role("note")).to_have_text(BANNER_TEXT)
+    expect(banner(page).locator("code")).to_have_text("aaaaaaa")
+    link = banner(page).locator("a")
+    expect(link).to_have_attribute("href", "https://janowoc.github.io/northplan/")
+    expect(link).to_have_text("https://janowoc.github.io/northplan/")
+    assert page.evaluate(
+        "document.body.firstElementChild === document.querySelector('.banner')"
+        " && document.querySelector('.banner').compareDocumentPosition("
+        "document.querySelector('h1')) === Node.DOCUMENT_POSITION_FOLLOWING"
+    )
+    expect_disclaimer_links(page, BUILD_COMMIT)
+
+
+@pytest.mark.parametrize("released", ["true", 1, None], ids=["string", "number", "absent"])
+def test_a_released_field_that_is_not_true_is_a_development_build(
+    released: object, pyodide_page: tuple[Page, Offline], pyodide_site: Site
+) -> None:
+    page, _ = pyodide_page
+    serve_build_info(page, pyodide_site, released=released)
+    page.goto(pyodide_site.url)
+    wait_until_ready(page)
+    settle_frames(page)
+    expect(error_box(page)).to_be_hidden()
+    expect(version_line(page)).to_have_text("development build")
+    expect(banner(page)).to_be_visible()
 
 
 def test_a_request_away_from_the_site_is_refused(

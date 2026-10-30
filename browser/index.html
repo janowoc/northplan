@@ -34,11 +34,18 @@
     #disclaimer { margin-top: 2rem; font-size: 0.85rem; opacity: 0.85; }
     #disclaimer p { margin: 0.5rem 0; }
     .source { font-size: 0.85rem; opacity: 0.85; }
+    .banner { margin-bottom: 1rem; padding: 0.75rem 1rem; border-left: 3px solid #d68910; }
     [x-cloak] { display: none !important; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   </style>
 </head>
 <body x-data="northplan()">
+
+  <div class="banner" role="note" x-show="revision !== null && !released" x-cloak>
+    Development build, commit <code x-text="revision && revision.slice(0, 7)"></code>. Its results
+    can change from one commit to the next. The released version is at
+    <a href="https://janowoc.github.io/northplan/">https://janowoc.github.io/northplan/</a>.
+  </div>
 
   <h1>northplan</h1>
   <p class="sub">Canadian household financial planning engine</p>
@@ -46,6 +53,7 @@
   <div class="status">
     <p x-text="status"></p>
     <p x-show="years" x-cloak>Tax parameters: <strong x-text="years"></strong></p>
+    <p x-show="revision !== null" x-cloak x-text="released ? 'northplan ' + version : 'development build'"></p>
   </div>
 
   <!-- editor -->
@@ -109,15 +117,15 @@
       Canada Revenue Agency, the Government of Alberta or another official source.</p>
     <p><strong>Simplifications.</strong> The model simplifies many tax rules and real-world
       conditions. These simplifications are listed in <a
-      href="https://github.com/janowoc/northplan/blob/main/docs/limitations.md">docs/limitations.md</a>.
+      :href="repository + '/blob/' + (revision || 'main') + '/docs/limitations.md'">docs/limitations.md</a>.
       Read it before interpreting any results.</p>
     <p><strong>No warranty.</strong> This software is provided "as is", without warranty of any
       kind, express or implied. The author accepts no liability for any loss arising from its
       use. The full terms are in the <a
-      href="https://github.com/janowoc/northplan#license">License</a> section and in sections
+      :href="repository + '/blob/' + (revision || 'main') + '/README.md#license'">License</a> section and in sections
       15 (Disclaimer of Warranty) and 16 (Limitation of Liability) of the GNU Affero General
       Public License v3 in <a
-      href="https://github.com/janowoc/northplan/blob/main/LICENSE">LICENSE</a>.</p>
+      :href="repository + '/blob/' + (revision || 'main') + '/LICENSE'">LICENSE</a>.</p>
   </div>
 
   <script>
@@ -169,6 +177,8 @@
         summary: null,
         years: '',
         repository: 'https://github.com/janowoc/northplan',
+        version: null,
+        released: false,
         revision: null,
         ...editor,
         async init() {
@@ -193,6 +203,8 @@
             if (r.ok) {
               const info = await r.json();
               this.years = info.parameter_years.join(', ');
+              this.version = info.version;
+              this.released = info.released === true;
               this.revision = info.commit;
             }
           } catch (e) {

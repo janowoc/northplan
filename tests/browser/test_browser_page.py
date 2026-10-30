@@ -27,6 +27,7 @@ SCRIPT_URLS = [
 ]
 PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/"
 REPOSITORY = "https://github.com/janowoc/northplan"
+RELEASE_URL = "https://janowoc.github.io/northplan/"
 
 
 def scripts(text: str) -> list[str]:
@@ -86,10 +87,32 @@ def test_run_is_disabled_until_the_engine_is_ready() -> None:
 
 
 def test_every_url_is_one_the_page_may_request() -> None:
-    allowed = [*SCRIPT_URLS, PYODIDE_BASE]
+    allowed = [*SCRIPT_URLS, PYODIDE_BASE, RELEASE_URL]
     for name, text in (("index.html", PAGE), ("worker.js", WORKER)):
         for url in re.findall(r"https?://[^\s\"'<>)`]+", text):
             assert url in allowed or url.startswith(REPOSITORY), f"{name}: {url}"
+
+
+def test_the_banner_links_to_the_release() -> None:
+    assert f'<a href="{RELEASE_URL}">{RELEASE_URL}</a>' in PAGE
+
+
+def opening_tag(marker: str) -> str:
+    found = re.search(rf"<[a-z]+\s[^>]*{marker}[^>]*>", PAGE)
+    assert found is not None, marker
+    return found.group(0)
+
+
+def test_the_banner_is_a_note_shown_only_for_a_development_build_and_cloaked() -> None:
+    tag = opening_tag(r'class="banner"')
+    assert 'role="note"' in tag
+    assert 'x-show="revision !== null && !released"' in tag
+    assert re.search(r"\sx-cloak(\s|>)", tag)
+
+
+def test_the_version_line_is_cloaked() -> None:
+    tag = opening_tag(r"x-text=\"released \?")
+    assert re.search(r"\sx-cloak(\s|>)", tag)
 
 
 def test_no_request_starts_at_the_servers_root() -> None:
@@ -151,16 +174,26 @@ def test_the_disclaimer_is_the_readmes_section() -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "url"),
+    ("target", "expression"),
     [
-        ("docs/limitations.md", f"{REPOSITORY}/blob/main/docs/limitations.md"),
-        ("LICENSE", f"{REPOSITORY}/blob/main/LICENSE"),
-        ("#license", f"{REPOSITORY}#license"),
+        (
+            "docs/limitations.md",
+            ":href=\"repository + '/blob/' + (revision || 'main') + '/docs/limitations.md'\"",
+        ),
+        (
+            "LICENSE",
+            ":href=\"repository + '/blob/' + (revision || 'main') + '/LICENSE'\"",
+        ),
+        (
+            "#license",
+            ":href=\"repository + '/blob/' + (revision || 'main') + '/README.md#license'\"",
+        ),
     ],
 )
-def test_each_disclaimer_link_is_absolute(target: str, url: str) -> None:
+def test_each_disclaimer_link_is_absolute(target: str, expression: str) -> None:
     assert f"]({target})" in README
-    assert re.search(rf'<a\s+href="{re.escape(url)}">', PAGE)
+    assert expression in PAGE
+    assert f"repository: '{REPOSITORY}'" in PAGE
 
 
 def editor_block(text: str) -> str:
