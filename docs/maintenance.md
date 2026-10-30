@@ -99,8 +99,13 @@ a commit and then a tag:
 
 1. Set that version, run `uv lock`, and commit `pyproject.toml` and `uv.lock`
    as `chore(release): X.Y.Z`. The lock changes only northplan's own entry.
-2. Push it to main.
-3. Tag that commit with an annotated tag, and push the tag:
+2. Push it to main, and wait until the run for that push has passed, its
+   deploy of the page included (`gh run watch --exit-status` follows it).
+3. Then, with no other run of main or of a `v*` tag in progress or queued,
+   tag that commit with an annotated tag and push the tag. Until the tag's run
+   has finished, push nothing else to main or as a `v*` tag, and re-run no run.
+   A deploy fetches every tag when its pages job checks out, so a tag that
+   exists then could be served by the root before its own run had tested it:
 
        git tag -a vX.Y.Z -m "northplan X.Y.Z"
        git push origin vX.Y.Z
@@ -117,14 +122,35 @@ a commit and then a tag:
 
 5. Create the release page on GitHub from the tag.
 
-The page's root serves the `v*` tag with the newest creation date, and
-`main/` serves the head of main. The image's `latest` follows the `v*` tag
-whose run published the image most recently. These are different rules, and
-they can pick different tags: for example when tags are pushed out of the
-order they were created, when two tags' runs overlap, when a tag's run fails,
-or when an older tag's run is re-run. Create and push one tag at a time, each
-after the previous tag's run has finished, and check after each release that
-the image and the page both report the new version (step 4). A backport tagged
-after a newer version, such as v0.2.1 after v0.3.0, becomes both the image's
-`latest` and the page's root.
+The page's root serves the annotated `vN.N.N` tag with the newest creation
+date, and `main/` serves the head of main. The page ignores a lightweight tag
+and every other `v*` name; the image still publishes a lightweight `vN.N.N`
+tag, so tags must be annotated, as step 3 shows. A deploy fails, and does not
+fall back to another tag, when two such tags share the newest creation date,
+when the tag's `pyproject.toml` version is not the tag's, or when the tag's
+tree has no `browser/build.py`.
+
+If a tag's test job fails, nothing was published or deployed from it. Delete
+the tag before anything else is pushed to main or as a `v*` tag, and before any
+run is re-run: if it is the newest annotated `vN.N.N` tag, the next deploy
+would otherwise build the root from it, or fail on it. Delete it with:
+
+    git push origin --delete refs/tags/vX.Y.Z
+    git tag -d vX.Y.Z
+
+If the test job passed and the image or pages job failed, do not delete the
+tag: the other job may already have published or deployed from it. Re-run the
+failed jobs:
+
+    gh run rerun <run-id> --failed
+
+The image's `latest` follows the `v*` tag whose run published the image most
+recently, a different rule from the page's root. The two can pick different
+tags: for example when tags are pushed out of the order they were created,
+when two tags' runs overlap, when a tag's run fails, or when an older tag's
+run is re-run. Create and push one tag at a time, each after the previous
+tag's run has finished, and check after each release that the image and the
+page both report the new version (step 4). A backport tagged after a newer
+version, such as v0.2.1 after v0.3.0, becomes both the image's `latest` and the
+page's root.
 [#119](https://github.com/janowoc/northplan/issues/119) is to change that.
