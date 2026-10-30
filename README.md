@@ -36,8 +36,11 @@ issues; the ordered plan that built the first version is archived in
 `docs/limitations.md`, and a change that adds one adds its entry there.
 
 Still to do: checking the engine's figures by hand, in a spreadsheet of the
-deterministic path (#21), a hand check of the couple scenario's death mechanics
-(#56), and golden cases for the lines no case reaches yet (#69).
+deterministic path ([#21](https://github.com/janowoc/northplan/issues/21)), a
+hand check of the couple scenario's death mechanics
+([#56](https://github.com/janowoc/northplan/issues/56)), and golden cases for
+the lines no case reaches yet
+([#69](https://github.com/janowoc/northplan/issues/69)).
 
 Scope of the first version: Alberta residents, no GIS, no Quebec. See
 `CLAUDE.md`.
