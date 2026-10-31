@@ -14,6 +14,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 from test_browser_build import REPO_ROOT, commit_all, git, make_repository
 
 OLD = "2030-01-01T00:00:00Z"
@@ -144,7 +145,7 @@ def assert_refuses(
         ("v07.7.8", "07.7.8", True, None),
     ],
 )
-def test_the_root_is_the_newest_annotated_release_tag_and_nothing_else(
+def test_the_root_is_the_highest_annotated_release_tag_and_nothing_else(
     tmp_path: Path,
     site: ModuleType,
     name: str,
@@ -164,7 +165,7 @@ def test_the_root_is_the_newest_annotated_release_tag_and_nothing_else(
     assert info(out / "main")["version"] == version
 
 
-def test_a_newer_annotated_release_tag_is_the_root(tmp_path: Path, site: ModuleType) -> None:
+def test_a_higher_annotated_release_tag_is_the_root(tmp_path: Path, site: ModuleType) -> None:
     repository = released_repository(tmp_path)
     set_version(repository, "7.7.8")
     tag(repository, "v7.7.8", NEWEST)
@@ -174,18 +175,18 @@ def test_a_newer_annotated_release_tag_is_the_root(tmp_path: Path, site: ModuleT
     assert info(out)["commit"] == head(repository)
 
 
-def test_the_newest_creation_date_wins_over_the_higher_version(
+def test_the_higher_version_wins_over_the_newest_creation_date(
     tmp_path: Path, site: ModuleType
 ) -> None:
     repository = scratch_repository(tmp_path / "repository")
     tag(repository, "v7.7.7", MIDDLE)
+    higher_version = head(repository)
     set_version(repository, "7.7.2")
-    older_version = head(repository)
     tag(repository, "v7.7.2", NEWEST)
     out = tmp_path / "out"
     site.assemble(out, "HEAD", repository)
-    assert info(out)["commit"] == older_version
-    assert info(out)["version"] == "7.7.2"
+    assert info(out)["commit"] == higher_version
+    assert info(out)["version"] == "7.7.7"
 
 
 def test_no_qualifying_tag_is_refused(tmp_path: Path, site: ModuleType) -> None:
@@ -194,42 +195,6 @@ def test_no_qualifying_tag_is_refused(tmp_path: Path, site: ModuleType) -> None:
     tag(repository, "v7.8.0-rc1", MIDDLE)
     tag(repository, "vtest", MIDDLE)
     assert_refuses(site, repository, tmp_path / "out", "HEAD", "no annotated tag named vN.N.N")
-
-
-def test_a_tie_at_the_newest_creation_date_is_refused_and_names_both_tags(
-    tmp_path: Path, site: ModuleType
-) -> None:
-    repository = scratch_repository(tmp_path / "repository")
-    tag(repository, "v7.7.7", NEWEST)
-    tag(repository, "v7.7.8", NEWEST)
-    tag(repository, "v7.7.6", OLD)
-    out = tmp_path / "out"
-    with pytest.raises(site.SiteError) as caught:
-        site.assemble(out, "HEAD", repository)
-    assert "v7.7.7" in str(caught.value) and "v7.7.8" in str(caught.value)
-    assert "share the newest creation date" in str(caught.value)
-    assert "v7.7.6" not in str(caught.value)
-    assert not out.exists()
-    assert worktree_count(repository) == 1
-
-
-def test_a_tie_below_the_newest_does_not_refuse(tmp_path: Path, site: ModuleType) -> None:
-    repository = scratch_repository(tmp_path / "repository")
-    tag(repository, "v7.7.5", OLD)
-    tag(repository, "v7.7.6", OLD)
-    tag(repository, "v7.7.7", MIDDLE)
-    out = tmp_path / "out"
-    site.assemble(out, "HEAD", repository)
-    assert info(out)["version"] == "7.7.7"
-
-
-def test_creation_dates_are_compared_as_numbers(tmp_path: Path, site: ModuleType) -> None:
-    repository = scratch_repository(tmp_path / "repository")
-    tag(repository, "v7.7.6", "1970-01-02T00:00:00Z")
-    tag(repository, "v7.7.7", MIDDLE)
-    out = tmp_path / "out"
-    site.assemble(out, "HEAD", repository)
-    assert info(out)["version"] == "7.7.7"
 
 
 def test_a_tag_whose_pyproject_version_is_not_its_name_is_refused(
@@ -548,35 +513,20 @@ def test_a_worktree_add_that_fails_after_registering_a_locked_entry_is_cleaned_u
     assert worktree_count(repository) == 1
 
 
-@pytest.mark.parametrize(
-    ("listing", "name"),
-    [
-        (b"v7.7.7 tag \n", r"v7\.7\.7"),
-        ("v7.7.9 tag \u0663\n".encode(), r"v7\.7\.9"),
-    ],
-)
-def test_a_qualifying_tag_with_a_non_numeric_creation_date_is_refused(
-    site: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, listing: bytes, name: str
-) -> None:
-    monkeypatch.setattr(site, "_git", lambda _root, *_arguments: listing)
-    with pytest.raises(site.SiteError, match=rf"creation date of the tag {name} is not a number"):
-        site._newest_release_tag(tmp_path)
-
-
 def test_a_tag_name_that_is_not_utf8_is_ignored(
     site: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    listing = b"v7.7.\xff tag 200\nv7.7.8 commit \nv7.7.7 tag 100\n"
+    listing = b"v7.7.\xff tag\nv7.7.8 commit\nv7.7.7 tag\n"
     monkeypatch.setattr(site, "_git", lambda _root, *_arguments: listing)
-    assert site._newest_release_tag(tmp_path) == "v7.7.7"
+    assert site._highest_release_tag(tmp_path) == "v7.7.7"
 
 
 def test_a_tag_name_with_a_line_separator_character_is_one_line(
     site: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    listing = "x\u0085y tag 300\nx\u2028y tag 400\nv7.7.7 tag 100\n".encode()
+    listing = "x\u0085y tag\nx\u2028y tag\nv7.7.7 tag\n".encode()
     monkeypatch.setattr(site, "_git", lambda _root, *_arguments: listing)
-    assert site._newest_release_tag(tmp_path) == "v7.7.7"
+    assert site._highest_release_tag(tmp_path) == "v7.7.7"
 
 
 def test_the_workflow_and_the_script_agree_on_what_a_release_tag_is(site: ModuleType) -> None:
@@ -602,9 +552,19 @@ def test_the_worktrees_are_pruned_after_they_are_removed(
 def test_wrong_argument_count_prints_usage_and_exits_2(
     site: ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for argv in (["site.py"], ["site.py", "out"], ["site.py", "out", "main", "extra"]):
+    usage = (
+        "usage: python browser/site.py OUT_DIR MAIN_REF\n"
+        "       python browser/site.py --image-tags TAG\n"
+    )
+    for argv in (
+        ["site.py"],
+        ["site.py", "out"],
+        ["site.py", "out", "main", "extra"],
+        ["site.py", "--image-tags"],
+        ["site.py", "--image-tags", "v7.7.7", "extra"],
+    ):
         assert site.main(argv) == 2
-        assert capsys.readouterr().err == "usage: python browser/site.py OUT_DIR MAIN_REF\n"
+        assert capsys.readouterr().err == usage
 
 
 def test_a_refusal_exits_1_with_the_message_on_stderr(
@@ -619,3 +579,214 @@ def test_a_refusal_exits_1_with_the_message_on_stderr(
     assert "is not an empty directory" in captured.err
     assert captured.out == ""
     assert [path.name for path in out.iterdir()] == ["stray.txt"]
+
+
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docker-image.yml"
+
+
+def release_tags(site: ModuleType, repository: Path) -> list[str]:
+    """The names of the annotated release tags of ``repository``."""
+    return sorted(name for name, version in site._tags(repository).items() if version is not None)
+
+
+def backport_repository(tmp_path: Path) -> Path:
+    """v7.7.7 oldest, v7.8.0 in the middle, and the backport v7.7.8 tagged last."""
+    repository = scratch_repository(tmp_path / "repository")
+    set_version(repository, "7.7.7")
+    tag(repository, "v7.7.7", OLD)
+    set_version(repository, "7.8.0")
+    tag(repository, "v7.8.0", MIDDLE)
+    set_version(repository, "7.7.8")
+    tag(repository, "v7.7.8", NEWEST)
+    return repository
+
+
+def lightweight_newer_repository(tmp_path: Path) -> Path:
+    """An annotated v7.8.0 whose pyproject matches, and a lightweight v7.9.0."""
+    repository = scratch_repository(tmp_path / "repository")
+    set_version(repository, "7.8.0")
+    tag(repository, "v7.8.0", MIDDLE)
+    tag(repository, "v7.9.0", NEWEST, annotated=False)
+    return repository
+
+
+def two_digit_repository(tmp_path: Path, lower: str, higher: str) -> Path:
+    """The higher version tagged long ago, and the lower one tagged last."""
+    repository = scratch_repository(tmp_path / "repository")
+    set_version(repository, higher)
+    tag(repository, f"v{higher}", OLD)
+    set_version(repository, lower)
+    tag(repository, f"v{lower}", NEWEST)
+    return repository
+
+
+VERSION_PAIRS = [
+    ("7.7.9", "7.7.10", (False, False)),
+    ("7.9.9", "7.10.0", (False, True)),
+    ("9.9.9", "10.0.0", (False, True)),
+]
+
+
+@pytest.mark.parametrize(("lower", "higher", "lower_gets"), VERSION_PAIRS)
+def test_versions_are_compared_as_integers(
+    tmp_path: Path, site: ModuleType, lower: str, higher: str, lower_gets: tuple[bool, bool]
+) -> None:
+    repository = two_digit_repository(tmp_path, lower, higher)
+    assert f"v{lower}" > f"v{higher}"
+    assert creation_date(repository, f"v{lower}") > creation_date(repository, f"v{higher}")
+    out = tmp_path / "out"
+    site.assemble(out, "HEAD", repository)
+    assert info(out)["version"] == higher
+    assert site.image_tags(f"v{higher}", repository) == (True, True)
+    assert site.image_tags(f"v{lower}", repository) == lower_gets
+
+
+def test_a_backport_tagged_after_a_newer_release_is_neither_the_root_nor_latest(
+    tmp_path: Path, site: ModuleType
+) -> None:
+    repository = backport_repository(tmp_path)
+    out = tmp_path / "out"
+    site.assemble(out, "HEAD", repository)
+    assert info(out)["version"] == "7.8.0"
+    assert site.image_tags("v7.8.0", repository) == (True, True)
+    assert site.image_tags("v7.7.8", repository) == (False, True)
+    assert site.image_tags("v7.7.7", repository) == (False, False)
+
+
+def test_x_y_is_the_series_of_both_numbers(tmp_path: Path, site: ModuleType) -> None:
+    repository = scratch_repository(tmp_path / "repository")
+    for name in ("v7.7.7", "v7.7.8", "v7.8.0", "v8.7.9"):
+        tag(repository, name, MIDDLE)
+    assert site.image_tags("v7.7.8", repository) == (False, True)
+    assert site.image_tags("v7.8.0", repository) == (False, True)
+    assert site.image_tags("v8.7.9", repository) == (True, True)
+    assert site.image_tags("v7.7.7", repository) == (False, False)
+
+
+def test_a_lightweight_tag_gets_neither_and_does_not_count(
+    tmp_path: Path, site: ModuleType
+) -> None:
+    repository = scratch_repository(tmp_path / "repository")
+    tag(repository, "v7.8.0", MIDDLE)
+    tag(repository, "v7.9.0", NEWEST, annotated=False)
+    tag(repository, "v7.8.1", NEWEST, annotated=False)
+    assert site.image_tags("v7.9.0", repository) == (False, False)
+    assert site.image_tags("v7.8.1", repository) == (False, False)
+    assert site.image_tags("v7.8.0", repository) == (True, True)
+
+
+@pytest.mark.parametrize("name", ["v7.8.0-rc1", "vtest", "v07.7.8", "", "7.7.7"])
+def test_image_tags_refuses_a_name_that_is_not_a_release_name(
+    tmp_path: Path, site: ModuleType, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    repository = released_repository(tmp_path)
+    if name:
+        tag(repository, name, NEWEST)
+        assert name in git(repository, "tag", "--list", name).split()
+    calls = record_commands(site, monkeypatch)
+    with pytest.raises(site.SiteError, match=r"is not named vN\.N\.N"):
+        site.image_tags(name, repository)
+    assert calls == []
+
+
+def test_image_tags_refuses_a_tag_that_does_not_exist(tmp_path: Path, site: ModuleType) -> None:
+    repository = released_repository(tmp_path)
+    git(repository, "branch", "v7.7.9")
+    with pytest.raises(site.SiteError, match=r"no tag named v7\.7\.9 exists"):
+        site.image_tags("v7.7.9", repository)
+
+
+def test_the_only_release_gets_both(tmp_path: Path, site: ModuleType) -> None:
+    repository = released_repository(tmp_path)
+    assert site.image_tags("v7.7.7", repository) == (True, True)
+
+
+def test_image_latest_agrees_with_the_root(tmp_path: Path, site: ModuleType) -> None:
+    corpus = {
+        "backport": backport_repository(tmp_path / "a"),
+        "lightweight": lightweight_newer_repository(tmp_path / "b"),
+        "integers": two_digit_repository(tmp_path / "c", "7.7.9", "7.7.10"),
+    }
+    for label, repository in corpus.items():
+        out = tmp_path / f"out-{label}"
+        site.assemble(out, "HEAD", repository)
+        names = release_tags(site, repository)
+        latest = [name for name in names if site.image_tags(name, repository)[0]]
+        assert len(latest) == 1, label
+        assert latest[0] == f"v{info(out)['version']}", label
+
+
+@pytest.mark.parametrize(
+    ("pair", "printed"),
+    [
+        ((True, False), "latest=true\nminor=false\n"),
+        ((False, True), "latest=false\nminor=true\n"),
+    ],
+)
+def test_image_tags_prints_two_lines_and_exits_0(
+    site: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    pair: tuple[bool, bool],
+    printed: str,
+) -> None:
+    seen: list[str] = []
+
+    def stub(tag_name: str) -> tuple[bool, bool]:
+        seen.append(tag_name)
+        return pair
+
+    monkeypatch.setattr(site, "image_tags", stub)
+    assert site.main(["site.py", "--image-tags", "v7.7.7"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == printed
+    assert captured.err == ""
+    assert seen == ["v7.7.7"]
+
+
+def test_an_image_tags_refusal_exits_1_with_the_message_on_stderr(
+    site: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert site.main(["site.py", "--image-tags", "vtest"]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith("site.py: ")
+    assert "is not named vN.N.N" in captured.err
+    assert captured.out == ""
+
+
+def test_the_image_job_asks_the_script_for_its_moving_tags(
+    site: ModuleType, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    steps = yaml.safe_load(text)["jobs"]["image"]["steps"]
+    checkout = steps[0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["fetch-depth"] == 0
+    login = next(
+        i for i, step in enumerate(steps) if "docker/login-action@" in step.get("uses", "")
+    )
+    moving = next(i for i, step in enumerate(steps) if step.get("id") == "moving")
+    meta = next(i for i, step in enumerate(steps) if step.get("id") == "meta")
+    assert login < moving < meta
+    assert set(steps[moving]) == {"id", "if", "env", "run"}
+    assert steps[moving]["if"] == "github.ref_type == 'tag'"
+    assert steps[moving]["env"] == {"TAG": "${{ github.ref_name }}"}
+    lines = [line.strip() for line in steps[moving]["run"].splitlines() if line.strip()]
+    assert lines == [
+        'moving=$(python3 browser/site.py --image-tags "$TAG")',
+        'echo "$moving" >> "$GITHUB_OUTPUT"',
+    ]
+    assert steps[meta]["with"]["flavor"].strip() == "latest=false"
+    assert steps[meta]["with"]["tags"].splitlines() == [
+        "type=ref,event=branch,enable={{is_default_branch}}",
+        "type=sha,enable={{is_default_branch}}",
+        "type=semver,pattern={{version}}",
+        "type=semver,pattern={{major}}.{{minor}},enable=${{ steps.moving.outputs.minor == 'true' }}",
+        "type=raw,value=latest,enable=${{ steps.moving.outputs.latest == 'true' }}",
+    ]
+    read = set(re.findall(r"steps\.moving\.outputs\.(\w+)", text))
+    assert read == {"latest", "minor"}
+    monkeypatch.setattr(site, "image_tags", lambda _tag: (True, True))
+    assert site.main(["site.py", "--image-tags", "v7.7.7"]) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert {line.split("=", 1)[0] for line in printed} == read

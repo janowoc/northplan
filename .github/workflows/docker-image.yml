@@ -7,7 +7,7 @@
 # while the two conflict. Every run tests and, once the tests pass, builds the
 # image for amd64 and arm64; only main and v* tags publish it to ghcr.io. A push
 # to main or a v* tag also builds the browser page's two halves, the root from
-# the newest annotated vN.N.N tag and main/ from main, and deploys them to
+# the highest annotated vN.N.N tag and main/ from main, and deploys them to
 # GitHub Pages once the tests pass; pull requests deploy nothing. Uses
 # GITHUB_TOKEN and no other secret. Every action is pinned to a commit; the
 # comment names its release. The QEMU image, buildx and BuildKit are pinned too.
@@ -120,6 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -205,18 +206,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # latest follows the most recently published v* release (the action's
-      # default for semver tags, which compares no versions); main publishes as
-      # main and sha-<short>.
+      # The tag's moving image tags, from the tags the checkout fetched: latest
+      # when it is the highest annotated vN.N.N tag, X.Y when it is the highest
+      # of its X.Y. browser/site.py holds the rule, which the page's root follows
+      # too.
+      - id: moving
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          moving=$(python3 browser/site.py --image-tags "$TAG")
+          echo "$moving" >> "$GITHUB_OUTPUT"
+      # A v* tag publishes as X.Y.Z, and as X.Y and latest when the step above
+      # says so; main publishes as main and sha-<short>.
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch,enable={{is_default_branch}}
             type=sha,enable={{is_default_branch}}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.moving.outputs.minor == 'true' }}
+            type=raw,value=latest,enable=${{ steps.moving.outputs.latest == 'true' }}
           # GitHub detects the licence as AGPL-3.0; the project is
           # AGPL-3.0-or-later.
           labels: |

@@ -264,12 +264,12 @@ To run the published image without cloning the repository:
 docker run --rm -p 127.0.0.1:8000:8000 ghcr.io/janowoc/northplan:latest
 ```
 
-`latest` is the most recently published release, also tagged `X.Y.Z` and
-`X.Y`. `main` is the most recently published build of the main branch, and
-`sha-` followed by a 7-character commit hash is the build of the push to `main`
-that ended at that commit. With the `127.0.0.1:` prefix only this machine can
-connect. To open it to other devices on the network, publish the port on every
-interface and choose the token:
+`latest` is the highest-numbered release. Each release is also tagged `X.Y.Z`,
+and `X.Y` is the highest `X.Y.N` release. `main` is the most recently published
+build of the main branch, and `sha-` followed by a 7-character commit hash is
+the build of the push to `main` that ended at that commit. With the
+`127.0.0.1:` prefix only this machine can connect. To open it to other devices
+on the network, publish the port on every interface and choose the token:
 
 ```sh
 docker run --rm -p 8123:8000 -e NORTHPLAN_TOKEN='your-token-here' ghcr.io/janowoc/northplan:latest

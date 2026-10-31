@@ -111,9 +111,9 @@ a commit and then a tag:
        git push origin vX.Y.Z
 
    The test job refuses a tag that is not `v` followed by the version in
-   `pyproject.toml`. The run publishes the image as `X.Y.Z`, `X.Y` and
-   `latest`, and deploys the page. The `github-pages` environment allows
-   deployments from `v*` tags as well as from main.
+   `pyproject.toml`. The run publishes the image as `X.Y.Z`, and as `X.Y` and
+   `latest` by the rule below, and deploys the page. The `github-pages`
+   environment allows deployments from `v*` tags as well as from main.
 4. Check that the image and the page both report the new version. The status
    block of https://janowoc.github.io/northplan/ reads `northplan X.Y.Z`, and
    this prints `X.Y.Z`:
@@ -122,17 +122,20 @@ a commit and then a tag:
 
 5. Create the release page on GitHub from the tag.
 
-The page's root serves the annotated `vN.N.N` tag with the newest creation
-date, and `main/` serves the head of main. The page ignores a lightweight tag
-and every other `v*` name; the image still publishes a lightweight `vN.N.N`
-tag, so tags must be annotated, as step 3 shows. A deploy fails, and does not
-fall back to another tag, when two such tags share the newest creation date,
-when the tag's `pyproject.toml` version is not the tag's, or when the tag's
-tree has no `browser/build.py`.
+The page's root and the image's `latest` both follow the highest annotated
+`vN.N.N` tag, its three numbers compared as integers, so v0.10.0 is higher
+than v0.9.1. The image's `X.Y` follows the highest annotated tag of the form
+`vX.Y.N`. `browser/site.py` holds the rule: the pages job builds the root from
+that tag, and a tag's image job asks it whether the tag gets `X.Y` and
+`latest`. `main/` serves the head of main. The rule ignores a lightweight tag
+and every other `v*` name; the image publishes a lightweight `vN.N.N` tag as
+`X.Y.Z` only, so tags must be annotated, as step 3 shows. A deploy fails, and
+does not fall back to another tag, when the highest tag's `pyproject.toml`
+version is not the tag's, or when its tree has no `browser/build.py`.
 
 If a tag's test job fails, nothing was published or deployed from it. Delete
 the tag before anything else is pushed to main or as a `v*` tag, and before any
-run is re-run: if it is the newest annotated `vN.N.N` tag, the next deploy
+run is re-run: if it is the highest annotated `vN.N.N` tag, the next deploy
 would otherwise build the root from it, or fail on it. Delete it with:
 
     git push origin --delete refs/tags/vX.Y.Z
@@ -144,13 +147,49 @@ failed jobs:
 
     gh run rerun <run-id> --failed
 
-The image's `latest` follows the `v*` tag whose run published the image most
-recently, a different rule from the page's root. The two can pick different
-tags: for example when tags are pushed out of the order they were created,
-when two tags' runs overlap, when a tag's run fails, or when an older tag's
-run is re-run. Create and push one tag at a time, each after the previous
-tag's run has finished, and check after each release that the image and the
-page both report the new version (step 4). A backport tagged after a newer
-version, such as v0.2.1 after v0.3.0, becomes both the image's `latest` and the
-page's root.
-[#119](https://github.com/janowoc/northplan/issues/119) is to change that.
+The image job decides `X.Y` and `latest` from the tags that exist when it
+checks out, and pushes them when its build ends. Two tag runs that overlap can
+therefore leave the image's `X.Y` or `latest` on the lower tag: for example,
+when a lower tag's image job checks out before a higher tag exists and pushes
+after the higher tag's run. Create and push one tag at a time, each after the
+previous tag's run has finished, and check after each release (step 4, or
+step 5 of a backport).
+
+v0.1.0 and v0.2.0 predate this rule. Their own workflow, which a run of either
+uses, publishes the tag as `X.Y` and `latest` whatever other tags exist. Once a
+newer version is released, re-run no run of either, and backport no fix onto
+either: release such a fix from main as the next version. Re-run no run of main
+from before this rule at all: one that deploys the page chooses its root by an
+older rule.
+
+### A backport
+
+A fix for an older series, such as v0.3.1 after v0.4.0, is released from a
+branch named `release/X.Y`, so that main's version stays where it is. Pushing
+the branch runs no workflow: its tree's workflow runs for pushes only to main
+and to `v*` tags.
+
+1. The fix lands on main first, the usual way. Only when the code it fixes no
+   longer exists on main is it written on the branch alone.
+2. If `release/X.Y` does not exist yet, create it from the highest `vX.Y.N`
+   tag and push it; otherwise switch to it and pull it:
+
+       git switch -c release/X.Y vX.Y.N
+       git push -u origin release/X.Y
+
+3. On the branch, cherry-pick the fix with `git cherry-pick -x <commit>`. Then
+   set the version, run `uv lock`, commit as in step 1 above, and push the
+   branch. Main is not touched.
+4. Tag that commit and push the tag, as in step 3 above, under the same
+   conditions. Its run tests the branch's tree, publishes the image as `X.Y.Z`
+   and `X.Y` but not `latest`, and deploys the page with the root unchanged.
+5. Check that the image's `latest` and the page's root still report the newer
+   version, and that the image's `X.Y` reports the backport. The status block
+   of https://janowoc.github.io/northplan/ still reads the newer version, and
+   this prints the newer version, then `X.Y.Z`:
+
+       for tag in latest X.Y; do docker run --rm --pull always "ghcr.io/janowoc/northplan:$tag" python -c "import importlib.metadata as m; print(m.version('northplan'))"; done
+
+6. Create the release page without marking it the latest release:
+
+       gh release create vX.Y.Z --verify-tag --latest=false
