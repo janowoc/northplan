@@ -59,6 +59,7 @@ from engine.policy.build import build_policy, expand_grid
 from engine.scenario import (
     CeilingBracketNotAllowedError,
     LifespanNotRepresentableError,
+    LockedInAgeError,
     PolicySpec,
     Scenario,
     ScenarioError,
@@ -69,6 +70,7 @@ from engine.scenario import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = REPO_ROOT / "scenarios" / "example.yaml"
 COUPLE = REPO_ROOT / "scenarios" / "late_life_couple.yaml"
+MINIMAL = REPO_ROOT / "scenarios" / "minimal.yaml"
 
 
 def _values(path: Path) -> dict[str, Any]:
@@ -312,6 +314,43 @@ def test_start_ages_runs_before_lifespan() -> None:
 
     with pytest.raises(StartAgeNotAllowedError, match=re.escape("cpp_start_age_years.a=50")):
         prepare_run(scenario)
+
+
+def _minimal_with_a_young_lif() -> dict[str, Any]:
+    """The minimal scenario, its one person holding an empty LIF while a year too young for it."""
+    unlocking_age = load_year(2026).jurisdiction("ab").integer("lif.unlocking_age_years")
+    values = _values(MINIMAL)
+    person = values["household"]["persons"][0]
+    person["birth_year"] = values["start_year"] - unlocking_age + 1
+    person["accounts"] = {"lif": {"balance": 0.0, "jurisdiction": "ab"}}
+    return values
+
+
+def test_a_lif_below_the_unlocking_age_is_refused_by_prepare_run_and_check_scenario() -> None:
+    scenario = Scenario.model_validate(_minimal_with_a_young_lif())
+
+    with pytest.raises(LockedInAgeError, match="'a'"):
+        prepare_run(scenario)
+    with pytest.raises(LockedInAgeError, match="'a'"):
+        check_scenario(scenario, paths=None, load_params=load_year)
+
+
+def test_lifespan_runs_before_locked_in() -> None:
+    """The scenario carries both a too-old person and a LIF held too young; the lifespan
+    refusal wins, since check_lifespan runs before check_locked_in.
+    """
+    terminal_age_years = int(load_year(2026)["mortality"].number("terminal_age_years"))
+    values = _minimal_with_a_young_lif()
+    birth_year, birth_month = _birth_for_age_at_open(
+        values["start_year"], (terminal_age_years + 1) * MONTHS_PER_YEAR
+    )
+    _append_minimal_person(values, "b", birth_year, birth_month)
+    scenario = Scenario.model_validate(values)
+
+    with pytest.raises(LifespanNotRepresentableError):
+        prepare_run(scenario)
+    with pytest.raises(LifespanNotRepresentableError):
+        check_scenario(scenario, paths=None, load_params=load_year)
 
 
 def test_rrif_conversion_above_limit_is_refused() -> None:

@@ -197,6 +197,7 @@ def expand_grid(scenario: Scenario) -> Scenario:
     so every schema validator runs again on what the optimizer will actually evaluate. The
     guards that read the parameter year (:func:`~engine.scenario.start_ages.check_start_ages`,
     :func:`~engine.scenario.lifespan.check_lifespan`,
+    :func:`~engine.scenario.locked_in.check_locked_in`,
     :func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`) are not schema validators
     and do not run here; :func:`engine.mc.prepare.prepare_run` runs them on the expansion.
 

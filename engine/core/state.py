@@ -207,8 +207,9 @@ class LifState:
             January the same way.
         withdrawn_ytd: Amount withdrawn so far this year; fixed/reset in January.
         opened_year: Mirrors :attr:`RrifState.opened_year` exactly.
-        inherited_fraction: The share of ``balance`` rolled over from a deceased spouse's LIF;
-            mirrors :attr:`RrifState.inherited_fraction` exactly.
+        inherited_fraction: Same arithmetic as :attr:`RrifState.inherited_fraction`, but zero in
+            every state a run reaches: at a first death a LIF is paid into the survivor's RRIF,
+            not their LIF (L41), and a LIRA converted into it is the holder's own.
     """
 
     balance: NDArray[np.float64]

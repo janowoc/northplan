@@ -8,7 +8,8 @@
 :func:`check_scenario`, which checks the run's size, expands the grid, loads the
 parameter year and runs the load-time guards
 (:func:`~engine.scenario.start_ages.check_start_ages`,
-:func:`~engine.scenario.lifespan.check_lifespan`, and
+:func:`~engine.scenario.lifespan.check_lifespan`,
+:func:`~engine.scenario.locked_in.check_locked_in`, and
 :func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`) on the
 expansion; then it checks the parameter year's shape -- ``resp``'s reach-back,
 via :func:`~engine.accounts.resp.governing_income_year_offset` -- and builds the
@@ -55,6 +56,7 @@ from engine.policy.build import build_policy, expand_grid
 from engine.scenario.ceiling_bracket import check_ceiling_bracket
 from engine.scenario.lifespan import check_lifespan
 from engine.scenario.load import ScenarioError
+from engine.scenario.locked_in import check_locked_in
 from engine.scenario.schema import PolicySpec, Scenario
 from engine.scenario.start_ages import check_start_ages
 
@@ -116,8 +118,8 @@ def check_scenario(
 
     Raises on the first failure, in this order: the run's size, before the grid is
     expanded; the grid's expansion; ``load_params``; the start ages; the lifespan; the
-    ceiling bracket. A guard's lookups in the parameter year, and its check of that year
-    against ``start_year``, fail within the guard's own step.
+    locked-in accounts; the ceiling bracket. A guard's lookups in the parameter year, and
+    its check of that year against ``start_year``, fail within the guard's own step.
 
     Args:
         scenario: The scenario as loaded (grid may be non-empty).
@@ -145,6 +147,12 @@ def check_scenario(
             conversion age the parameter year does not allow.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or household
             the life table cannot represent.
+        engine.scenario.locked_in.LockedInAgeError: A LIF stated for someone below the
+            unlocking age on 1 January of the start year.
+        engine.scenario.locked_in.LockedInJurisdictionError: A locked-in account whose
+            jurisdiction has no parameter file, or a couple in which one person's
+            LIRA holds a balance and names a jurisdiction other than the one the
+            other person states for a LIRA or a LIF.
         engine.scenario.ceiling_bracket.CeilingBracketNotAllowedError: A withdrawal
             ``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
             parameter year.
@@ -172,6 +180,7 @@ def check_scenario(
     params = load_params(expanded.start_year)
     check_start_ages(expanded, params)
     check_lifespan(expanded, params)
+    check_locked_in(expanded, params)
     check_ceiling_bracket(expanded, params)
     return expanded, params
 
@@ -213,6 +222,12 @@ def prepare_run(
             a CPP or OAS pension in pay for someone too young to receive it.
         engine.scenario.lifespan.LifespanNotRepresentableError: A person or
             household the life table cannot represent.
+        engine.scenario.locked_in.LockedInAgeError: A LIF stated for someone below the
+            unlocking age on 1 January of the start year.
+        engine.scenario.locked_in.LockedInJurisdictionError: A locked-in account whose
+            jurisdiction has no parameter file, or a couple in which one person's
+            LIRA holds a balance and names a jurisdiction other than the one the
+            other person states for a LIRA or a LIF.
         engine.scenario.ceiling_bracket.CeilingBracketNotAllowedError: A withdrawal
             ``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
             parameter year.

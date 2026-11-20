@@ -99,10 +99,10 @@ household:
         rrif:    {balance: 180000}     # open: a minimum is fixed in the first January
         tfsa:    {balance: 60000, room: 12000}
         taxable: {balance: 120000, acb: 70000}   # ACB below balance: a gain at the deemed disposition
-        # jurisdiction of REGISTRATION; both LIFs here are "ab" on purpose —
-        # lif.spousal_rollover refuses a cross-jurisdiction rollover to a
-        # survivor's LIF with a ValueError, and no jurisdiction other than
-        # Alberta has a parameter file yet (limitations.md L3).
+        # jurisdiction of REGISTRATION; both LIFs here are "ab", the only
+        # jurisdiction with a parameter file (limitations.md L3). At a first
+        # death the deceased's LIF is paid into the survivor's RRIF
+        # (limitations.md L41).
         lif:     {balance: 50000, jurisdiction: ab}
     - id: b
       birth_year: 1943

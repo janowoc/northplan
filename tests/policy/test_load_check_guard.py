@@ -26,7 +26,7 @@ import engine.core.build
 from engine.core.build import build_initial_state
 from engine.params.loader import DEFAULT_PARAMS_ROOT, load_year
 from engine.policy.build import expand_grid
-from engine.scenario.schema import CppEntitlement, OasEntitlement
+from engine.scenario.schema import CppEntitlement, LifAccount, OasEntitlement
 
 pytest_plugins = ["pytester"]
 
@@ -128,6 +128,22 @@ def test_a_lifespan_refusal_fails_the_test(scenario) -> None:
     )
     with pytest.raises(pytest.fail.Exception, match="LifespanNotRepresentableError"):
         build_initial_state(too_old, n_paths=1)
+
+
+def test_a_locked_in_refusal_fails_the_test(scenario) -> None:
+    unlocking_age = (
+        load_year(scenario.start_year).jurisdiction("ab").integer("lif.unlocking_age_years")
+    )
+    person = scenario.household.persons[0]
+    too_young = _with_person_a(
+        scenario,
+        birth_year=scenario.start_year - unlocking_age + 1,
+        accounts=person.accounts.model_copy(
+            update={"lif": LifAccount(balance=0.0, jurisdiction="ab")}
+        ),
+    )
+    with pytest.raises(pytest.fail.Exception, match="LockedInAgeError"):
+        build_initial_state(too_young, n_paths=1)
 
 
 def _edge_count(scenario) -> int:

@@ -26,22 +26,26 @@ import numpy as np
 from engine.accounts import base
 from engine.core.indexation import RealParamSet
 from engine.core.state import LifState, LiraState, updated
+from engine.params.loader import ParamSet
 
 
-def withdrawals_permitted(age_at_start_of_year: int, params: RealParamSet) -> bool:
+def withdrawals_permitted(age_at_start_of_year: int, params: ParamSet | RealParamSet) -> bool:
     """Whether the account may be drawn on at all this year.
 
     The lock is what makes a LIRA a LIRA rather than an RRSP, and a policy that
     plans a withdrawal before the unlocking age is planning something that
     cannot happen. The unlocking age is jurisdictional and comes from
-    ``params``.
+    ``params``. The load check ``engine.scenario.locked_in.check_locked_in`` also
+    calls this, to refuse a LIF stated for someone below the unlocking age on
+    1 January of the start year.
 
     Args:
         age_at_start_of_year: Age in whole years on 1 January. See
             ``engine.core.timeline.age_at_start_of_year``. Not per-path: a
             person's age does not vary by path.
         params: The parameter set of the jurisdiction the account is
-            **registered** in.
+            **registered** in. Either view serves: the unlocking age is an
+            age, not a dollar amount.
 
     Returns:
         Whether the lock has lifted.

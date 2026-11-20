@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from engine.accounts import lif
+from engine.accounts import lif, rrif
 from engine.core.indexation import real_year
-from engine.core.state import LifState
+from engine.core.state import LifState, RrifState
 from engine.params.loader import (
     MalformedParamFileError,
     MissingParameterError,
@@ -156,8 +156,9 @@ def test_there_is_no_erode_nominal() -> None:
 
 
 # =============================================================================
-# spousal_rollover (#36)
+# pay_to_survivor
 # =============================================================================
+# Balances, fractions and years below are synthetic.
 
 
 def _multi(
@@ -184,137 +185,142 @@ def _multi(
     )
 
 
-def test_spousal_rollover_moves_balance_and_zeroes_the_deceased() -> None:
+def _rrif(balance, opened_year, inherited_fraction=None, annual_minimum=None, withdrawn_ytd=None):
+    n = len(balance)
+    return RrifState(
+        balance=np.array(balance, dtype=np.float64),
+        annual_minimum=np.zeros(n) if annual_minimum is None else np.array(annual_minimum),
+        withdrawn_ytd=np.zeros(n) if withdrawn_ytd is None else np.array(withdrawn_ytd),
+        opened_year=opened_year,
+        inherited_fraction=(
+            np.zeros(n) if inherited_fraction is None else np.array(inherited_fraction)
+        ),
+    )
+
+
+def _same_rrif(left: RrifState, right: RrifState) -> None:
+    np.testing.assert_array_equal(left.balance, right.balance)
+    np.testing.assert_array_equal(left.annual_minimum, right.annual_minimum)
+    np.testing.assert_array_equal(left.withdrawn_ytd, right.withdrawn_ytd)
+    np.testing.assert_array_equal(left.inherited_fraction, right.inherited_fraction)
+    assert left.opened_year == right.opened_year
+
+
+def test_pay_to_survivor_matches_receive_conversion() -> None:
+    year = 2030
+    deceased = _multi(
+        [10_000.0, 20_000.0, 0.0, 7_000.0],
+        "ab",
+        [500.0, 600.0, 0.0, 10.0],
+        [1000.0, 1200.0, 0.0, 20.0],
+        [100.0, 200.0, 0.0, 30.0],
+        2020,
+        inherited_fraction=[0.0, 0.0, 0.0, 0.0],
+    )
+    masks = [
+        np.array([True, True, True, True]),
+        np.array([True, False, True, False]),
+        np.array([False, False, True, False]),  # only the zero-balance path
+    ]
+    survivors = [
+        _rrif([0.0, 0.0, 0.0, 0.0], None),
+        _rrif([5_000.0, 0.0, 9_000.0, 4_000.0], 2015),
+        _rrif([5_000.0, 6_000.0, 9_000.0, 4_000.0], 2015, [0.3, 0.0, 0.7, 0.2]),
+        _rrif([0.0, 6_000.0, 0.0, 4_000.0], 2012, [0.0, 0.5, 0.0, 0.9]),
+    ]
+    reached = 0
+    for mask in masks:
+        for survivor in survivors:
+            moved = np.where(mask, deceased.balance, 0.0)
+            _, got = lif.pay_to_survivor(deceased, survivor, mask, year)
+            if np.any(moved > 0):
+                reached += 1
+                _same_rrif(got, rrif.receive_conversion(survivor, moved, year))
+    assert reached == 8  # two of the three masks move something, against four survivors
+
+
+def test_pay_to_survivor_with_nothing_moved_leaves_the_rrif_as_it_was() -> None:
+    deceased = _multi([0.0, 9_000.0], "ab", [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], 2020)
+    survivor = _rrif([0.0, 0.0], None)
+    for mask in (np.array([False, False]), np.array([True, False])):
+        # Guard: receive_conversion given zeros would set opened_year, so this case bites.
+        assert rrif.receive_conversion(survivor, np.zeros(2), 2030).opened_year == 2030
+
+        _, got = lif.pay_to_survivor(deceased, survivor, mask, 2030)
+
+        assert got.opened_year is None
+        _same_rrif(got, survivor)
+
+
+def test_pay_to_survivor_moves_the_balance_and_zeroes_the_deceased() -> None:
+    mask = np.array([True, False])
+    deceased = _multi([10_000.0, 20_000.0], "ab", [0.0, 0.0], [1000.0, 1200.0], [0.0, 0.0], 2020)
+    survivor = _rrif([5_000.0, 6_000.0], 2019)
+
+    new_deceased, new_survivor = lif.pay_to_survivor(deceased, survivor, mask, 2026)
+
+    np.testing.assert_array_equal(new_deceased.balance, [0.0, 20_000.0])
+    np.testing.assert_array_equal(new_survivor.balance, [15_000.0, 6_000.0])
+
+
+def test_pay_to_survivor_leaves_paths_outside_the_mask_untouched() -> None:
     mask = np.array([True, False])
     deceased = _multi(
-        [10_000.0, 20_000.0], "ab", [500.0, 600.0], [1000.0, 1200.0], [100.0, 200.0], 2020
+        [10_000.0, 20_000.0], "ab", [1.0, 2.0], [1000.0, 1200.0], [3.0, 4.0], 2020, [0.2, 0.3]
     )
-    survivor = _multi([5_000.0, 6_000.0], "ab", [50.0, 60.0], [400.0, 500.0], [10.0, 20.0], 2019)
+    survivor = _rrif([5_000.0, 6_000.0], 2019, [0.1, 0.4], [7.0, 8.0], [9.0, 10.0])
 
-    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+    new_deceased, new_survivor = lif.pay_to_survivor(deceased, survivor, mask, 2026)
 
-    np.testing.assert_allclose(new_deceased.balance, [0.0, 20_000.0])
-    np.testing.assert_allclose(new_survivor.balance, [15_000.0, 6_000.0])
+    assert new_deceased.balance[1] == deceased.balance[1]
+    assert new_survivor.balance[1] == survivor.balance[1]
+    assert new_survivor.inherited_fraction[1] == survivor.inherited_fraction[1]
+    assert new_survivor.annual_minimum[1] == survivor.annual_minimum[1]
+    assert new_survivor.withdrawn_ytd[1] == survivor.withdrawn_ytd[1]
+    assert new_deceased.inherited_fraction[1] == deceased.inherited_fraction[1]
+    assert new_survivor.balance[0] != survivor.balance[0]  # guard: the masked path did move
 
 
-def test_spousal_rollover_leaves_the_survivors_minimum_and_withdrawn_ytd_untouched() -> None:
+def test_pay_to_survivor_leaves_the_deceaseds_other_fields_unchanged() -> None:
+    mask = np.array([True])
+    deceased = _multi([10_000.0], "ab", [500.0], [1000.0], [100.0], 2020, [0.3])
+    survivor = _rrif([5_000.0], 2019)
+
+    new_deceased, _ = lif.pay_to_survivor(deceased, survivor, mask, 2026)
+
+    assert new_deceased.balance[0] == 0.0  # guard: it did pay
+    np.testing.assert_array_equal(new_deceased.annual_minimum, deceased.annual_minimum)
+    np.testing.assert_array_equal(new_deceased.annual_maximum, deceased.annual_maximum)
+    np.testing.assert_array_equal(new_deceased.withdrawn_ytd, deceased.withdrawn_ytd)
+    np.testing.assert_array_equal(new_deceased.inherited_fraction, [0.3])
+    assert new_deceased.jurisdiction == "ab"
+    assert new_deceased.opened_year == 2020
+
+
+def test_pay_to_survivor_leaves_the_survivors_minimum_and_withdrawn_ytd_untouched() -> None:
     mask = np.array([True])
     deceased = _multi([10_000.0], "ab", [500.0], [1000.0], [100.0], 2020)
-    survivor = _multi([5_000.0], "ab", [50.0], [400.0], [10.0], 2019)
+    survivor = _rrif([5_000.0], 2019, annual_minimum=[50.0], withdrawn_ytd=[10.0])
 
-    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
+    _, new_survivor = lif.pay_to_survivor(deceased, survivor, mask, 2026)
 
-    np.testing.assert_allclose(new_survivor.annual_minimum, [50.0])
-    np.testing.assert_allclose(new_survivor.withdrawn_ytd, [10.0])
+    assert new_survivor.balance[0] == 15_000.0  # guard: it did pay
+    np.testing.assert_array_equal(new_survivor.annual_minimum, [50.0])
+    np.testing.assert_array_equal(new_survivor.withdrawn_ytd, [10.0])
 
 
-def test_spousal_rollover_opened_year_rule() -> None:
+def test_pay_to_survivor_credits_the_money_as_the_survivors_own() -> None:
     mask = np.array([True])
-    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
+    fraction, own, moved = 0.4, 300.0, 100.0
+    deceased = _multi([moved], "ab", [0.0], [50.0], [0.0], 2020)
+    survivor = _rrif([own], 2019, [fraction])
 
-    none_survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
-    _, new_survivor = lif.spousal_rollover(deceased, none_survivor, mask)
-    assert new_survivor.opened_year == 2015
+    _, new_survivor = lif.pay_to_survivor(deceased, survivor, mask, 2026)
 
-    own_survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
-    _, new_survivor = lif.spousal_rollover(deceased, own_survivor, mask)
-    assert new_survivor.opened_year == 2010
-
-
-def test_spousal_rollover_jurisdiction_rule_and_guard() -> None:
-    mask = np.array([True])
-    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
-
-    empty_survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
-    _, new_survivor = lif.spousal_rollover(deceased, empty_survivor, mask)
-    assert new_survivor.jurisdiction == "ab"
-
-    # SYNTHETIC second code ("zz"): unreachable in v1, built by hand.
-    zz_survivor = _multi([5_000.0], "zz", [0.0], [400.0], [0.0], 2010)
-    with pytest.raises(ValueError, match=r"ab.*zz|zz.*ab"):
-        lif.spousal_rollover(deceased, zz_survivor, mask)
-
-
-def test_spousal_rollover_maximum_carry() -> None:
-    mask = np.array([True])
-    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [300.0], 2015)
-    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
-
-    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
-
-    # Unused portion of the deceased's own maximum: 1000 - 300 = 700, added to the
-    # survivor's own 400.
-    np.testing.assert_allclose(new_survivor.annual_maximum, [1_100.0])
-    # The deceased's own maximum is unaffected by the rollover.
-    np.testing.assert_allclose(new_deceased.annual_maximum, [1000.0])
-
-
-def test_spousal_rollover_maximum_carry_infinite_stays_infinite() -> None:
-    mask = np.array([True])
-    deceased = _multi([10_000.0], "ab", [0.0], [np.inf], [0.0], 2015)
-    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
-
-    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
-
-    assert np.isinf(new_survivor.annual_maximum[0])
-
-
-def test_spousal_rollover_maximum_carry_zero_from_a_deceased_with_no_lif() -> None:
-    mask = np.array([True])
-    deceased = _multi([0.0], "", [0.0], [0.0], [0.0], None)
-    survivor = _multi([5_000.0], "ab", [0.0], [400.0], [0.0], 2010)
-
-    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
-
-    np.testing.assert_allclose(new_survivor.annual_maximum, [400.0])
-
-
-def test_spousal_rollover_untouched_outside_mask() -> None:
-    mask = np.array([False])
-    deceased = _multi([10_000.0], "ab", [0.0], [1000.0], [0.0], 2015)
-    survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
-
-    new_deceased, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
-
-    np.testing.assert_allclose(new_deceased.balance, [10_000.0])
-    np.testing.assert_allclose(new_survivor.balance, [0.0])
-    assert new_survivor.opened_year is None
-    assert new_survivor.jurisdiction == ""
-    np.testing.assert_allclose(new_survivor.annual_maximum, [0.0])
-
-
-# =============================================================================
-# inherited_fraction (#76)
-# =============================================================================
-# Balances and fractions below are synthetic.
-
-
-def test_spousal_rollover_sets_the_survivors_inherited_fraction() -> None:
-    deceased = _multi([100.0, 100.0], "ab", [0.0, 0.0], [50.0, 50.0], [0.0, 0.0], 2020)
-    survivor = _multi(
-        [300.0, 3.0],
-        "ab",
-        [0.0, 0.0],
-        [50.0, 50.0],
-        [0.0, 0.0],
-        2021,
-        inherited_fraction=[0.0, 0.1],
+    np.testing.assert_allclose(
+        new_survivor.inherited_fraction[0], fraction * own / (own + moved), rtol=1e-15
     )
-    mask = np.array([True, False])
-
-    _, new_survivor = lif.spousal_rollover(deceased, survivor, mask)
-
-    np.testing.assert_allclose(new_survivor.inherited_fraction[0], 100.0 / 400.0, rtol=1e-15)
-    assert new_survivor.inherited_fraction[1] == 0.1  # outside the mask, bit for bit
-
-
-def test_spousal_rollover_into_an_empty_lif_makes_it_wholly_inherited() -> None:
-    deceased = _multi([250.0], "ab", [0.0], [50.0], [0.0], 2020)
-    survivor = _multi([0.0], "", [0.0], [0.0], [0.0], None)
-
-    _, new_survivor = lif.spousal_rollover(deceased, survivor, np.array([True]))
-
-    np.testing.assert_array_equal(new_survivor.inherited_fraction, [1.0])
+    assert 0.0 < new_survivor.inherited_fraction[0] < fraction
 
 
 def test_withdraw_leaves_the_inherited_fraction_unchanged() -> None:
@@ -326,15 +332,6 @@ def test_withdraw_leaves_the_inherited_fraction_unchanged() -> None:
 
     assert result.gross[0] == 300.0  # guard: something was withdrawn
     np.testing.assert_array_equal(new_state.inherited_fraction, [0.4])
-
-
-def test_spousal_rollover_leaves_the_deceaseds_inherited_fraction_unchanged() -> None:
-    deceased = _multi([250.0], "ab", [0.0], [50.0], [0.0], 2020, inherited_fraction=[0.3])
-    survivor = _multi([100.0], "ab", [0.0], [50.0], [0.0], 2021)
-
-    new_deceased, _ = lif.spousal_rollover(deceased, survivor, np.array([True]))
-
-    np.testing.assert_array_equal(new_deceased.inherited_fraction, [0.3])
 
 
 # =============================================================================

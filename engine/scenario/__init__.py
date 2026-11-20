@@ -14,7 +14,11 @@ parameter file.
 scenario's parameter year does not allow. ``lifespan`` refuses a scenario the
 parameter year's life table cannot represent, either for one person past the
 terminal age or for a household no one in which can be alive at the run's first
-December close. ``ceiling_bracket`` refuses a withdrawal
+December close. ``locked_in`` refuses a LIF stated for someone below the
+unlocking age, and a locked-in account whose jurisdiction has no parameter
+file. It also refuses a couple in which one person's LIRA holds a balance and
+names a jurisdiction other than the one the other person states for a LIRA or a
+LIF. ``ceiling_bracket`` refuses a withdrawal
 ``taxable_ceiling_bracket`` with no federal bracket edge at that index in the
 parameter year. Building engine state from a scenario lives in
 ``engine/core/build.py``, not here — this package hands out no NumPy arrays.
@@ -40,6 +44,11 @@ from engine.scenario.load import (
     ScenarioFileMissingError,
     ScenarioFileUnreadableError,
     load_scenario,
+)
+from engine.scenario.locked_in import (
+    LockedInAgeError,
+    LockedInJurisdictionError,
+    check_locked_in,
 )
 from engine.scenario.schema import (
     CONTRIBUTION_KINDS,
@@ -103,6 +112,8 @@ __all__ = [
     "LifAccount",
     "LifespanNotRepresentableError",
     "LiraAccount",
+    "LockedInAgeError",
+    "LockedInJurisdictionError",
     "MalformedScenarioFileError",
     "OasEntitlement",
     "Person",
@@ -123,6 +134,7 @@ __all__ = [
     "WithdrawalRule",
     "check_ceiling_bracket",
     "check_lifespan",
+    "check_locked_in",
     "check_start_ages",
     "load_scenario",
     "resolve_policy_path",

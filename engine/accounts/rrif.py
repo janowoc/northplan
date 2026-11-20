@@ -212,20 +212,22 @@ def withdraw(
 
 
 def receive_conversion(state: RrifState, amount: ArrayLike, year: int) -> RrifState:
-    """Receive an amount converted in from an RRSP.
+    """Receive an amount converted in from an RRSP, or a LIF paid in at a spouse's death.
 
     Sets ``opened_year`` to ``year`` when the RRIF held nothing before
     (``opened_year is None``); otherwise leaves it, since the RRIF was already
-    open and its minimum schedule already running. Per L26, the first minimum
-    then applies from the next January, which falls out of
+    open and its minimum schedule already running. Per L26 for a
+    conversion, and L41 for a LIF paid in at a death, the first minimum then
+    applies from the next January, which falls out of
     :func:`minimum_withdrawal` returning zero when ``opened_year == year``.
-    The converted amount is the person's own, so it dilutes
+    The amount is the person's own, so it dilutes
     ``inherited_fraction`` (:func:`engine.accounts.base.inherited_fraction_after_inflow`).
 
     Args:
-        state: Opening RRIF state, before receiving the conversion.
-        amount: Amount moved in from the RRSP, ``(n_paths,)``.
-        year: The calendar year the conversion happens in.
+        state: Opening RRIF state, before the amount arrives.
+        amount: Amount moved in, ``(n_paths,)``: an RRSP conversion, or a LIF paid in at a
+            spouse's death.
+        year: The calendar year the amount arrives in.
 
     Returns:
         Updated state.

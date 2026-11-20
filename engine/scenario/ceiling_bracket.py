@@ -14,7 +14,7 @@ mistake rather than a bad scenario, and raises ``ValueError`` instead, like
 :func:`engine.scenario.start_ages.check_start_ages`.
 
 :func:`engine.mc.prepare.check_scenario` calls :func:`check_ceiling_bracket` once, on
-the grid-expanded scenario, right after :func:`~engine.scenario.lifespan.check_lifespan`.
+the grid-expanded scenario, right after :func:`~engine.scenario.locked_in.check_locked_in`.
 """
 
 from __future__ import annotations

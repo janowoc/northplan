@@ -3091,7 +3091,8 @@ class TestFirstDeathOnTheCouple:
         np.testing.assert_allclose(april.context.rolled_acb[0], expected_acb_then)
 
         # After April: a's balances are all zero; b holds a's pre-roll balance plus its
-        # own, each grown by April's own return for that kind.
+        # own, each grown by April's own return for that kind, except that a's LIF lands in
+        # b's RRIF, not in b's LIF.
         april_a_close = april.balances_close[0]
         for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
             np.testing.assert_allclose(getattr(april_a_close, field), 0.0)
@@ -3099,8 +3100,15 @@ class TestFirstDeathOnTheCouple:
         march_b_balances = march.balances_close[1]
         april_b_close = april.balances_close[1]
         april_returns = couple_draws.real_returns[self.DEATH_MONTH_INDEX]
+        assert np.all(april_rolled_a.lif > 0.0)  # guard: a's LIF is paid on
         for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
-            pre_growth = getattr(march_b_balances, field) + getattr(april_rolled_a, field)
+            # a's LIF is paid into b's RRIF; b's own LIF absorbs nothing.
+            arriving = getattr(april_rolled_a, field)
+            if field == "rrif":
+                arriving = arriving + april_rolled_a.lif
+            elif field == "lif":
+                arriving = np.zeros_like(arriving)
+            pre_growth = getattr(march_b_balances, field) + arriving
             r = couple_market.weights(field) @ april_returns
             expected = pre_growth * (1 + r)
             np.testing.assert_allclose(getattr(april_b_close, field), expected, rtol=1e-6)
@@ -3140,6 +3148,80 @@ class TestFirstDeathOnTheCouple:
             np.testing.assert_allclose(
                 sum(monthly), result.spending_achieved[year_index], atol=0.005
             )
+
+    def test_a_first_death_pays_the_lif_into_the_survivors_rrif(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        state = _force_death(couple_opening_state, 0, self.DEATH_MONTH_INDEX)
+        policy = DoNothingPolicy(state.elections, couple_withdrawal_order)
+        result = run(state, policy, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        march = result.trace[self.MARCH_MONTH_INDEX]
+        april = result.trace[self.DEATH_MONTH_INDEX]
+        rolled = april.context.rolled_out[0]
+        assert np.all(rolled.lif > 0.0)  # guard: a holds a LIF
+        assert np.all(march.balances_close[1].lif > 0.0)  # guard: so does b
+        assert np.all(march.balances_close[1].rrif > 0.0)  # guard: and a RRIF
+        returns = couple_draws.real_returns[self.DEATH_MONTH_INDEX]
+        for kind, arriving in (("rrif", rolled.rrif + rolled.lif), ("lif", 0.0 * rolled.lif)):
+            pre_growth = (
+                getattr(march.balances_close[1], kind)
+                + arriving
+                - getattr(april.context.forced_withdrawals[1], kind)
+                - getattr(april.withdrawals[1], kind)
+                - getattr(april.floor_withdrawals[1], kind)
+                + getattr(april.contributions[1], kind)
+            )
+            expected = pre_growth * (1 + couple_market.weights(kind) @ returns)
+            np.testing.assert_allclose(getattr(april.balances_close[1], kind), expected, rtol=1e-6)
+
+    def test_the_lif_payment_lands_after_the_rrif_rollover(
+        self,
+        couple_opening_state,
+        couple_draws,
+        couple_market,
+        couple_real_params,
+        couple_withdrawal_order,
+    ):
+        death_index = 3  # April of the first year
+        survivor = couple_opening_state.persons[1]
+        zero = np.zeros_like(survivor.rrif.balance)
+        # Died in April 2026, before the first December close: a statutory conversion at
+        # a close opens a RRIF even from an empty RRSP, which would hide the rollover's year.
+        without_rrif = updated(
+            survivor,
+            rrsp=updated(survivor.rrsp, balance=zero),
+            rrif=updated(
+                survivor.rrif,
+                balance=zero,
+                annual_minimum=zero,
+                withdrawn_ytd=zero,
+                opened_year=None,
+                inherited_fraction=zero,
+            ),
+        )
+        state = updated(
+            couple_opening_state, persons=(couple_opening_state.persons[0], without_rrif)
+        )
+        state = _force_death(state, 0, death_index)
+        deceased_opened_year = state.persons[0].rrif.opened_year
+        death_year = 2026
+        assert deceased_opened_year is not None
+        assert deceased_opened_year != death_year  # guard: the two sources of a year differ
+        recorder = RecordingPolicy(DoNothingPolicy(state.elections, couple_withdrawal_order))
+        result = run(state, recorder, couple_draws, couple_market, couple_real_params, trace_path=0)
+
+        after = recorder.calls[death_index][0]
+        assert after.year == death_year
+        rolled = result.trace[death_index].context.rolled_out[0]
+        assert np.all(rolled.rrif > 0.0) and np.all(rolled.lif > 0.0)  # guard
+        assert after.persons[1].rrif.opened_year == deceased_opened_year
+        np.testing.assert_allclose(after.persons[1].rrif.balance, rolled.rrif + rolled.lif)
 
 
 #: SYNTHETIC SCENARIO INPUT, not a tax parameter: a made-up DB pension amount, sized so
@@ -3299,14 +3381,15 @@ class TestCppSurvivorBothDirections:
         np.testing.assert_allclose(record.context.rolled_acb[1], expected_acb_then)
 
         # The check above compares rolled_out against march's balances, but
-        # resolve_deaths computes rolled_out *before* the six rollover calls run, so a
-        # no-op'd rollover would still pass it. Check the move itself.
+        # resolve_deaths computes rolled_out *before* the five rollover calls and the LIF
+        # payment run, so a no-op'd rollover would still pass it. Check the move itself.
         # (a) the deceased's balances stay exactly 0, in the death month and after.
         for later_record in (record, *result.trace[self.DEATH_MONTH_INDEX + 1 :]):
             for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
                 np.testing.assert_allclose(getattr(later_record.balances_close[1], field), 0.0)
 
         assert np.all(record.context.rolled_out[1].rrif > 0.0)  # guard
+        assert np.all(record.context.rolled_out[1].lif > 0.0)  # guard
 
         # (b) the survivor's balance really absorbed it: march's opening balance plus
         # what rolled in, less this month's own flows, grown by this month's return --
@@ -3317,6 +3400,11 @@ class TestCppSurvivorBothDirections:
         for field in ("rrsp", "rrif", "lira", "lif", "tfsa", "taxable"):
             march_a_balance = getattr(march.balances_close[0], field)
             rolled_in = getattr(record.context.rolled_out[1], field)
+            if field == "rrif":
+                # b's LIF is paid into a's RRIF.
+                rolled_in = rolled_in + record.context.rolled_out[1].lif
+            elif field == "lif":
+                rolled_in = np.zeros_like(rolled_in)  # a's LIF absorbs nothing
             if field == "lira":
                 # ByKind has no lira field: LIRA takes no withdrawals and no
                 # contributions target it, so every flow term is 0.
@@ -5132,7 +5220,8 @@ class TestInheritedWithdrawalsInTheLedger:
 
 
 class TestInheritedFractionAtTheFirstDeath:
-    """The survivor's RRIF and LIF carry the rolled-over share of their balance."""
+    """The survivor's RRIF carries the rolled-over RRIF's share of its balance; a LIF paid into it
+    counts as the survivor's own."""
 
     DEATH_MONTH_INDEX = 15
     MARCH_MONTH_INDEX = 14
@@ -5149,13 +5238,18 @@ class TestInheritedFractionAtTheFirstDeath:
         march = result.trace[self.MARCH_MONTH_INDEX]
         april = result.trace[self.DEATH_MONTH_INDEX]
         survivor = recorder.calls[self.DEATH_MONTH_INDEX][0].persons[1]
-        for kind in ("rrif", "lif"):
-            moved = getattr(april.context.rolled_out[0], kind)
-            own = getattr(march.balances_close[1], kind)
-            assert np.all(moved > 0.0) and np.all(own > 0.0)  # guard: a true blend
-            np.testing.assert_allclose(
-                getattr(survivor, kind).inherited_fraction[0], moved / (own + moved), rtol=1e-12
-            )
+        moved_rrif = april.context.rolled_out[0].rrif
+        moved_lif = april.context.rolled_out[0].lif
+        own_rrif = march.balances_close[1].rrif
+        assert np.all(moved_rrif > 0.0) and np.all(moved_lif > 0.0)  # guard
+        assert np.all(own_rrif > 0.0)  # guard: a true blend
+        # The deceased's LIF is paid into the survivor's RRIF as the survivor's own money, so
+        # only the rolled-over RRIF counts as inherited there.
+        np.testing.assert_allclose(
+            survivor.rrif.inherited_fraction[0],
+            moved_rrif / (own_rrif + moved_rrif + moved_lif),
+            rtol=1e-12,
+        )
 
     def test_the_survivors_ledger_carries_inherited_withdrawals_by_december(
         self, couple_opening_state, couple_draws, couple_market, couple_real_params
@@ -5176,16 +5270,17 @@ class TestInheritedFractionAtTheFirstDeath:
         # predates the April rollover; every draw carries the fractions it set
         assert np.all(november.rrif.withdrawn_ytd == 0.0)
         assert np.all(november.lif.withdrawn_ytd == 0.0)
-        # guard: each term of the identity is drawn on, at a fraction strictly between
-        # zero and one, so a dropped term or a wholly inherited draw cannot pass
-        for account in (survivor.rrif, survivor.lif):
-            assert np.all(account.withdrawn_ytd > 0.0)
-            assert np.all((account.inherited_fraction > 0.0) & (account.inherited_fraction < 1.0))
+        # guard: the RRIF is drawn on, at a fraction strictly between zero and one, so a
+        # dropped term or a wholly inherited draw cannot pass
+        assert np.all(survivor.rrif.withdrawn_ytd > 0.0)
+        assert np.all(
+            (survivor.rrif.inherited_fraction > 0.0) & (survivor.rrif.inherited_fraction < 1.0)
+        )
+        assert np.all(survivor.lif.inherited_fraction == 0.0)  # the LIF takes nothing
         assert np.all(survivor.income.inherited_rrif_lif_withdrawals > 0.0)
         np.testing.assert_allclose(
             survivor.income.inherited_rrif_lif_withdrawals,
-            survivor.rrif.inherited_fraction * survivor.rrif.withdrawn_ytd
-            + survivor.lif.inherited_fraction * survivor.lif.withdrawn_ytd,
+            survivor.rrif.inherited_fraction * survivor.rrif.withdrawn_ytd,
             rtol=1e-12,
         )
 

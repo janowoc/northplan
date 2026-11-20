@@ -64,10 +64,11 @@ Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated
 pensions.** A LIF is governed by the jurisdiction its pension was registered
-in. We carry that jurisdiction per account and stop the run for any
-jurisdiction without a parameter file, which today means every one except
+in. We carry that jurisdiction per account and refuse at load any scenario that
+states one without a parameter file, which today means every one except
 Alberta. Lives in `engine/core/state.py::LiraState` and `LifState`,
-`engine/params/loader.py::ParamYear.jurisdiction`.
+`engine/params/loader.py::ParamYear.jurisdiction`,
+`engine/scenario/locked_in.py::check_locked_in`.
 
 ## Timeline and dollars
 
@@ -247,7 +248,8 @@ as qualified the share of each RRIF/LIF withdrawal that the account's
 inherited fraction gives (L41), at any age. In reality a successor annuitant
 holds the inherited plan apart and may draw on it first; we attribute every
 withdrawal pro rata. Direction: conservative. An RRSP or LIRA rolled over at
-a death and converted later counts as the survivor's own. In reality its later
+a death and converted later counts as the survivor's own, and so does a LIF
+paid into the survivor's RRIF at a death (L41). In reality their later
 payments come out of the survivor's own plan after an ITA 60(l) transfer,
 which as we read 118(7) are not received as a consequence of the death, so
 this matches the law; were they to qualify, the direction would be
@@ -437,23 +439,40 @@ deadline only, in the December close of that year. Direction: conservative —
 the money stays locked longer than it need be, and the LIF's minimum and
 maximum both start later. Lives in `engine/accounts/lira.py::must_convert`.
 
-**L47. One locked-in account per person.** In reality a person may hold
-several LIRAs or LIFs, from several employers, registered in different
-jurisdictions, and they do not merge: each is drawn under the maximum table of
-the jurisdiction its own originating pension was registered in. We model at
-most one LIRA and one LIF per person, sharing one jurisdiction. Direction:
-neutral on the LIF maximum for a household whose locked-in money is all from
-one jurisdiction, which is the common case; where it is not, the ceiling on
-the whole balance comes from whichever jurisdiction the scenario names, and
-the error runs in either direction depending on which table is the looser.
-Lives in `engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
+**L47. One locked-in account per person.** In reality a person may hold several
+LIRAs or LIFs, from several employers, registered in different jurisdictions,
+and they do not merge: each is drawn under the maximum table of the
+jurisdiction its own originating pension was registered in. We model at most
+one LIRA and one LIF per person, sharing one jurisdiction. Direction: neutral
+on the LIF maximum for a household whose locked-in money is all from one
+jurisdiction, which is the common case; where it is not, the ceiling on the
+whole balance comes from whichever jurisdiction the scenario names, and the
+error runs in either direction depending on which table is the looser. A couple
+is refused at load when one person's LIRA holds a balance and names a
+jurisdiction other than the one the other person states for a LIRA or a LIF,
+since the two could meet at a first death or at the survivor's later conversion
+to a LIF (L41); the refusal stands even where the LIRA would be converted
+before any death. Direction: neither optimistic nor conservative — a refused
+scenario produces no number. Lives in
+`engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
 `engine/core/state.py::LiraState` and `LifState`, read by
-`engine/accounts/lira.py` and `engine/accounts/lif.py`.
+`engine/accounts/lira.py` and `engine/accounts/lif.py`, and
+`engine/scenario/locked_in.py::check_locked_in`.
 
 The narrowing arrived with the scenario schema rather than with the account
 code, which is why it is recorded here rather than as a gap in `lira.py`: a
 second account cannot be *stated* in a scenario, so no code below could act on
 one.
+
+**L62. A LIF below the unlocking age.** In reality Alberta bars moving LIRA
+money into a LIF before the owner reaches 50 (Employment Pension Plans
+Regulation, s.114(2)(d)); whether a LIF reached another way — straight from a
+pension plan, or by a surviving partner's election under s.117(1)(c) — may be
+held earlier, we have not checked. We refuse any scenario that states a LIF for
+someone below `lif.unlocking_age_years` on 1 January of `start_year`, a zero
+balance included. Direction: neither optimistic nor conservative — a refused
+scenario produces no number. Lives in
+`engine/scenario/locked_in.py::check_locked_in`.
 
 **L28. TFSA.** Over-contribution is impossible by construction, so the penalty
 is not modelled. Not modelled: room accrued before the start year is a scenario
@@ -568,18 +587,23 @@ survivor share from the month the first death takes effect (the first month
 the deceased is not alive), plus education cost per beneficiary. No other
 age-related change. Lives in `engine/core/step.py`.
 
-**L41. First death.** Every registered account (RRSP, RRIF, LIRA, LIF) rolls
-to the survivor's account of the same kind, tax-deferred; a LIF stays locked
-in. A RRIF or LIF rolls as if the survivor were named successor annuitant, so
-the inherited share of its payments is qualified pension income (L15). In
-reality the plan may instead be transferred to the survivor's own, whose later
-payments may not qualify. Direction: optimistic for such a household. A
-successor annuitant's plan also stays apart from the survivor's own; we merge
-the two and carry the inherited share of the balance (L15 gives the direction
-of that). The survivor's own RRIF/LIF **minimum** for the year of death is
-unchanged, already fixed in January from their own opening balance; the
-survivor's LIF **maximum** for the year, by contrast, carries the deceased's
-unused annual maximum forward on top of their own. The
+**L41. First death.** Every RRSP, RRIF and LIRA rolls to the survivor's
+account of the same kind, tax-deferred; a LIRA stays locked in. A LIF does
+not: Alberta's Employment Pension Plans Regulation, s.136(1), has the issuer
+pay a member owner's LIF to the surviving pension partner as a lump sum. We
+move it, tax-deferred, into the survivor's RRIF as the survivor's own money
+(L15), where it counts toward the RRIF minimum from the next January. In
+reality a survivor still young enough to hold an RRSP may transfer it there
+instead and need draw nothing until converting. Direction: conservative — a
+minimum the RRSP route would not impose. A RRIF rolls as if the survivor were
+named successor annuitant, so the inherited share of its payments is
+qualified pension income (L15). In reality the plan may instead be
+transferred to the survivor's own, whose later payments may not qualify.
+Direction: optimistic for such a household. A successor annuitant's plan also
+stays apart from the survivor's own; we merge the two and carry the inherited
+share of the balance (L15 gives the direction of that). The survivor's own
+RRIF/LIF **minimum** for the year of death is unchanged, already fixed in
+January from their own opening balance. The
 deceased's unmet RRIF/LIF minimum for the year of death is not forced out —
 in reality it is paid, or continues to a successor annuitant, direction
 optimistic and small. The TFSA passes to the survivor as successor holder;
@@ -600,8 +624,9 @@ for a dead person is capped at zero rather than reaching their account. An
 RESP wind-up's accumulated income is credited to the living spouse when the
 subscriber has died, rather than to the subscriber. Lives in
 `engine/core/step.py::resolve_deaths`, `_phase8_transfers`,
-`engine/tax/combined.py::household_assessment`, and the six rollover
-functions in `engine/accounts/{rrsp,rrif,lira,lif,tfsa,taxable}.py`.
+`engine/tax/combined.py::household_assessment`, the five rollover functions
+in `engine/accounts/{rrsp,rrif,lira,tfsa,taxable}.py`, and
+`engine/accounts/lif.py::pay_to_survivor`.
 
 **L42. Second death.** The terminal return brings the full registered balance
 (RRSP, RRIF, LIRA, LIF) and the deemed capital gain on taxable holdings into

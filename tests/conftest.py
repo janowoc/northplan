@@ -18,7 +18,8 @@ turns the guard off for every test after it; one that patches it through the
 :func:`_checked_select` runs what ``prepare_run`` runs on the scenario:
 :func:`~engine.policy.build.expand_grid`, the parameter year for ``start_year``,
 :func:`~engine.scenario.start_ages.check_start_ages`,
-:func:`~engine.scenario.lifespan.check_lifespan`, then
+:func:`~engine.scenario.lifespan.check_lifespan`,
+:func:`~engine.scenario.locked_in.check_locked_in`, then
 :func:`~engine.scenario.ceiling_bracket.check_ceiling_bracket`. It then
 validates the scenario, with only the chosen policy and no grid, against the
 schema, and checks that policy's own elections and ceiling bracket, because a
@@ -54,6 +55,7 @@ from engine.policy.build import expand_grid
 from engine.scenario.ceiling_bracket import check_ceiling_bracket
 from engine.scenario.lifespan import check_lifespan
 from engine.scenario.load import ScenarioError
+from engine.scenario.locked_in import check_locked_in
 from engine.scenario.schema import PolicySpec, Scenario
 from engine.scenario.start_ages import check_start_ages
 
@@ -89,6 +91,7 @@ def _checked_select(scenario: Scenario, policy: PolicySpec | None) -> PolicySpec
         params = _param_year(expanded.start_year)
         check_start_ages(expanded, params)
         check_lifespan(expanded, params)
+        check_locked_in(expanded, params)
         check_ceiling_bracket(expanded, params)
         only_chosen = scenario.model_copy(
             update={"policies": (chosen,), "grid": MappingProxyType({})}

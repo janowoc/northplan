@@ -45,6 +45,7 @@ from engine.scenario import (
     ScenarioFileUnreadableError,
     check_ceiling_bracket,
     check_lifespan,
+    check_locked_in,
     check_start_ages,
     load_scenario,
 )
@@ -439,11 +440,12 @@ def test_the_couple_loads() -> None:
 
 
 def test_the_couple_passes_the_run_opening_checks(params: ParamYear) -> None:
-    """None of the three checks that gate a run refuses this household."""
+    """None of the four checks that gate a run refuses this household."""
     scenario = load_scenario(COUPLE)
 
     check_start_ages(scenario, params)  # must not raise
     check_lifespan(scenario, params)  # must not raise
+    check_locked_in(scenario, params)  # must not raise
     check_ceiling_bracket(scenario, params)  # must not raise
 
 

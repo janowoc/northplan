@@ -26,6 +26,9 @@ single month's amount.
 Not every jurisdiction imposes a maximum; some prescribe a RRIF-like account
 with a minimum and no ceiling. :func:`has_maximum` is what separates that
 rule from a table nobody has entered yet.
+
+At a first death a LIF does not roll to the survivor's LIF: :func:`pay_to_survivor`
+pays it into the survivor's RRIF as their own money (``docs/limitations.md`` L41).
 """
 
 from __future__ import annotations
@@ -33,10 +36,10 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from engine.accounts import base
+from engine.accounts import base, rrif
 from engine.accounts.base import WithdrawalResult
 from engine.core.indexation import RealParamSet
-from engine.core.state import LifState, updated
+from engine.core.state import LifState, RrifState, updated
 from engine.params.loader import shown_value
 
 
@@ -193,81 +196,40 @@ def withdraw(
     return new_state, result, above_minimum
 
 
-def spousal_rollover(
-    deceased: LifState, survivor: LifState, mask: ArrayLike
-) -> tuple[LifState, LifState]:
-    """Roll a deceased person's LIF balance to their surviving spouse's, tax-deferred.
+def pay_to_survivor(
+    deceased: LifState, survivor_rrif: RrifState, mask: ArrayLike, year: int
+) -> tuple[LifState, RrifState]:
+    """Pay a deceased person's LIF balance into their surviving spouse's RRIF.
 
-    Balance only, staying locked in. Mirrors ``engine.accounts.rrif.spousal_rollover``
-    for ``opened_year`` and the survivor's own ``annual_minimum``/``withdrawn_ytd``,
-    both left unchanged; and ``engine.accounts.lira.spousal_rollover`` for the
-    jurisdiction rule and its guard.
+    Tax-deferred, and as the survivor's own money: the RRIF receives it exactly
+    as :func:`engine.accounts.rrif.receive_conversion` receives a conversion,
+    so its ``inherited_fraction`` is diluted and its ``opened_year`` is set to
+    ``year`` only if it was ``None`` (``docs/limitations.md`` L41). The
+    survivor's ``annual_minimum`` and ``withdrawn_ytd`` are untouched. No
+    maximum is carried. Paths outside ``mask`` are untouched on both sides.
 
-    The survivor's ``annual_maximum`` is increased by the deceased's unused
-    maximum for the year (``docs/limitations.md`` L41):
-    ``clip(deceased.annual_maximum - deceased.withdrawn_ytd, 0, None)``, applied
-    only where ``mask`` is true. An infinite deceased maximum carries over as
-    infinite. A deceased holding no LIF (``annual_maximum`` zero) adds nothing.
-    The deceased's own ``annual_maximum`` is left unchanged. Paths outside
-    ``mask`` are untouched on both sides. The survivor's ``inherited_fraction``
-    is updated exactly as ``engine.accounts.rrif.spousal_rollover`` updates a
-    RRIF's.
+    Where nothing moves on any path the survivor's RRIF is returned exactly
+    as it was, ``opened_year`` included, which ``receive_conversion`` given
+    zeros would not do.
 
     Args:
         deceased: The deceased person's opening LIF state.
-        survivor: The surviving spouse's opening LIF state.
-        mask: Where the rollover applies, ``(n_paths,)`` bool — the deceased
+        survivor_rrif: The surviving spouse's RRIF state, after any RRIF
+            rollover at the same death.
+        mask: Where the payment applies, ``(n_paths,)`` bool — the deceased
             is dying this month and the survivor is alive.
+        year: The calendar year of the death.
 
     Returns:
-        ``(new_deceased, new_survivor)``. ``new_deceased.balance`` is exactly
-        zero where ``mask`` is true.
-
-    Raises:
-        ValueError: If something moves on at least one path and both states
-            name a jurisdiction and they differ — two jurisdictions do not
-            merge (``docs/limitations.md`` L47).
+        ``(new_deceased, new_survivor_rrif)``. ``new_deceased.balance`` is
+        exactly zero where ``mask`` is true; its other fields are unchanged.
     """
     mask_arr = np.asarray(mask, dtype=bool)
     moved = np.where(mask_arr, deceased.balance, 0.0)
-    something_moved = bool(np.any(moved > 0))
-    if (
-        something_moved
-        and deceased.jurisdiction
-        and survivor.jurisdiction
-        and deceased.jurisdiction != survivor.jurisdiction
-    ):
-        raise ValueError(
-            f"deceased LIF jurisdiction {deceased.jurisdiction!r} and survivor LIF "
-            f"jurisdiction {survivor.jurisdiction!r} differ; two jurisdictions do not "
-            f"merge (docs/limitations.md L47)."
-        )
-    jurisdiction = survivor.jurisdiction
-    if jurisdiction == "" and something_moved:
-        jurisdiction = deceased.jurisdiction
-
-    opened_year = survivor.opened_year
-    if opened_year is None and something_moved:
-        opened_year = deceased.opened_year
-
-    maximum_carried = np.where(
-        mask_arr, np.clip(deceased.annual_maximum - deceased.withdrawn_ytd, 0, None), 0.0
-    )
-
-    inherited_fraction = base.inherited_fraction_after_inflow(
-        survivor.inherited_fraction, survivor.balance, moved, moved
-    )
-
     new_deceased = updated(deceased, balance=np.where(mask_arr, 0.0, deceased.balance))
-    new_survivor = updated(
-        survivor,
-        balance=survivor.balance + moved,
-        jurisdiction=jurisdiction,
-        opened_year=opened_year,
-        annual_maximum=survivor.annual_maximum + maximum_carried,
-        inherited_fraction=inherited_fraction,
-    )
-    return new_deceased, new_survivor
+    if not np.any(moved > 0):
+        return new_deceased, survivor_rrif
+    return new_deceased, rrif.receive_conversion(survivor_rrif, moved, year)
 
 
 def _non_negative(amount: ArrayLike) -> np.ndarray:

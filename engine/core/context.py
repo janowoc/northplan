@@ -93,10 +93,12 @@ def _freeze_tuple_of_bool_arrays(obj: object, name: str) -> None:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AccountAmounts:
-    """One person's amount across the six accounts a spousal rollover can touch.
+    """One person's amount in each of the six accounts a first death moves: five roll to the
+    survivor's account of the same kind, and the LIF is paid into the survivor's RRIF (L41).
 
-    Used for :attr:`MonthContext.rolled_out` (the deceased's pre-roll balances, per
-    account) and :attr:`MonthRecord.balances_close` (closing balances, per person).
+    Used for :attr:`MonthContext.rolled_out` (the deceased's balances before the first
+    death moves them, per account) and :attr:`MonthRecord.balances_close` (closing
+    balances, per person).
 
     Attributes:
         rrsp, rrif, lira, lif, tfsa, taxable: Amount for that account, ``(n_paths,)``.
@@ -215,10 +217,10 @@ class MonthContext:
     Attributes:
         month_index, year, month: This month's position.
         cash_opening: Household cash before phase 1 of this month.
-        rolled_out: Phase 2 spousal-rollover source, per person: the deceased's
-            pre-roll balance in each of the six accounts, where that person died this
-            month with a surviving spouse, zero elsewhere (including for every person
-            who does not die this month). See
+        rolled_out: Phase 2 first-death source, per person: the deceased's
+            balance in each of the six accounts before the first death moves
+            it, where that person died this month with a surviving spouse, zero
+            elsewhere (including for every person who does not die this month). See
             ``engine.core.step.resolve_deaths``.
         rolled_acb: Phase 2 spousal-rollover source, per person: the deceased's
             pre-roll taxable ACB, on the same condition as ``rolled_out``.

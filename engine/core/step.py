@@ -1716,8 +1716,10 @@ def resolve_deaths(
     With ``m = state.month_index`` and ``jan = m - (state.month - 1)``:
 
     1. ``alive_new = death_month_index > m``, written into the state.
-    2. **First death** (L41), for a household of two only: each dying person's six accounts
-       roll to the surviving spouse, via the account modules under ``engine.accounts``.
+    2. **First death** (L41), for a household of two only: each dying person's RRSP, RRIF,
+       LIRA, TFSA and taxable account roll to the survivor's account of the same kind, and
+       the LIF is paid into the survivor's RRIF, via the account modules under
+       ``engine.accounts``.
        ``rolled_out``/``rolled_acb`` record the deceased's pre-roll amounts, zero wherever no
        mask fires -- including a simultaneous death, where both masks are false.
     3. **Final death** (L42), the first month every person's ``alive_new`` is false: every
@@ -1783,7 +1785,9 @@ def resolve_deaths(
             new_rrsp_d, new_rrsp_s = rrsp_mod.spousal_rollover(deceased.rrsp, survivor.rrsp, mask)
             new_rrif_d, new_rrif_s = rrif_mod.spousal_rollover(deceased.rrif, survivor.rrif, mask)
             new_lira_d, new_lira_s = lira_mod.spousal_rollover(deceased.lira, survivor.lira, mask)
-            new_lif_d, new_lif_s = lif_mod.spousal_rollover(deceased.lif, survivor.lif, mask)
+            new_lif_d, new_rrif_s = lif_mod.pay_to_survivor(
+                deceased.lif, new_rrif_s, mask, state.year
+            )
             new_tfsa_d, new_tfsa_s = tfsa_mod.successor_holder(deceased.tfsa, survivor.tfsa, mask)
             new_taxable_d, new_taxable_s = taxable_mod.pass_to_survivor(
                 deceased.taxable, survivor.taxable, mask
@@ -1803,7 +1807,7 @@ def resolve_deaths(
                 rrsp=new_rrsp_s,
                 rrif=new_rrif_s,
                 lira=new_lira_s,
-                lif=new_lif_s,
+                lif=survivor.lif,
                 tfsa=new_tfsa_s,
                 taxable=new_taxable_s,
             )
