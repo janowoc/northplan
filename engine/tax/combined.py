@@ -79,7 +79,7 @@ def person_assessment(
 ) -> Assessment:
     """One person's federal and provincial assessment, including the OAS repayment and AIP tax.
 
-    Three figures, three different bases. The OAS repayment is tested against net income
+    Three figures, three different bases (L14). The OAS repayment is tested against net income
     (line 23400). ``gross_tax`` -- federal and provincial brackets alike -- is applied to
     line 26000: line 23600 (net income less the OAS repayment) less the ITA 111(2)
     year-of-death capital loss deduction (``died_in_year``, L17). The non-refundable
@@ -124,7 +124,7 @@ def person_assessment(
     )
     repay = oas_repayment(net, ledger.oas, params.oas, january_month_index)
     penalty = resp.aip_penalty(ledger.resp_accumulated_income, params.resp)
-    line_23600 = federal.taxable_income(net, repay)
+    line_23600 = federal.net_income_after_repayment(net, repay)
     deduction = federal.death_year_capital_loss_deduction(ledger, fed, died_in_year)
     line_26000 = np.maximum(line_23600 - deduction, 0.0)
     fed_tax = federal.net_tax(

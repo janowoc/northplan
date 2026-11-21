@@ -3,12 +3,12 @@
 
 """The monthly step. One month, all paths, one implementation.
 
-``advance_month`` is the only place simulated time passes; Monte Carlo calls it in a loop over
-months, and the optimizer calls Monte Carlo.
+``advance_month_traced``, which ``advance_month`` wraps, is the only place simulated time
+passes; Monte Carlo calls it in a loop over months, and the optimizer calls Monte Carlo.
 
-The annual events are *phases* ``advance_month`` invokes when due: ``open_year`` in January,
-``close_year`` in December, ``settle_tax_balance`` in the filing month. Nothing outside this
-module may call them directly.
+The annual events are *phases* ``advance_month_traced`` invokes when due: ``open_year`` in
+January, ``close_year`` in December, ``settle_tax_balance`` in the filing month. Nothing
+outside this module may call them directly.
 
 Ordering is a correctness decision, fixed here so no account module can quietly disagree with
 it; the order is stated in each function's docstring and every change to it needs a verification
@@ -420,7 +420,7 @@ def _phase3_inflows(
     any inherited survivor streams, at this month's amount -- phase 4 withholds on these
     directly rather than calling ``db_pension_monthly``/``survivor_pension_monthly`` again.
 
-    CPP survivor (L19, L40) and the DB survivor share (L40, L59) are computed here,
+    CPP survivor (L19, L40, L41) and the DB survivor share (L40, L41, L59) are computed here,
     stateless, from the other person's own amount this month: for a two-person household, for
     each person ``i`` with the other person ``j``, ``receiving = persons[i].alive &
     ~persons[j].alive``. The CPP survivor increment reads ``persons[j].cpp.in_pay_monthly`` when
@@ -675,7 +675,10 @@ def _phase6_forced_withdrawals(
     months_remaining_in_year: int,
     real_params: RealParamYear,
 ) -> tuple[list[PersonState], CashState, list[ByKind], list[NDArray[np.float64]]]:
-    """Each RRIF's and LIF's ``minimum_still_required``, plus the pension-credit fill (L56)."""
+    """Each RRIF's and LIF's ``minimum_still_required``, plus the pension-credit fill (L44).
+
+    The withholding base is L56.
+    """
     fill_age = None
     target = None
     if elections.fill_pension_credit:
@@ -1154,7 +1157,9 @@ def _phase10_growth(
     market: MarketInputs,
     month_returns: NDArray[np.float64],
 ) -> tuple[list[PersonState], list[BeneficiaryState]]:
-    """Apply this month's return under each account's allocation."""
+    """Apply this month's return under each account's fixed allocation, rebalanced
+    monthly at no cost (L37).
+    """
     r_rrsp = market.weights("rrsp") @ month_returns
     r_rrif = market.weights("rrif") @ month_returns
     r_lira = market.weights("lira") @ month_returns
@@ -1206,7 +1211,7 @@ def _phase10_growth(
 def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
     """January phase: grant room, fix the year's annual limits, reset the ledger.
 
-    Called by :func:`advance_month`, never directly.
+    Called by :func:`advance_month_traced`, never directly.
 
     1. Erode each nominal state balance by one year: ``erode_nominal`` of the RRSP, the TFSA,
        the taxable account, and each beneficiary's RESP (L57).
@@ -1366,7 +1371,7 @@ def open_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSta
 def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdState:
     """December phase: convert, assess the year, record it, carry the balance forward.
 
-    Called by :func:`advance_month`, never directly.
+    Called by :func:`advance_month_traced`, never directly.
 
     1. Assertions. On every path: every RRIF's and LIF's minimum has been met --
        ``withdrawn_ytd >= annual_minimum`` (allowing float slack) or the account's balance is
@@ -1587,8 +1592,8 @@ def close_year(state: HouseholdState, real_params: RealParamYear) -> HouseholdSt
 def settle_tax_balance(state: HouseholdState) -> HouseholdState:
     """Filing-month phase: pay the prior year's balance owing in cash.
 
-    Called by :func:`advance_month`, never directly. ``advance_month`` decides the filing
-    month from ``real_params``; this phase only settles.
+    Called by :func:`advance_month_traced`, never directly. ``advance_month_traced``
+    decides the filing month from ``real_params``; this phase only settles.
 
     The settlement is a **debit** to household cash at phase 5 (a refund is a deposit); it
     realizes nothing itself. If paying it takes cash negative, phase 9's floor funds the

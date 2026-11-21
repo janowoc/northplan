@@ -3,16 +3,16 @@
 
 """Provincial income tax.
 
-Alberta first; the module is written to take a province's parameter set
+Alberta first (L1); the module is written to take a province's parameter set
 rather than hard-coding one, so adding a province is a YAML file plus a
 verification row, not new code. Parameters come from
 ``params/{year}/{province}.yaml``.
 
 Alberta assesses the federal taxable income: this file computes provincial
-tax **on the federal income figure**, taken as an argument. It never defines
+tax **on federal income figures**, taken as arguments. It never defines
 total, net, taxable, or eligible pension income itself — it is handed line
-23600 in the annual assessment, or the annualised single-source approximation
-in the monthly withholding estimate (L16).
+26000 for the brackets and line 23600 for the credits in the annual assessment, or the
+annualised single-source approximation in the monthly withholding estimate (L16).
 
 The province's parameter file also carries the LIF maximum withdrawal rules
 that ``engine/accounts/lif.py`` reads, since those are provincially set.
@@ -46,7 +46,8 @@ def gross_tax(
 
     Args:
         taxable: The federal income figure the brackets are applied to — line
-            23600 in the annual assessment, or the annualised single-source
+            26000 in the annual assessment (line 23600 less the year-of-death
+            deduction, floored at zero; L17), or the annualised single-source
             approximation in the monthly withholding estimate (L16), real
             dollars, ``(n_paths,)`` or scalar.
         params: The province's parameter set for the tax year.
@@ -71,7 +72,7 @@ def non_refundable_credits(
     federal_params: RealParamSet,
     january_month_index: int,
 ) -> NDArray[np.float64]:
-    """Value of provincial non-refundable credits, in dollars of tax reduced.
+    """Value of provincial non-refundable credits (L11), in dollars of tax reduced.
 
     Same structure as ``engine.tax.federal.non_refundable_credits``, with the
     province's own credit amounts, valuation rate, and dividend gross-up and

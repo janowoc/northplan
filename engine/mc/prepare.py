@@ -126,7 +126,8 @@ def check_scenario(
         paths: The paths the run would draw; ``None`` counts ``scenario.n_paths``.
         load_params: Returns the parameter year for a start year. Called once, with the
             expanded scenario's ``start_year``, after the size checks and the grid's
-            expansion pass.
+            expansion pass. That one year's parameters serve every year of the run
+            (``docs/limitations.md`` L7).
 
     Returns:
         ``(expanded, params)``: the grid-expanded scenario (``grid`` empty) and what

@@ -170,7 +170,7 @@ def unindexed_factor(inflation_rate: float, month_index: int) -> float:
 
 
 def nominal_carry_factor(inflation_rate: float) -> float:
-    """One January's decay for a balance the *state* carries, fixed in nominal terms.
+    """One January's decay for a balance the *state* carries, fixed in nominal terms (L57).
 
     For a dollar figure a parameter file routes as unindexed, ``RealParamSet`` applies
     :func:`unindexed_factor` on read. A state balance has no ``indexation`` block to route it, so

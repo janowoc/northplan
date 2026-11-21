@@ -125,3 +125,4 @@ gis:
 # Full OAS requires 40 years of residence after 18; 10 years gets a partial pension at 1/40th per year of residence.
 # The maximum_monthly assumes 40+. There's also a 20-year rule for non-residents.
 # As with CPP, the engine does not model residence history, so these rules are not expressed here.
+# Every person is assumed to qualify in full (docs/limitations.md L22).

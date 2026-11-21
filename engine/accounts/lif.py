@@ -18,6 +18,8 @@ Ontario-registered LIF, drawn under Ontario's table while filing Alberta
 income tax. Every function here that takes a parameter set takes the
 *registration* jurisdiction's — ``ParamYear.jurisdiction`` keyed by
 ``LifState.jurisdiction`` — never ``ParamYear.province(household.province)``.
+A person holds at most one LIF, so all of that person's LIF money is drawn
+under one jurisdiction's table (``docs/limitations.md`` L47).
 
 Both the minimum and the maximum are **annual** figures fixed in January from
 the 1 January balance and enforced against the year-to-date total, not a

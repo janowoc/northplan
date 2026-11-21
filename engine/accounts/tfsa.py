@@ -68,7 +68,8 @@ def contribute(state: TfsaState, requested: ArrayLike) -> tuple[TfsaState, NDArr
             on any path raises.
 
     Returns:
-        ``(new_state, contributed)``, ``contributed`` capped at ``state.room``.
+        ``(new_state, contributed)``, ``contributed`` capped at ``state.room``, so a
+        contribution never exceeds the room (``docs/limitations.md`` L28).
 
     Raises:
         ValueError: If ``requested`` is negative on any path.

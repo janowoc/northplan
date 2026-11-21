@@ -11,7 +11,7 @@
 #
 #   It is a PERIOD table: it carries no mortality improvement, so a 40-year-old
 #   in the run meets today's 80-year-old mortality on reaching 80
-#   (docs/limitations.md L8).
+#   (docs/limitations.md L8). One national table serves every province (L45).
 #
 # The engine derives a monthly hazard assuming a constant force of mortality
 # within each year of age:

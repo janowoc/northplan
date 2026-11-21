@@ -423,10 +423,11 @@ def grow(state: RespState, monthly_real_return: ArrayLike) -> RespState:
 def education_draw(state: RespState) -> tuple[RespState, WithdrawalResult]:
     """Pay the scheduled monthly education cost, or the plan's whole value if less.
 
-    Composition follows CESP Provider User Guide ch. 3-2: the payment draws
-    grant and income **in proportion to their shares** of the ``grants +
-    income`` pool while income is positive, and from grant alone when income
-    is zero or negative; contributions are drawn only once grant and income
+    The payment draws grant and income **in proportion to their shares** of the
+    ``grants + income`` pool while income is positive, as the CESP Provider User
+    Guide (version 4.0, October 2024), s.10.6.1.2, splits an EAP, and from grant
+    alone when income is zero or negative (the guide's worked example of a plan
+    with losses is s.10.6.4); contributions are drawn only once grant and income
     are exhausted (``docs/limitations.md`` L31). No Canada Learning Bond is
     modelled (L33).
 
@@ -502,17 +503,20 @@ def wind_up(
 ) -> tuple[RespState, NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Wind up the plan: repay grant, pay contributions tax-free, tax the rest.
 
-    Matches CESP Provider User Guide ch. 3-3: the grant repayment is the
-    lesser of the grant account balance and the plan's fair market value at
-    the time of the AIP. Every one of the three outputs is non-negative on
-    every path, and they conserve dollars exactly: ``to_cash_free +
-    accumulated + grants_repaid == max(value, 0)``, where ``value =
-    contributions + grants + income``. ``value`` itself is never below zero by
-    the time it is used here: a few ulps of float residue from years of erosion
-    and growth are clipped (see :func:`_clip_value_or_raise`), and anything
-    further below zero is an upstream error, raised there rather than reaching
-    this point at all -- ``grow`` cannot take a plan's value below zero on its
-    own. Called by the step in the month **after** the education window
+    The grant repayment is the lesser of the grant account balance and the
+    plan's fair market value at the time of the AIP: Canada Education Savings
+    Regulations s.11(4), applied by s.11(3) when the plan is terminated, with no
+    Canada Learning Bond or provincial grant in the plan (L33); the CESP Provider
+    User Guide (version 4.0, October 2024) works it through in s.3.5.12.
+    Every one of the three outputs is non-negative on every path, and they
+    conserve dollars exactly:
+    ``to_cash_free + accumulated + grants_repaid == max(value, 0)``, where
+    ``value = contributions + grants + income``. ``value`` itself is never below
+    zero by the time it is used here: a few ulps of float residue from years of
+    erosion and growth are clipped (see :func:`_clip_value_or_raise`), and
+    anything further below zero is an upstream error, raised there rather than
+    reaching this point at all -- ``grow`` cannot take a plan's value below zero
+    on its own. Called by the step in the month **after** the education window
     (``docs/limitations.md`` L32).
 
     Args:

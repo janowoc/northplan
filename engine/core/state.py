@@ -629,9 +629,9 @@ class Assessment:
 
     ``engine.tax.combined`` computes it. ``net_income`` is the split-adjusted line 23400 the
     OAS repayment was tested against; ``net_income_after_repayment`` is line 23600, which the
-    brackets and the age amount are both applied to instead; ``taxable_income`` is line 26000,
-    equal to ``net_income_after_repayment`` except in this person's year of death
-    (``docs/limitations.md`` L17).
+    non-refundable credits, age amount included, are tested against; ``taxable_income`` is line
+    26000, which the brackets are applied to, equal to ``net_income_after_repayment`` except in
+    this person's year of death (``docs/limitations.md`` L17).
 
     Attributes:
         federal: Federal tax payable after credits, ``(n_paths,)``.
@@ -646,7 +646,8 @@ class Assessment:
             23600), ``(n_paths,)``.
         taxable_income: Line 26000: ``net_income_after_repayment`` less the
             year-of-death capital loss deduction, ``(n_paths,)``. What the
-            brackets and the age amount are actually applied to.
+            brackets are applied to; the credits, age amount included, are
+            tested against ``net_income_after_repayment``.
         transfer_in: Split-eligible pension income received from the other
             spouse, ``(n_paths,)``; zero where no split applies.
         transfer_out: Split-eligible pension income given to the other

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Alberta provincial income tax parameters — tax year 2026
+# The only province modelled; any other province code stops the run (docs/limitations.md L1).
 #
 # Conventions for this file:
 #   - Every group of values carries a source comment directly above it: the

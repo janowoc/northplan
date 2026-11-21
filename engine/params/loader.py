@@ -953,7 +953,7 @@ class ParamYear:
         return self[code.lower()]
 
     def jurisdiction(self, code: str) -> ParamSet:
-        """Pension parameters for the jurisdiction a locked-in account is registered in.
+        """Pension parameters for the jurisdiction a locked-in account is registered in (L3).
 
         Same files as :meth:`province`, reached deliberately by a different
         name. A LIF is governed by the pension legislation of the jurisdiction

@@ -132,10 +132,10 @@ class PersonInflows:
             right, including any bridge, summed (excludes a survivor share).
         cpp_survivor: The CPP survivor increment this person receives this month,
             zero unless the other person in a two-person household has died and this
-            person is alive (``docs/limitations.md`` L19, L40).
+            person is alive (``docs/limitations.md`` L19, L40, L41).
         db_pension_survivor: The sum, over the other person's defined-benefit
             pensions, of the survivor share this person receives this month, zero on
-            the same condition as ``cpp_survivor`` (L40, L59).
+            the same condition as ``cpp_survivor`` (L40, L41, L59).
     """
 
     employment: NDArray[np.float64]

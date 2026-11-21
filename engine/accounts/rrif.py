@@ -13,8 +13,8 @@ depends on age. Two things about it are easy to get wrong:
 
 It is an annual obligation with a 31 December deadline: fixed in January and
 satisfied over the months that follow, in whatever pattern the policy
-chooses, with whatever is left forced out by the year-end close
-(``docs/limitations.md`` L26).
+chooses, with whatever is left forced out in December by phase 6 of the step
+(``engine.core.step._phase6_forced_withdrawals``).
 
 Factors come from ``params/{year}/rrif.yaml`` under ``rrif.minimum_factors``.
 That file holds one program at two stages of life — the RRSP that accumulates

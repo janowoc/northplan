@@ -3,24 +3,25 @@
 
 """Federal income tax.
 
-Defines five income figures — total income, net income (line 23400), taxable
-income (line 23600), qualified pension income and eligible pension income —
-and federal tax on an income figure, before and after non-refundable credits.
-``engine.tax.provincial`` defines none of its own and is handed a figure.
+Defines five income figures — total income, net income (line 23400), net income
+after the OAS repayment (line 23600), qualified pension income and eligible pension
+income — and federal tax on an income figure, before and after non-refundable credits.
+``engine.tax.provincial`` defines none of its own and is handed figures.
 
 Two shapes of entry point. ``total_income``, ``net_income``,
 ``qualified_pension_income`` and ``eligible_pension_income`` build a figure
 from an ``engine.core.state.IncomeLedger`` — one person's income components
 accumulated over the year — and, all but ``qualified_pension_income``, a
-``federal`` ``engine.core.indexation.RealParamSet``. ``taxable_income``, ``gross_tax``,
-``non_refundable_credits`` and ``net_tax`` take figures already computed and
+``federal`` ``engine.core.indexation.RealParamSet``. ``net_income_after_repayment``,
+``gross_tax``, ``non_refundable_credits`` and ``net_tax`` take figures already computed and
 never see a ledger. Every income figure here is annual rather than monthly: a
 caller holding a monthly figure scales to a year first, and what it hands over
 may be an annualised approximation rather than the calendar year's income
 (L16).
 
 ``net_income`` is line 23400 and is never adjusted downward afterward;
-:func:`taxable_income` is line 23600, net income less the OAS repayment.
+:func:`net_income_after_repayment` is line 23600, net income less the OAS repayment.
+The CRA's taxable income is line 26000 (``engine.core.state.Assessment.taxable_income``).
 Line 26000 equals line 23600 except in a person's year of death, when the
 ITA 111(2) deduction (:func:`death_year_capital_loss_deduction`,
 ``docs/limitations.md`` L17) reduces it further; that reduction is applied
@@ -50,7 +51,7 @@ def total_income(
     Not line 15000 once a split is elected: in reality the transfer is a
     deduction and an inclusion (lines 21000 and 11600), and this nets both into
     the total. The difference never reaches tax, since :func:`net_income` is
-    the only consumer of this figure and :func:`taxable_income` derives from
+    the only consumer of this figure and :func:`net_income_after_repayment` derives from
     ``net_income``, but an income-tested rule wanting a pre-election figure
     must not read this.
 
@@ -100,7 +101,7 @@ def net_income(
 
     Floored at zero once, here, after the pension-splitting transfers — there
     is no second floor anywhere downstream. Nothing is ever subtracted back
-    out of this figure: line 23600 (see :func:`taxable_income`) is a separate
+    out of this figure: line 23600 (see :func:`net_income_after_repayment`) is a separate
     figure derived from this one by subtracting the OAS repayment, not a
     reduction of it.
 
@@ -120,11 +121,11 @@ def net_income(
     return np.asarray(np.clip(net, 0, None), dtype=np.float64)
 
 
-def taxable_income(
+def net_income_after_repayment(
     net_income: ArrayLike,
     oas_repayment: ArrayLike,
 ) -> NDArray[np.float64]:
-    """Taxable income (line 23600): net income less the OAS repayment.
+    """Net income after the OAS repayment (line 23600): net income less the repayment.
 
     This is the one place the subtraction happens. This function applies no
     floor and enforces nothing about how its two arguments relate: the result
@@ -139,8 +140,8 @@ def taxable_income(
     :func:`death_year_capital_loss_deduction` (L17) reduces it further; that
     reduction is a Division C deduction applied by
     ``engine.tax.combined.person_assessment``, not here, since it must not
-    feed back into the OAS repayment or the age amount, both of which are
-    tested against this figure.
+    feed back into the age amount, which is tested against this figure; the
+    OAS repayment is tested against line 23400, before either.
 
     Args:
         net_income: Line 23400, real dollars, ``(n_paths,)`` or scalar. Shadows
@@ -203,8 +204,9 @@ def gross_tax(
     """Federal tax before credits.
 
     Args:
-        taxable: The income the brackets are applied to — line 23600 in the
-            annual assessment, or the annualised single-source approximation
+        taxable: The income the brackets are applied to — line 26000 in the
+            annual assessment (line 23600 less the year-of-death deduction,
+            floored at zero; L17), or the annualised single-source approximation
             in the monthly withholding estimate (L16), real dollars,
             ``(n_paths,)`` or scalar.
         params: The ``federal`` parameter set for the tax year.
@@ -228,7 +230,7 @@ def non_refundable_credits(
     params: RealParamSet,
     january_month_index: int,
 ) -> NDArray[np.float64]:
-    """Value of federal non-refundable credits, in dollars of tax reduced.
+    """Value of federal non-refundable credits (L11), in dollars of tax reduced.
 
     ``valuation_rate * (basic personal + age + pension + CPP + EI) +
     dividend tax credit``. The dividend tax credit is NOT scaled by

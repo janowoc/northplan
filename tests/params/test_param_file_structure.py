@@ -337,10 +337,12 @@ def test_oas_age_bands_ascend_from_the_earliest_start_age(year: ParamYear) -> No
     )
 
 
-def test_oas_recovery_tax_cannot_produce_a_negative_taxable_income(year: ParamYear) -> None:
+def test_oas_recovery_tax_cannot_produce_a_negative_net_income_after_repayment(
+    year: ParamYear,
+) -> None:
     """``rate`` below one and ``threshold_annual`` above zero, or nothing floors line 23600.
 
-    ``engine.tax.federal.taxable_income`` applies no floor at zero: its
+    ``engine.tax.federal.net_income_after_repayment`` applies no floor at zero: its
     docstring places the whole guarantee on its one real caller,
     ``engine.tax.combined.person_assessment``, which pairs a net income with
     the repayment ``engine.tax.combined.oas_repayment`` computed from it.
@@ -352,7 +354,7 @@ def test_oas_recovery_tax_cannot_produce_a_negative_taxable_income(year: ParamYe
     net income itself.
 
     The assertions below are the exact conditions
-    ``engine.tax.federal.taxable_income``'s docstring states — "a fraction
+    ``engine.tax.federal.net_income_after_repayment``'s docstring states — "a fraction
     below one" of the excess over "a positive threshold" — so relaxing either
     to its non-strict form would falsify that docstring even though the
     output would stay non-negative: a rate of exactly one still repays at
