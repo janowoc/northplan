@@ -24,8 +24,11 @@ The direction of error is given from the household's point of view:
 several with structures Alberta lacks (Ontario's surtax and health premium,
 Quebec's separate return, Manitoba's frozen brackets). We model Alberta
 residents only; any other province code stops the run. Lives in
-`params/2026/ab.yaml`, `engine/tax/provincial.py`. Adding a province is a copy
-of `params/province-template.yaml` plus sourcing, with no new code.
+`params/2026/ab.yaml`, `engine/tax/provincial.py`. Adding a province whose tax
+has the template's structure is a copy of `params/province-template.yaml` plus
+sourcing, with no new code. A province with a structure the template lacks,
+such as Ontario's surtax and health premium or Quebec's separate return, needs
+code as well.
 
 **L2. GIS and the Allowances.** In reality low-income OAS pensioners receive a
 non-taxable supplement reduced at fifty cents per dollar of testable income,
@@ -63,10 +66,16 @@ under-reports for it.
 Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated
-pensions.** A LIF is governed by the jurisdiction its pension was registered
-in. We carry that jurisdiction per account and refuse at load any scenario that
-states one without a parameter file, which today means every one except
-Alberta. Lives in `engine/core/state.py::LiraState` and `LifState`,
+pensions.** A LIF is governed by the pension law that applied to the member's
+benefit when they left the plan, which need not be where the plan is
+registered. Alberta's Employment Pension Plans Act, s.1(9), states the rule:
+that of the province where the member was last employed, or federal law for
+federally regulated employment, with exceptions for some multi-employer plans
+and for a member last employed in a jurisdiction that is neither a reciprocal
+nor a multilateral jurisdiction. We carry that jurisdiction per account and
+refuse at load any scenario that states one without a parameter file, which
+today means every one except Alberta. Lives in
+`engine/core/state.py::LiraState` and `LifState`,
 `engine/params/loader.py::ParamYear.jurisdiction`,
 `engine/scenario/locked_in.py::check_locked_in`.
 
@@ -126,14 +135,16 @@ erosion factor, for the decay of unindexed amounts, and for restating a
 person's two years of prior net income from as filed to real dollars at
 build (L5). Returns are real. There is no stochastic inflation.
 
-**L57. Erosion of nominal state balances.** In reality a contribution room,
-a lifetime total, or an adjusted cost base fixed in nominal terms loses real
+**L57. Erosion of nominal state balances.** In reality a contribution room, a
+lifetime total, or an adjusted cost base fixed in nominal terms loses real
 value continuously as prices rise. We apply one year's decay once, each
 January. Direction: within a year the modelled real value is too high, by at
-most one year's inflation and on average half of it; the sign of the effect
-on the household depends on the field — too much room is optimistic, too high
-an ACB is optimistic on tax. Lives in each account module's `erode_nominal`,
-with the factor from `engine/core/indexation.py::nominal_carry_factor`.
+most one year's inflation and on average half of it; the sign of the effect on
+the household depends on the field — too much room is optimistic, too high an
+ACB is optimistic on tax. Lives in `erode_nominal` in
+`engine/accounts/rrsp.py`, `tfsa.py`, `taxable.py` and `resp.py`, the four
+account modules whose state holds an amount fixed in nominal terms, with the
+factor from `engine/core/indexation.py::nominal_carry_factor`.
 
 **L61. Nominal output is valued at the year end.** In reality a year's
 spending leaves across its months and an estate passes in the month of the
@@ -212,28 +223,29 @@ capital gains or donations in one year.
 
 **L14. Net income and taxable income.** In reality several deductions separate
 total income from net income, and a further Division C computation separates
-net income from taxable income; we model only two deductions from total
-income — RRSP contributions and the enhanced CPP contribution — and the one
-Division C computation described in L17. Line 23600 is line 23400 less line
-23500, the social benefits repayment: the parts repaid of the OAS pension
-(line 11300), of EI and other benefits (line 11900), and of net federal
-supplements (line 14600). Of those three only the OAS repayment can be
-non-zero here — EI is carried as premiums paid and never as benefits
-received (L39), and net federal supplements are GIS and the Allowances,
-which are not modelled (L2) — so the two lines differ by the OAS repayment
-alone, and only for a person who owes one. Line 26000 equals line 23600
-except in a person's year of death, when the ITA 111(2) deduction (L17)
-reduces it further; that is the only Division C computation modelled. The
+net income from taxable income; we model only three deductions from total
+income — RRSP contributions, the enhanced CPP contribution, and the elected
+split-pension amount (line 21000), which the engine nets into total income
+together with the transferee's inclusion — and the one Division C computation
+described in L17. Line 23600 is line 23400 less line 23500, the social benefits
+repayment: the parts repaid of the OAS pension (line 11300), of EI and other
+benefits (line 11900), and of net federal supplements (line 14600). Of those
+three only the OAS repayment can be non-zero here — EI is carried as premiums
+paid and never as benefits received (L39), and net federal supplements are GIS
+and the Allowances, which are not modelled (L2) — so the two lines differ by
+the OAS repayment alone, and only for a person who owes one. Line 26000 equals
+line 23600 except in a person's year of death, when the ITA 111(2) deduction
+(L17) reduces it further; that is the only Division C computation modelled. The
 repayment is tested against line 23400; the tax brackets are applied to line
-26000, and the age amount and the RESP enhanced-grant rate — the latter
-through `PersonState.net_income_two_years_prior`, a line 23600 figure like
-its sibling `PersonState.prior_year_net_income` — to line 23600. Gross OAS
-enters both 23400 and 23600 as income, as the rules require; what separates
-them is the repayment deducted at line 23500, not a different treatment of
-the pension itself. Direction: conservative on tax — the omitted deductions
-overstate taxable income, so the engine's tax comes out too high outside a
-death year; the one Division C deduction we do model (L17) only offsets this
-for a death year's own net capital loss. Lives in `engine/tax/federal.py`,
+26000, and the age amount and the RESP enhanced-grant rate — the latter through
+`PersonState.net_income_two_years_prior`, a line 23600 figure like its sibling
+`PersonState.prior_year_net_income` — to line 23600. Gross OAS enters both
+23400 and 23600 as income, as the rules require; what separates them is the
+repayment deducted at line 23500, not a different treatment of the pension
+itself. Direction: conservative on tax — the omitted deductions overstate
+taxable income, so the engine's tax comes out too high outside a death year;
+the one Division C deduction we do model (L17) only offsets this for a death
+year's own net capital loss. Lives in `engine/tax/federal.py`,
 `engine/tax/combined.py`, `engine/benefits/employment.py`,
 `params/2026/cpp.yaml`.
 
@@ -266,15 +278,16 @@ better than the true optimum, so household tax is overstated, by at most the
 curvature of the objective across one grid step. Lives in
 `engine/tax/combined.py::household_assessment`.
 
-**L16. Withholding.** RRSP withdrawals and RRIF withdrawals above the minimum
-are withheld at the banded rates in `params/2026/rrif.yaml` and remitted in
-the month. Employment and DB pension income are withheld at an approximation
-of the payroll tables: the engine's own combined tax on twelve times the
-month's amount, divided by twelve. CPP and OAS are paid gross, which is the
-default in reality. The balance settles from cash in the filing month; a
-refund arrives the same way. Not modelled: instalments, and the July-to-June
-OAS recovery withholding, which is a refundable prepayment of the repayment
-assessed on the return. Lives in `engine/tax/withholding.py`, called from
+**L16. Withholding.** RRSP withdrawals, and RRIF and LIF withdrawals above the
+minimum (L56), are withheld at the banded rates in `params/2026/rrif.yaml` and
+remitted in the month, except a withdrawal the cash floor forces (L58).
+Employment and DB pension income are withheld at an approximation of the
+payroll tables: the engine's own combined tax on twelve times the month's
+amount, divided by twelve. CPP and OAS are paid gross, which is the default in
+reality. The balance settles from cash in the filing month; a refund arrives
+the same way. Not modelled: instalments, and the July-to-June OAS recovery
+withholding, which is a refundable prepayment of the repayment assessed on the
+return. Lives in `engine/tax/withholding.py`, called from
 `engine/core/step.py`.
 
 Three further approximations inside the payroll estimate, and they do not all
@@ -311,23 +324,23 @@ unchanged. Same family of error as L16. Lives in `engine/core/step.py`.
 
 **L17. Investment income detail.** Interest, eligible dividends, and capital
 gains are modelled with the inclusion rate, gross-up, and both dividend tax
-credits. In reality a net capital loss for the year is carried back three
-years or forward indefinitely against capital gains; we offset losses against
-gains of the same year only, and otherwise drop a net loss. In the year of
-death (and the preceding year), ITA 111(2) additionally allows that year's
-own net capital loss as a deduction from taxable income against any income —
-confirmed against the source
-(https://laws-lois.justice.gc.ca/eng/acts/i-3.3/section-111.html). We apply
-this to the year of death only, for that year's own net loss (there are no
-carried losses in this model), both on the terminal return
-(`engine/core/step.py::resolve_deaths`) and at the December close of a
-person's death year (`close_year`); it changes neither net income (line
-23400) nor the OAS repayment, both of which are computed before it applies.
-The preceding-year leg is not modelled. Direction: conservative on tax and on
-the OAS repayment in general; conservative specifically for the un-modelled
-preceding-year leg. Not modelled: non-eligible dividends, foreign withholding
-tax, return of capital, the superficial loss rule. Lives in
-`engine/tax/federal.py::death_year_capital_loss_deduction`,
+credits. In reality a net capital loss for the year is carried back three years
+or forward indefinitely against capital gains; we offset losses against gains
+of the same year only, and otherwise drop a net loss. In the year of death (and
+the preceding year), ITA 111(2) additionally allows that year's own net capital
+loss as a deduction from taxable income against any income — confirmed against
+the source (https://laws-lois.justice.gc.ca/eng/acts/i-3.3/section-111.html).
+We apply this to the year of death only, for that year's own net loss (there
+are no carried losses in this model), both on the terminal return
+(`engine/core/step.py::resolve_deaths`) and at the December close of a person's
+death year (`close_year`); it changes neither net income (line 23400) nor the
+OAS repayment, both of which are computed before it applies. The preceding-year
+leg is not modelled. Direction: conservative on tax, for the net loss that is
+dropped and for the un-modelled preceding-year leg alike. Neither touches the
+OAS repayment: a carried loss and the 111(2) deduction are both taken after net
+income, and the repayment is tested on line 23400. Not modelled: non-eligible
+dividends, foreign withholding tax, return of capital, the superficial loss
+rule. Lives in `engine/tax/federal.py::death_year_capital_loss_deduction`,
 `engine/tax/combined.py::person_assessment`.
 
 ## Public pensions
@@ -418,12 +431,16 @@ the Home Buyers' and Lifelong Learning plans, contributions in the first sixty
 days of the next year. Lives in `engine/accounts/rrsp.py`.
 
 **L26. RRIF conversion.** Modelled as one optional partial conversion at a
-policy-chosen age, and full conversion at the statutory age. An election at
-the statutory age itself converts the whole balance, whatever its fraction,
-and one above it is refused by
-`engine/scenario/start_ages.py::check_start_ages`. Not modelled: the
-younger-spouse election for the minimum, and any one-year reduction of the
-minimum. Lives in `engine/accounts/rrif.py`.
+policy-chosen age, and full conversion at the statutory age. An election at the
+statutory age itself converts the whole balance, whatever its fraction, and one
+above it is refused by `engine/scenario/start_ages.py::check_start_ages`. A
+RRIF opened by a conversion, like a LIF opened by a LIRA's conversion (L55),
+has no minimum in the year it opens, as in the law: the Income Tax Act's
+minimum amount is nil for the year a fund is entered into (s.146.3(1)), and
+Alberta's Employment Pension Plans Regulation takes a LIF's minimum from the
+federal rules (s.123(b)). Its first minimum is fixed the following January. Not
+modelled: the younger-spouse election for the minimum, and any one-year
+reduction of the minimum. Lives in `engine/accounts/rrif.py`.
 
 **L27. LIF maximum.** In reality Alberta's maximum is the greater of the
 factor result and the prior year's investment return. We apply the factor
@@ -440,21 +457,20 @@ the money stays locked longer than it need be, and the LIF's minimum and
 maximum both start later. Lives in `engine/accounts/lira.py::must_convert`.
 
 **L47. One locked-in account per person.** In reality a person may hold several
-LIRAs or LIFs, from several employers, registered in different jurisdictions,
-and they do not merge: each is drawn under the maximum table of the
-jurisdiction its own originating pension was registered in. We model at most
-one LIRA and one LIF per person, sharing one jurisdiction. Direction: neutral
-on the LIF maximum for a household whose locked-in money is all from one
-jurisdiction, which is the common case; where it is not, the ceiling on the
-whole balance comes from whichever jurisdiction the scenario names, and the
-error runs in either direction depending on which table is the looser. A couple
-is refused at load when one person's LIRA holds a balance and names a
-jurisdiction other than the one the other person states for a LIRA or a LIF,
-since the two could meet at a first death or at the survivor's later conversion
-to a LIF (L41); the refusal stands even where the LIRA would be converted
-before any death. Direction: neither optimistic nor conservative — a refused
-scenario produces no number. Lives in
-`engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
+LIRAs or LIFs, from several employers, governed by different jurisdictions, and
+they do not merge: each is drawn under the maximum table of the jurisdiction
+whose pension law governed the benefit it came from. We model at most one LIRA
+and one LIF per person, sharing one jurisdiction. Direction: neutral on the LIF
+maximum for a household whose locked-in money is all from one jurisdiction,
+which is the common case; where it is not, the ceiling on the whole balance
+comes from whichever jurisdiction the scenario names, and the error runs in
+either direction depending on which table is the looser. A couple is refused at
+load when one person's LIRA holds a balance and names a jurisdiction other than
+the one the other person states for a LIRA or a LIF, since the two could meet
+at a first death or at the survivor's later conversion to a LIF (L41); the
+refusal stands even where the LIRA would be converted before any death.
+Direction: neither optimistic nor conservative — a refused scenario produces no
+number. Lives in `engine/scenario/schema.py::Accounts.lira` and `Accounts.lif`,
 `engine/core/state.py::LiraState` and `LifState`, read by
 `engine/accounts/lira.py` and `engine/accounts/lif.py`, and
 `engine/scenario/locked_in.py::check_locked_in`.
@@ -489,10 +505,12 @@ Direction: optimistic on the student's tax when the student has other income.
 
 **L31. Withdrawal shape.** The plan pays the scheduled monthly education cost,
 or the plan's whole value if less; the payment draws grant and income in
-proportion to their shares while income is positive, and from grant alone
-when income is zero or negative; contributions are drawn only once grant and
-income are exhausted. Not modelled: the cap on assistance payments in the
-first thirteen weeks of study, which the scheduled monthly draw stays under.
+proportion to their shares while income is positive, and from grant alone when
+income is zero or negative; contributions are drawn only once grant and income
+are exhausted. Not modelled: the cap on assistance payments in the first
+thirteen weeks of study. Nothing checks the education cost against it: where
+the cost over those weeks exceeds the cap, the excess is still drawn from grant
+and income first. Direction: either way.
 
 **L32. Wind-up.** At the end of the education window any unused grant is
 repaid and vanishes; any accumulated income is taxable income of the
@@ -653,10 +671,15 @@ zero the same way; `YearRecord.net_worth` is not floored. Not modelled: probate
 (a flat fee in Alberta), charitable bequests, graduated-rate estates. Lives in
 `engine/core/step.py::resolve_deaths` and `close_year`.
 
-**L59. DB pension, death before it starts.** In reality a pre-retirement
-death usually pays the spouse a commuted-value lump sum; we pay the survivor
-share from the pension's start month as if the pension had been deferred.
-Direction: either way. Lives in
+**L59. DB pension, death before it starts.** In reality the pension law that
+governs the member's benefit sets what a death before the pension starts pays.
+Under Alberta's Employment Pension Plans Act, s.89(1)(a)(i), the surviving
+pension partner is provided the pension the member was entitled to, as a
+pension, and may transfer its commuted value instead, or must where the plan
+requires it (s.89(3)); a lump sum is paid to a designated beneficiary or the
+estate where the partner has waived the benefit or there is none (s.89(1)(b),
+(c)). We pay the survivor share from the pension's start month as if the
+pension had been deferred. Direction: either way. Lives in
 `engine/benefits/pension.py::survivor_pension_monthly`.
 
 **L43. Depletion.** A path is depleted from the first month in which cash
