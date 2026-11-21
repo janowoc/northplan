@@ -15,17 +15,18 @@ total, net, taxable, or eligible pension income itself — it is handed line
 annualised single-source approximation in the monthly withholding estimate (L16).
 
 The province's parameter file also carries the LIF maximum withdrawal rules
-that ``engine/accounts/lif.py`` reads, since those are provincially set.
-Those are annual limits fixed each January, not monthly ones.
+that ``engine/accounts/lif.py`` reads, since a province's pension law sets them
+for the accounts it governs.
+These limits are annual, fixed each January, not monthly.
 
 They are in the same file but reached by a different route, and the
 difference matters. Income tax follows the province of **residence**, so this
 module is handed ``RealParamYear.province(household.province)``. A LIF
-follows the province its originating pension was **registered** in, so
-``lif`` is handed ``RealParamYear.jurisdiction(LifState.jurisdiction)``. For
-a household that never moved these resolve to one object; for one that did,
-taking the LIF table from this module's parameter set is wrong and nothing
-downstream will say so.
+follows the jurisdiction whose pension law governs the account (L3), so
+``lif`` is handed ``RealParamYear.jurisdiction(LifState.jurisdiction)``.
+Where that jurisdiction is the province of residence these resolve to one
+object; where it is not, taking the LIF table from this module's parameter
+set is wrong and nothing downstream will say so.
 """
 
 from __future__ import annotations

@@ -454,10 +454,10 @@ def test_the_couple_exercises_what_it_is_for() -> None:
 
     Reads the mechanisms the header says this file is for: two distinct
     birth dates, CPP and OAS already in pay, a funded RRIF and no RRSP for
-    each person, a funded LIF registered in Alberta, a DB pension with a
-    positive survivor share, and a survivor share below one. No numeric
-    literal from the YAML appears below other than 0 and 1; ``"ab"`` is a
-    jurisdiction code, not a number.
+    each person, a funded LIF governed by Alberta's pension law (L3), a DB
+    pension with a positive survivor share, and a survivor share below one.
+    No numeric literal from the YAML appears below other than 0 and 1;
+    ``"ab"`` is a jurisdiction code, not a number.
     """
     scenario = load_scenario(COUPLE)
     persons = scenario.household.persons

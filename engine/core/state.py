@@ -194,8 +194,9 @@ class LiraState:
 
 @dataclass(frozen=True, slots=True)
 class LifState:
-    """A LIF, for a person already converted (``docs/limitations.md`` L3: governed by the
-    jurisdiction of the originating pension). Has a minimum and, in most jurisdictions, a maximum.
+    """A LIF, for a person already converted; ``jurisdiction`` names the jurisdiction whose
+    pension law governs it (``docs/limitations.md`` L3). Has a minimum and, in most jurisdictions,
+    a maximum.
 
     Attributes:
         balance: Real dollars, ``(n_paths,)``.

@@ -174,8 +174,41 @@ def test_a_lira_in_an_unfiled_jurisdiction_is_refused(
     assert "lira" in message
     assert "'bc'" in message
     assert str(params.root) in message
-    assert ", ".join(params.names()) in message
+    assert message.endswith("Available: ab (docs/limitations.md L3).")
     assert "L3" in message
+
+
+def test_an_unfiled_jurisdiction_in_a_year_with_no_jurisdiction_file_lists_none(
+    tmp_path: Path, unlocking_age: int
+) -> None:
+    """The parameter root is synthetic: one empty ``federal.yaml``, no two-letter file."""
+    (tmp_path / str(START_YEAR)).mkdir()
+    (tmp_path / str(START_YEAR) / "federal.yaml").write_text("", encoding="utf-8")
+    synthetic = load_year(START_YEAR, tmp_path)
+    scenario = _scenario(_person("a", _old_enough(unlocking_age), lira=(BALANCE, "bc")))
+
+    with pytest.raises(LockedInJurisdictionError) as excinfo:
+        check_locked_in(scenario, synthetic)
+
+    assert str(excinfo.value).endswith("Available: none (docs/limitations.md L3).")
+
+
+def test_the_available_list_holds_every_two_letter_lowercase_code_and_nothing_else(
+    tmp_path: Path, unlocking_age: int
+) -> None:
+    """The parameter root is synthetic. ``AB`` and ``a1`` are two-character stems the pattern
+    refuses, ``a`` is a one-letter stem it refuses, and ``federal`` is longer than two
+    characters."""
+    (tmp_path / str(START_YEAR)).mkdir()
+    for stem in ("on", "sk", "AB", "a1", "a", "federal"):
+        (tmp_path / str(START_YEAR) / f"{stem}.yaml").write_text("", encoding="utf-8")
+    synthetic = load_year(START_YEAR, tmp_path)
+    scenario = _scenario(_person("a", _old_enough(unlocking_age), lira=(BALANCE, "bc")))
+
+    with pytest.raises(LockedInJurisdictionError) as excinfo:
+        check_locked_in(scenario, synthetic)
+
+    assert str(excinfo.value).endswith("Available: on, sk (docs/limitations.md L3).")
 
 
 def test_a_lif_in_an_unfiled_jurisdiction_is_refused(params: ParamYear, unlocking_age: int) -> None:

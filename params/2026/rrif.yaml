@@ -17,7 +17,9 @@
 # accumulating under `rrsp:` and decumulating under `rrif:`, with the
 # conversion rule joining them.
 #
-# Read by: engine/accounts/rrsp.py, engine/accounts/rrif.py
+# Read by: engine/accounts/rrsp.py, engine/accounts/rrif.py,
+#   engine/tax/withholding.py, engine/core/step.py,
+#   engine/policy/withdrawal.py, engine/scenario/start_ages.py
 
 # --- Indexation -------------------------------------------------------------
 # One entry per adjustment RULE, not per amount: applies_to lists every path

@@ -9,13 +9,13 @@ accumulates until converted. The LIF the balance moves into, with its
 mandatory minimum and jurisdiction-specific maximum, is
 ``engine.accounts.lif``.
 
-**The jurisdiction is not the province of residence.** A LIRA is governed by
-the pension legislation of the jurisdiction its originating pension was
-registered under: a household resident in Alberta may hold an
-Ontario-registered LIRA, converting under Ontario's rules while filing Alberta
-income tax. Every function here that takes a parameter set takes the
-*registration* jurisdiction's — ``ParamYear.jurisdiction`` keyed by
-``LiraState.jurisdiction`` — never ``ParamYear.province(household.province)``.
+**The jurisdiction is not the province of residence.** A LIRA is converted
+under the rules of the jurisdiction whose pension law governs the account
+(``docs/limitations.md`` L3): a household resident in Alberta may hold a LIRA
+governed by Ontario law, converting under Ontario's rules while filing Alberta
+income tax. Every function here that takes a parameter set takes that
+jurisdiction's — ``ParamYear.jurisdiction`` keyed by ``LiraState.jurisdiction``
+— never ``ParamYear.province(household.province)``.
 ``engine.accounts.lif`` carries the same warning for ``LifState.jurisdiction``.
 """
 
@@ -43,8 +43,8 @@ def withdrawals_permitted(age_at_start_of_year: int, params: ParamSet | RealPara
         age_at_start_of_year: Age in whole years on 1 January. See
             ``engine.core.timeline.age_at_start_of_year``. Not per-path: a
             person's age does not vary by path.
-        params: The parameter set of the jurisdiction the account is
-            **registered** in. Either view serves: the unlocking age is an
+        params: The parameter set of the jurisdiction whose pension law governs
+            the account (L3). Either view serves: the unlocking age is an
             age, not a dollar amount.
 
     Returns:
@@ -154,8 +154,8 @@ def must_convert(age_at_end_of_year: int, params: RealParamSet) -> bool:
 
     Args:
         age_at_end_of_year: Age in whole years on 31 December. Not per-path.
-        params: The parameter set of the jurisdiction the account is
-            **registered** in, supplying ``lif.conversion_deadline_age_years``.
+        params: The parameter set of the jurisdiction whose pension law governs
+            the account (L3), supplying ``lif.conversion_deadline_age_years``.
 
     Returns:
         Whether conversion is due this year.

@@ -11,13 +11,13 @@ minimum: ``open_year`` fixes it by calling
 balance and ``opened_year``, exactly as it would for a RRIF. Do not add a
 second copy of that arithmetic here.
 
-**The jurisdiction is not the province of residence.** A LIF is governed by
-the pension legislation of the jurisdiction its originating pension was
-registered under: a household resident in Alberta may hold an
-Ontario-registered LIF, drawn under Ontario's table while filing Alberta
-income tax. Every function here that takes a parameter set takes the
-*registration* jurisdiction's — ``ParamYear.jurisdiction`` keyed by
-``LifState.jurisdiction`` — never ``ParamYear.province(household.province)``.
+**The jurisdiction is not the province of residence.** A LIF is drawn under
+the rules of the jurisdiction whose pension law governs the account
+(``docs/limitations.md`` L3): a household resident in Alberta may hold a LIF
+governed by Ontario law, drawn under Ontario's table while filing Alberta
+income tax. Every function here that takes a parameter set takes that
+jurisdiction's — ``ParamYear.jurisdiction`` keyed by ``LifState.jurisdiction``
+— never ``ParamYear.province(household.province)``.
 A person holds at most one LIF, so all of that person's LIF money is drawn
 under one jurisdiction's table (``docs/limitations.md`` L47).
 
@@ -57,8 +57,8 @@ def has_maximum(params: RealParamSet) -> bool:
     not an inference.
 
     Args:
-        params: The parameter set of the jurisdiction the account is
-            **registered** in.
+        params: The parameter set of the jurisdiction whose pension law governs
+            the account (L3).
 
     Returns:
         True if :func:`maximum_withdrawal` should be consulted.
@@ -96,8 +96,8 @@ def maximum_withdrawal(
     Args:
         opening_balance: Balance on 1 January, before growth, ``(n_paths,)``.
         age_at_start_of_year: Age in whole years on 1 January. Not per-path.
-        params: The parameter set of the jurisdiction the account is
-            **registered** in.
+        params: The parameter set of the jurisdiction whose pension law governs
+            the account (L3).
 
     Returns:
         Maximum permitted withdrawal for the year, ``(n_paths,)``.

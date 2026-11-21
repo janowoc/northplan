@@ -76,7 +76,11 @@ household:
         rrif:    {balance: 0}
         tfsa:    {balance: 90000, room: 7000}
         taxable: {balance: 150000, acb: 110000}
-        lira:    {balance: 80000, jurisdiction: ab}   # jurisdiction of REGISTRATION
+        # The jurisdiction whose pension law governs this LIRA: generally the
+        # province where the person last worked while in the plan it came from,
+        # or federal law for federally regulated work. It may not be where they
+        # live or where the plan was registered.
+        lira:    {balance: 80000, jurisdiction: ab}
 
   beneficiaries:
     - id: child1

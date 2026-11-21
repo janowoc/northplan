@@ -69,8 +69,8 @@ grant:
   cessation_age_years: 17           # age at which the grant stops accruing, and the annual room is no longer added
   maximum_lifetime: 7200            # max grant per beneficiary, all years —
                                     # covers the basic and enhanced tiers
-                                    # COMBINED, which is why resp.py carries a
-                                    # single lifetime_grant_paid rather than
+                                    # COMBINED, which is why RespState carries a
+                                    # single grants_lifetime rather than
                                     # one per tier
 
   # --- Additional (income-tested) grant tier --------------------------------

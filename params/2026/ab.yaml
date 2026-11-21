@@ -94,10 +94,10 @@ investment_income:
 # ---------------------------------------------------------------------------
 # WHICH PROVINCE'S FILE THIS IS READ FROM IS NOT ALWAYS THIS HOUSEHOLD'S.
 #
-# A LIF is governed by the pension legislation of the jurisdiction the
-# ORIGINATING PENSION was registered under, not by where the holder lives now.
-# Someone resident in Alberta may hold an Ontario-registered LIF: they draw it
-# under on.yaml's table and file Alberta income tax out of ab.yaml.
+# A LIF is drawn under the rules of the jurisdiction whose pension law governs
+# the account (docs/limitations.md L3), which need not be where the holder
+# lives. Someone resident in Alberta may hold a LIF governed by Ontario law:
+# they draw it under on.yaml's table and file Alberta income tax out of ab.yaml.
 #
 # So this block belongs in a province file — it is genuinely provincial law —
 # but it is reached by a different route from the tax parameters above it:
@@ -105,15 +105,15 @@ investment_income:
 #   income tax   ParamYear.province(HouseholdState.province)
 #   LIF maximum  ParamYear.jurisdiction(LifState.jurisdiction)
 #
-# engine/core/state.py::LiraState and LifState carry the registration
-# jurisdiction, and PersonState holds at most one of each. A person with two
-# locked-in accounts from two employers in two jurisdictions is not modelled:
-# the accounts do not merge in reality, and the model has a single slot for
-# them. See docs/limitations.md L47.
+# engine/core/state.py::LiraState and LifState carry that jurisdiction, and
+# PersonState holds at most one of each. A person with two locked-in accounts
+# from two employers in two jurisdictions is not modelled: the accounts do not
+# merge in reality, and the model has a single slot for them.
+# See docs/limitations.md L47.
 #
-# For a household that never moved the two lookups return this same file, which
-# is why reading the LIF table out of the residence province is right until it
-# is silently wrong.
+# Where the account's jurisdiction is the province of residence the two lookups
+# return this same file, which is why reading the LIF table out of the
+# residence province is right until it is silently wrong.
 #
 # Federally regulated pensions are a jurisdiction of their own and have no file
 # here. A household holding one stops the run rather than borrowing a
@@ -197,8 +197,18 @@ lif:
 # 2026-09-04 https://open.alberta.ca/dataset/3e08374c-ba38-4b96-abf0-6fd15dae7109/resource/c2419a4b-4a85-4453-91e8-4bb3ef51831b/download/tbf-accessing-pension-funds-information-for-individuals-2026.pdf
   unlocking_age_years: 50
 
-  # Last age at which a LIRA may still be converted to a LIF. Alberta's pension
-  # legislation sets no maximum age, so the binding deadline is the Income Tax
-  # Act's RRSP maturity rule, ITA s.146(2)(b.4).
-# 2026-09-19 https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-146.html
+  # Last age at which a LIRA may still be converted to a LIF. Alberta's
+  # Employment Pension Plans Regulation (AR 154/2014), Schedule 1 (the LIRA
+  # addendum that s.109 makes part of every LIRA contract), s.6(1): a LIRA
+  # "must be converted to retirement income on or before the last date on
+  # which a person is allowed under the Income Tax Act (Canada) to start
+  # receiving a pension from a registered pension plan". That date is
+  # generally the end of the year the holder turns 71, Income Tax Regulations
+  # (C.R.C., c. 945) s.8502(e)(i), which allows later starts in some cases.
+  # What fixes 71 for a LIRA is that it is an RRSP (AR 154/2014 s.106), and an
+  # RRSP may not "provide for maturity after the end of the year in which the
+  # annuitant attains 71 years of age" (ITA s.146(2)(b.4)).
+# 2026-11-21 https://kings-printer.alberta.ca/1266.cfm?page=2014_154.cfm&leg_type=Regs&isbncln=9780779854394&display=html
+# 2026-11-21 https://laws-lois.justice.gc.ca/eng/regulations/C.R.C.,_c._945/section-8502.html
+# 2026-11-21 https://laws-lois.justice.gc.ca/eng/acts/I-3.3/section-146.html
   conversion_deadline_age_years: 71

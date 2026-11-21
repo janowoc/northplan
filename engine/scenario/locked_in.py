@@ -37,11 +37,13 @@ mistake and raises ``ValueError``, as in
 
 from __future__ import annotations
 
+import re
+
 from engine.accounts.lira import withdrawals_permitted
 from engine.core.timeline import age_at_start_of_year
 from engine.params.loader import ParamFileMissingError, ParamYear
 from engine.scenario.load import ScenarioError
-from engine.scenario.schema import Scenario
+from engine.scenario.schema import JURISDICTION_CODE_PATTERN, Scenario
 
 __all__ = ["LockedInAgeError", "LockedInJurisdictionError", "check_locked_in"]
 
@@ -103,9 +105,13 @@ def check_locked_in(scenario: Scenario, params: ParamYear) -> None:
                 if account.jurisdiction is not None and account.jurisdiction != lira.jurisdiction:
                     raise LockedInJurisdictionError(
                         f"household.persons: {holder.id!r} holds a LIRA balance "
-                        f"({lira.balance}) registered in {lira.jurisdiction!r}, and "
-                        f"{other.id!r} states a {kind.upper()} registered in "
-                        f"{account.jurisdiction!r}. Two jurisdictions do not merge, at a "
+                        f"({lira.balance}) governed by the pension law of "
+                        f"{lira.jurisdiction!r}, and {other.id!r} states a "
+                        f"{kind.upper()} governed by that of {account.jurisdiction!r}. "
+                        f"A locked-in account's jurisdiction is generally the province "
+                        f"where its holder last worked while in the plan the account "
+                        f"came from, or federal law for federally regulated work. Two "
+                        f"jurisdictions do not merge, at a "
                         f"first death or at the survivor's later conversion to a LIF, so the "
                         f"couple is refused, even where the LIRA would be converted to a LIF "
                         f"before any death "
@@ -120,10 +126,13 @@ def check_locked_in(scenario: Scenario, params: ParamYear) -> None:
             try:
                 jurisdiction = params.jurisdiction(code)
             except ParamFileMissingError as error:
+                available = ", ".join(
+                    name for name in params.names() if re.fullmatch(JURISDICTION_CODE_PATTERN, name)
+                )
                 raise LockedInJurisdictionError(
                     f"household.persons: {person.id!r} states accounts.{kind}.jurisdiction "
                     f"{code!r}, which has no parameter file for tax year {params.year} in "
-                    f"{params.root}. Available: {', '.join(params.names())} "
+                    f"{params.root}. Available: {available or 'none'} "
                     f"(docs/limitations.md L3)."
                 ) from error
             if kind == "lif":

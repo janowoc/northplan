@@ -953,18 +953,16 @@ class ParamYear:
         return self[code.lower()]
 
     def jurisdiction(self, code: str) -> ParamSet:
-        """Pension parameters for the jurisdiction a locked-in account is registered in (L3).
+        """Pension parameters for the jurisdiction whose pension law governs a LIRA or LIF (L3).
 
         Same files as :meth:`province`, reached deliberately by a different
-        name. A LIF is governed by the pension legislation of the jurisdiction
-        its originating pension was registered under, which is not necessarily
-        where the holder now lives: someone resident in Alberta may hold an
-        Ontario-registered LIF, draw it under Ontario's maximum, and file
-        Alberta income tax. Reading the LIF maximum out of
-        ``province(household.province)`` gets that household wrong, silently
-        and with no test to catch it.
+        name. That jurisdiction is not necessarily where the holder lives:
+        someone resident in Alberta may hold a LIF governed by Ontario law,
+        draw it under Ontario's maximum, and file Alberta income tax. Reading
+        the LIF maximum out of ``province(household.province)`` gets that
+        household wrong, silently and with no test to catch it.
 
-        The two methods return the same object when the household never moved,
+        The two methods return the same object when the two codes are equal,
         which is the common case and the reason the bug is easy to ship.
 
         Args:

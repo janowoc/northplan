@@ -71,6 +71,7 @@ __all__ = [
     "CONTRIBUTION_KINDS",
     "DEFAULT_ALLOCATION",
     "INVESTABLE_KINDS",
+    "JURISDICTION_CODE_PATTERN",
     "PSD_TOLERANCE",
     "TOLERANCE",
     "WITHDRAWAL_KINDS",
@@ -199,11 +200,14 @@ Month = Annotated[int, Field(ge=1, le=12), _NUMBER_ONLY]
 #: A bare fraction in ``[0, 1]``, never a percentage.
 Fraction = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False), _NUMBER_ONLY]
 
+#: The pattern every jurisdiction and province code must match.
+JURISDICTION_CODE_PATTERN: Final[str] = r"^[a-z]{2}$"
+
 #: A two-letter jurisdiction code, e.g. ``"ab"``. Lower case, so that the
 #: string can be handed to ``ParamYear.province`` and reach a file name
 #: unchanged. Which codes actually have a parameter file is not checked here;
 #: the loader stops on the ones that do not (limitations.md L1, L3).
-JurisdictionCode = Annotated[str, Field(pattern=r"^[a-z]{2}$")]
+JurisdictionCode = Annotated[str, Field(pattern=JURISDICTION_CODE_PATTERN)]
 
 
 class _Base(BaseModel):
@@ -476,9 +480,12 @@ def _check_jurisdiction_required_when_funded(
     if balance > 0.0 and jurisdiction is None:
         raise ValueError(
             f"{kind}: jurisdiction is required when balance is above zero "
-            f"(got {balance}). A locked-in account is governed by the "
-            "pension law it was registered under, which the province of "
-            "residence does not imply."
+            f"(got {balance}). A locked-in account is governed by "
+            "one jurisdiction's pension law: generally that of the province "
+            "where the person last worked while in the plan the account came "
+            "from, or federal law for federally regulated work. That "
+            "jurisdiction may not be where they live or where the plan was "
+            "registered."
         )
 
 
@@ -487,14 +494,14 @@ class LiraAccount(_Base):
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
-        jurisdiction: The pension jurisdiction the account is **registered**
-            in, which is not necessarily where the household lives. An Alberta
-            resident may hold an Ontario-registered LIRA: once it becomes a
-            LIF they draw it under Ontario's maximum table, and they file
+        jurisdiction: The jurisdiction whose pension law governs the account,
+            which is not necessarily where the household lives. An Alberta
+            resident may hold a LIRA governed by Ontario law: once it becomes
+            a LIF they draw it under Ontario's maximum table, and they file
             Alberta income tax. Required as soon as there is a balance,
             because there is no safe fallback — defaulting to the province of
-            residence is right until it is silently wrong, and no test on a
-            household that never moved would catch it (limitations.md L3).
+            residence is right until it is silently wrong, and no test in
+            which the two are the same would catch it (limitations.md L3).
     """
 
     balance: Money = Field(
@@ -503,9 +510,12 @@ class LiraAccount(_Base):
     )
     jurisdiction: JurisdictionCode | None = Field(
         default=None,
-        description="The pension jurisdiction the LIRA is registered in, which may not be where "
-        "you live. It sets the withdrawal limits once it becomes a LIF. Required as soon as "
-        "there is a balance.",
+        description="Two-letter code of the pension jurisdiction that governs the LIRA: "
+        "generally the province where you last worked while in the plan it came from, or "
+        "federal law for federally regulated work. It may not be where you live or where the "
+        "plan was registered. It sets the withdrawal limits once it becomes a LIF. Required "
+        "as soon as there is a balance. Federal law has no code yet, so an account it governs "
+        "cannot be modelled.",
     )
 
     @model_validator(mode="after")
@@ -519,13 +529,13 @@ class LifAccount(_Base):
 
     Attributes:
         balance: Real dollars on 1 January of the start year.
-        jurisdiction: The pension jurisdiction the account is **registered**
-            in, which is not necessarily where the household lives. An Alberta
-            resident may hold an Ontario-registered LIF: they draw it under
+        jurisdiction: The jurisdiction whose pension law governs the account,
+            which is not necessarily where the household lives. An Alberta
+            resident may hold a LIF governed by Ontario law: they draw it under
             Ontario's maximum table and file Alberta income tax. Required as
             soon as there is a balance, because there is no safe fallback —
             defaulting to the province of residence is right until it is
-            silently wrong, and no test on a household that never moved would
+            silently wrong, and no test in which the two are the same would
             catch it (limitations.md L3).
     """
 
@@ -535,8 +545,11 @@ class LifAccount(_Base):
     )
     jurisdiction: JurisdictionCode | None = Field(
         default=None,
-        description="The pension jurisdiction the LIF is registered in, which may not be where "
-        "you live. It sets the withdrawal limits. Required as soon as there is a balance.",
+        description="Two-letter code of the pension jurisdiction that governs the LIF: "
+        "generally the province where you last worked while in the plan it came from, or "
+        "federal law for federally regulated work. It may not be where you live or where the "
+        "plan was registered. It sets the withdrawal limits. Required as soon as there is a "
+        "balance. Federal law has no code yet, so an account it governs cannot be modelled.",
     )
 
     @model_validator(mode="after")
@@ -924,7 +937,7 @@ class Household(_Base):
 
     province: JurisdictionCode = Field(
         description="Two-letter code of the province you live in, which selects the provincial "
-        "income tax. This is not where a locked-in account is registered; that is set on the "
+        "income tax. A locked-in account's pension jurisdiction may differ; it is set on the "
         "account.",
     )
     persons: tuple[Person, ...] = Field(

@@ -291,7 +291,7 @@ REJECTIONS = [
         sets("household.persons.0.accounts.lif", {"balance": 1000}),
     ),
     rejected(
-        # The example's lira is registered in "ab".
+        # The example's lira is governed by the pension law of "ab" (L3).
         "lira-and-lif-in-different-jurisdictions",
         "jurisdiction",
         sets("household.persons.0.accounts.lif", {"balance": 1000, "jurisdiction": "on"}),

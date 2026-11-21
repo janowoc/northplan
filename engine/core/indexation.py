@@ -709,7 +709,7 @@ class RealParamYear:
         return self[code.lower()]
 
     def jurisdiction(self, code: str) -> RealParamSet:
-        """Pension parameters for the jurisdiction a locked-in account is registered in.
+        """Pension parameters for the jurisdiction whose pension law governs a LIRA or LIF (L3).
 
         Not interchangeable with :meth:`province`; see
         :meth:`engine.params.loader.ParamYear.jurisdiction`.
