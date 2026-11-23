@@ -104,7 +104,7 @@ class MarketInputs:
         object.__setattr__(self, "investable_kinds", frozenset(self.investable_kinds))
 
     def weights(self, kind: str) -> NDArray[np.float64]:
-        """The allocation weight vector for ``kind``, ``(n_assets,)``.
+        """The allocation weight vector for ``kind``, ``(n_assets,)``, fixed for the run (L37).
 
         Returns ``kind``'s own entry if present; otherwise the
         :data:`DEFAULT_KIND` entry, if ``kind`` is an investable account.

@@ -239,6 +239,8 @@ def non_refundable_credits(
     amount (``investment_income.eligible_dividend_gross_up_rate`` times the
     dividend), not the dividend or the grossed-up dividend.
 
+    The basic personal amount is allowed in full at every income, with no clawback (L12).
+
     Args:
         income: The income the credits are tested against — line 23600 in the
             annual assessment, or the annualised single-source approximation

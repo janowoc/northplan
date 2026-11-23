@@ -7,7 +7,8 @@ This module owns three things, and the algebra for them exists nowhere
 else: building the covariance of annual simple returns from per-class
 volatilities and a correlation matrix; matching annual arithmetic moments
 to the mean and covariance of the *monthly log-returns* a draw is actually
-taken from; and the attainability checks on that matching.
+taken from (``docs/limitations.md`` L35); and the attainability checks on
+that matching.
 
 **Invariant: this module imports nothing from ``engine.scenario``.**
 ``engine.scenario.schema`` imports this module, so the dependency between

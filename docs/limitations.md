@@ -4,13 +4,15 @@
 # Known limitations
 
 The canonical list of every place the model knowingly departs from the rules.
-Each entry says what the rule is, what the model does instead, which way the
-error runs, and where in the code the simplification lives. A change that cuts
-a corner adds its entry here in the same commit. A change that removes a
-simplification deletes the entry.
+Each entry says what the model does. Most also say what the rule is, which way
+the error runs, and where in the code or the parameter files the simplification
+lives. A change that cuts a corner adds its entry here in the same commit. A
+change that removes a simplification deletes the entry.
 
 Entries are grouped by topic and numbered so that a comment in code or a test
-can cite one (`# limitations.md L12`). Numbers are never reused.
+can cite one (`# limitations.md L12`). Numbers are never reused. L46 and L49 are
+retired: the simplification each recorded was removed. L53 is retired: L54
+replaced it.
 
 The direction of error is given from the household's point of view:
 *optimistic* means the model makes the plan look better than it is,
@@ -32,38 +34,42 @@ code as well.
 
 **L2. GIS and the Allowances.** In reality low-income OAS pensioners receive a
 non-taxable supplement reduced at fifty cents per dollar of testable income,
-tested on the prior year's income over a July-to-June benefit year and on a
-base that matches no line of the return; a spouse aged 60 to 64 may receive an
-Allowance. We do not model either. Instead the engine reports the fraction of
-path-years in which a living pensioner's testable income sits inside the band
-where GIS would apply, so a plan that leans on unmodelled income is visible
-rather than silent. The testable income is approximated as line 23600 less the
-OAS received, in the current calendar year. Of the five keys
-`params/gis_not_implemented.yaml` lists under `gis.income_base`, that meets
-three — the OAS pension is excluded by the subtraction, GIS itself vacuously
-since none is modelled, and couples are tested on combined income when the
-caller sums the household — and misses two, the employment-income exemption
-and the prior-year timing. The GIS exclusion is vacuous rather than
-structural: a modelled GIS would arrive at line 14600 and sit inside line
-23600, so it would have to be removed to satisfy that key — and that is where
-L14 stops being able to equate line 26000 with line 23600. Direction:
-conservative on income for low-income households, and optimistic on the cost
-of registered drawdown, since it hides the effective marginal rate that makes
-early drawdown attractive to them. The exposure indicator carries its own
-error, in path-years reported rather than in dollars. The missed
-employment-income exemption under-reports: a household with employment income
-is tested on more than GIS would test it on, so it falls in the band less
-often. The missed timing over-reports for the common shape, a household whose
-income falls after retirement: the current year is lower than the prior year
-GIS would test, so it falls in the band more often. For a household whose
-income is rising, the timing under-reports too. The band thresholds are the
-published cut-offs for a single pensioner and for a couple who both receive
-OAS; there they carry only L5's error, which sets them a little high, so the
-indicator over-reports slightly. A couple in which only one person receives
-OAS has a higher published cut-off, whether or not the spouse receives the
-Allowance, but is tested against the both-OAS figure, so the indicator
-under-reports for it.
-Lives in `engine/benefits/gis.py`, `params/2026/oas.yaml` under `gis`.
+tested on the prior year's income over a July-to-June benefit year and on a base
+that matches no line of the return; a spouse aged 60 to 64 may receive an
+Allowance. We do not model either.
+
+Instead the engine reports the fraction of path-years in which a living
+pensioner's testable income sits inside the band where GIS would apply, so a
+plan that leans on unmodelled income is visible rather than silent. The testable
+income is approximated as line 23600 less the OAS received, in the current
+calendar year. Of the five keys `params/gis_not_implemented.yaml` lists under
+`gis.income_base`, that meets three — the OAS pension is excluded by the
+subtraction, GIS itself vacuously since none is modelled, and couples are tested
+on combined income when the caller sums the household — and misses two, the
+employment-income exemption and the prior-year timing. The GIS exclusion is
+vacuous rather than structural: a modelled GIS would arrive at line 14600 and
+sit inside line 23600, so it would have to be removed to satisfy that key — and
+that is where L14 stops being able to equate line 26000 with line 23600.
+
+Direction: conservative on income for low-income households, and optimistic on
+the cost of registered drawdown, since the omission hides the effective marginal
+rate that makes early drawdown attractive to them.
+
+The exposure indicator carries its own error, in path-years reported rather than
+in dollars. The missed employment-income exemption under-reports: a household
+with employment income is tested on more than GIS would test it on, so it falls
+in the band less often. The missed timing over-reports for the common shape, a
+household whose income falls after retirement: the current year is lower than
+the prior year GIS would test, so it falls in the band more often. For a
+household whose income is rising, the timing under-reports too.
+
+The band thresholds are the published cut-offs for a single pensioner and for a
+couple who both receive OAS; there they carry only L5's error, which sets them a
+little high, so the indicator over-reports slightly. A couple in which only one
+person receives OAS has a higher published cut-off, whether or not the spouse
+receives the Allowance, but is tested against the both-OAS figure, so the
+indicator under-reports for it. Lives in `engine/benefits/gis.py`,
+`params/2026/oas.yaml` under `gis`.
 
 **L3. Quebec, other provinces' locked-in rules, and federally regulated
 pensions.** A LIF is governed by the pension law that applied to the member's
@@ -93,20 +99,20 @@ settles nothing. Direction: optimistic where a balance was owing,
 conservative where a refund was due.
 
 **L5. Real dollars are January dollars of the start year.** All amounts in a
-scenario are stated in the purchasing power of January of the start year. A
-person's two years of prior net income are the one exception to that statement,
-not to the rule: a scenario states them as filed, and the builder restates each
-to January dollars of the start year, valuing the figure at the middle of the
-calendar year it was earned in, at the scenario's inflation rate
+scenario are stated in the purchasing power of January of the start year. One
+input is not stated that way: a scenario gives a person's two years of prior net
+income as filed, and the builder restates each to January dollars of the start
+year, valuing the figure at the middle of the calendar year it was earned in, at
+the scenario's inflation rate
 (`engine.core.indexation.as_filed_to_real_factor`). One parameter year serves
 the whole run. Indexed amounts are constant in real terms except for the
 within-cycle erosion an amount suffers between its adjustment dates, applied as
 a constant factor per indexation schedule. Amounts fixed in nominal terms by
 statute decay without limit. The routing is declared in each parameter file's
 `indexation` block. Lives in `engine/core/indexation.py`. Not modelled: the
-quarter-to-quarter oscillation around the erosion mean (bounded, mean zero),
-and the rounding of the TFSA limit to five-hundred-dollar steps (treated as
-annually indexed).
+quarter-to-quarter oscillation around the erosion mean (bounded, mean zero), and
+the rounding of the TFSA limit to five-hundred-dollar steps (treated as annually
+indexed).
 
 Nor is the CPI lag. In reality an adjustment is computed from a price window
 that closed some months before it takes effect, so the step back up restores an
@@ -130,10 +136,12 @@ the plan: it understates tax against a bracket edge or a credit, and lets more
 through a cap than the law would. For a household drawing monthly the error is
 close to zero.
 
-**L6. Inflation is a constant scenario assumption.** It is used for the
-erosion factor, for the decay of unindexed amounts, and for restating a
-person's two years of prior net income from as filed to real dollars at
-build (L5). Returns are real. There is no stochastic inflation.
+**L6. Inflation is a constant scenario assumption.** It is used for the erosion
+factor, for the decay of unindexed amounts, and for restating a person's two
+years of prior net income from as filed to real dollars at build (L5). Returns
+are real. There is no stochastic inflation. Lives in
+`engine/scenario/schema.py::Assumptions.inflation` and
+`engine/core/indexation.py`.
 
 **L57. Erosion of nominal state balances.** In reality a contribution room, a
 lifetime total, or an adjusted cost base fixed in nominal terms loses real
@@ -161,14 +169,15 @@ balances are exact, and no simulated number changes. Lives in
 **L7. Future legislated changes.** In reality the CPP enhancement phases in to
 2065 and the TFSA limit steps. We use the start year's parameters for every
 year. Direction: conservative on CPP for cohorts retiring after roughly 2040.
+Lives in `engine/mc/prepare.py::check_scenario`, which loads one parameter year.
 
 ## Mortality
 
 **L8. Life table.** In reality mortality improves over time and people with
-retirement savings live longer than the population average. We use a
-Statistics Canada period life table for the general population, per sex, with
-no improvement scale. Direction: conservative on longevity, therefore
-optimistic on estate and on the sufficiency of savings. Lives in
+retirement savings live longer than the population average. We use a Statistics
+Canada period life table for the general population, per sex, with no
+improvement scale. Direction: understates longevity, and is therefore optimistic
+on estate and on the sufficiency of savings. Lives in
 `params/2026/mortality.yaml`, `engine/core/mortality.py`.
 
 **L45. One national life table for every province.** In reality mortality
@@ -190,19 +199,21 @@ in the family and smoking status would each move it further than geography
 does, and the model takes neither as an input. Lives in
 `params/2026/mortality.yaml`, whose `GEOGRAPHY` comment records the choice.
 
-**L9. Monthly hazard.** The table gives annual death probabilities. We assume
-a constant force of mortality within each year of age to derive a monthly
-hazard, and draw one uniform per person per path mapped through the survival
-curve to a death month. Deaths of spouses are independent.
+**L9. Monthly hazard.** The table gives annual death probabilities. We assume a
+constant force of mortality within each year of age to derive a monthly hazard,
+and draw one uniform per person per path mapped through the survival curve to a
+death month. Deaths of spouses are independent. Lives in
+`engine/core/mortality.py::monthly_hazard` and `death_month_index`.
 
 **L10. Terminal age.** Every path dies by the table's terminal age, where the
-probability is one. The simulation runs each path to the second death; there
-is no separate horizon. The draws are sized to whole years, so the run always
-reaches the December close of the year of the last second death, and that
-year has a row. `engine/scenario/lifespan.py::check_lifespan` refuses rather
-than simulates a scenario the table cannot represent: a person already past
-the terminal age at the opening, or a household no one in which can be alive
-at the run's first December close.
+probability is one. The simulation runs each path to the second death; there is
+no separate horizon. The draws are sized to whole years, so the run always
+reaches the December close of the year of the last second death, and that year
+has a row. `engine/scenario/lifespan.py::check_lifespan` refuses rather than
+simulates a scenario the table cannot represent: a person already past the
+terminal age at the opening, or a household in which no one can be alive at the
+run's first December close. Lives in `engine/core/mortality.py::survival_curve`
+and `engine/scenario/lifespan.py::check_lifespan`.
 
 ## Income tax
 
@@ -215,8 +226,9 @@ Lives in `engine/tax/federal.py`, `engine/tax/provincial.py`.
 
 **L12. Basic personal amount clawback.** In reality the federal amount is
 reduced for net income across the fourth bracket. We use the full amount at
-every income. Direction: optimistic on tax above that bracket, by at most a
-few hundred dollars a year.
+every income. Direction: optimistic on tax above that bracket, by at most a few
+hundred dollars a year. Lives in
+`engine/tax/federal.py::non_refundable_credits`.
 
 **L13. Alternative minimum tax.** Not modelled. Bites only on very large
 capital gains or donations in one year.
@@ -254,20 +266,21 @@ income at any age, RRIF and LIF income from the year the transferor is 65 at
 year end, up to the statutory share, elected once at the December close to
 minimise combined household tax including OAS repayments. Not modelled: CPP
 pension sharing, spousal RRSPs. A payment out of a RRIF (a LIF included)
-received as a consequence of a spouse's death is qualified pension income
-(ITA 118(7)), eligible below 65 for both the credit and the split. We count
-as qualified the share of each RRIF/LIF withdrawal that the account's
-inherited fraction gives (L41), at any age. In reality a successor annuitant
-holds the inherited plan apart and may draw on it first; we attribute every
-withdrawal pro rata. Direction: conservative. An RRSP or LIRA rolled over at
-a death and converted later counts as the survivor's own, and so does a LIF
-paid into the survivor's RRIF at a death (L41). In reality their later
-payments come out of the survivor's own plan after an ITA 60(l) transfer,
-which as we read 118(7) are not received as a consequence of the death, so
-this matches the law; were they to qualify, the direction would be
-conservative. In reality a plan a successor annuitant already held at the
-scenario's start is still inherited; we count it as the survivor's own, since
-a scenario cannot state it. Direction: conservative.
+received as a consequence of a spouse's death is qualified pension income (ITA
+118(7)), eligible below 65 for both the credit and the split. We count as
+qualified the share of each RRIF/LIF withdrawal that the account's inherited
+fraction gives (L41), at any age. In reality a successor annuitant holds the
+inherited plan apart and may draw on it first; we attribute every withdrawal pro
+rata. Direction: conservative. An RRSP or LIRA rolled over at a death and
+converted later counts as the survivor's own, and so does a LIF paid into the
+survivor's RRIF at a death (L41). In reality their later payments come out of
+the survivor's own plan after an ITA 60(l) transfer, which as we read 118(7) are
+not received as a consequence of the death, so this matches the law; were they
+to qualify, the direction would be conservative. In reality a plan a successor
+annuitant already held at the scenario's start is still inherited; we count it
+as the survivor's own, since a scenario cannot state it. Direction:
+conservative. Lives in `engine/tax/federal.py::qualified_pension_income` and
+`eligible_pension_income`, `engine/tax/combined.py::household_assessment`.
 
 **L51. Pension split search resolution.** In reality the transferred amount is
 any amount up to the statutory share, and the tax-minimising choice is a point
@@ -352,12 +365,14 @@ already in pay. Direction: on the CPP pension, depends on the fraction
 supplied; conservative for younger cohorts (L7). Lives in
 `engine/benefits/cpp.py`.
 
-**L19. CPP survivor pension.** In reality the survivor formula differs above
-and below age 65 and is capped when combined with the survivor's own pension.
-We apply the 65-and-over formula at every age: a fixed share of the deceased's
-age-65 base pension, with the combined total capped. For a person already in
-pay the base pension is taken as the amount in pay. Direction: either way on
-the survivor pension for survivors under 65, small.
+**L19. CPP survivor pension.** In reality the survivor formula differs above and
+below age 65 and is capped when combined with the survivor's own pension. We
+apply the 65-and-over formula at every age: a fixed share of the deceased's
+age-65 base pension, with the combined total capped. For a person already in pay
+the base pension is taken as the amount in pay. Direction: either way on the
+survivor pension for survivors under 65, small. Lives in
+`engine/benefits/cpp.py::survivor_pension_monthly`, called from
+`engine/core/step.py::_phase3_inflows`.
 
 **L20. Other CPP benefits.** Not modelled: the post-retirement benefit for
 contributions made while receiving CPP, the disability pension, the death
@@ -375,10 +390,10 @@ earn is not modelled (L20), which is conservative on pension. Lives in
 after 18. We assume every person qualifies in full. Direction: optimistic on
 OAS for anyone who does not. Lives in `params/2026/oas.yaml`.
 
-**L23. OAS repayment.** Assessed at the December close on the current year's
-net income before the repayment (line 23400), capped at the OAS received that
-year, and settled with the balance owing. See L16 for the withholding that is
-not modelled.
+**L23. OAS repayment.** Assessed at the December close on the current year's net
+income before the repayment (line 23400), capped at the OAS received that year,
+and settled with the balance owing. See L16 for the withholding that is not
+modelled. Lives in `engine/tax/combined.py::oas_repayment`.
 
 **L24. OAS never decreases.** In reality a quarterly adjustment is floored at
 zero. Under constant real modelling the rule has no effect and is not coded.
@@ -395,29 +410,30 @@ CPP (adjusted annually) than for OAS (quarterly). Lives in
 `pension.py::db_pension_monthly`.
 
 **L54. A benefit start already past when the run opens.** In reality an
-unstarted CPP or OAS pension can be backdated a limited time, with a back
-payment. We refuse an elected start age below the person's age in whole
-years at the run's opening (1 January of `start_year`), along with any start
-age outside the window in `params/`, any CPP in pay for someone younger than
-its earliest start age, and any OAS in pay for someone not older than its
-earliest start age, since OAS is first paid the month after it. An election
-equal to the person's age in whole years at the opening is first paid at the
-opening, with no back payment; an OAS election reached in the opening month
-is the exception (below). CPP starts at the person's age in months at the
-opening. OAS, which is first paid in the month after its start (OAS Act
-s.8(1)), starts at their age in months in the month before the opening, so
-that it too is first paid at the opening; an OAS election whose age in
-months is reached in the opening month itself has not passed: it is first
-paid the month after the opening, like any other OAS election. Either start
-is capped at the latest start age. A person whose age in whole years at the
-opening is above the latest start age, and whose benefit is not yet in pay,
-has no valid election; the scenario must state that benefit as in pay.
-Direction: neither optimistic nor conservative for a refused scenario, which
-produces no wrong number — the cost is expressiveness. Either way for an
-election first paid at the opening: it forgoes any back payment but pays the
-adjustment for the later start for life, and which is worth more depends on
-survival. Lives in `engine/scenario/start_ages.py::check_start_ages`, and in
-`engine/benefits/cpp.py::pension_monthly` and
+unstarted OAS pension, or a CPP pension applied for at 65 or later, can be
+backdated a limited time, with a back payment (OAS Act s.8(2); CPP s.67(3.1)); a
+CPP pension applied for before 65 starts no earlier than the month after the
+application. We refuse an elected start age below the person's age in whole
+years at the run's opening (1 January of `start_year`), along with any start age
+outside the window in `params/`, any CPP in pay for someone younger than its
+earliest start age, and any OAS in pay for someone not older than its earliest
+start age, since OAS is first paid the month after it. An election equal to the
+person's age in whole years at the opening is first paid at the opening, with no
+back payment; an OAS election reached in the opening month is the exception
+(below). CPP starts at the person's age in months at the opening. OAS, which is
+first paid in the month after its start (OAS Act s.8(1)), starts at their age in
+months in the month before the opening, so that it too is first paid at the
+opening; an OAS election whose age in months is reached in the opening month
+itself has not passed: it is first paid the month after the opening, like any
+other OAS election. Either start is capped at the latest start age. A person
+whose age in whole years at the opening is above the latest start age, and whose
+benefit is not yet in pay, has no valid election; the scenario must state that
+benefit as in pay. Direction: neither optimistic nor conservative for a refused
+scenario, which produces no wrong number — the cost is expressiveness. Either
+way for an election first paid at the opening: it forgoes any back payment but
+pays the adjustment for the later start for life, and which is worth more
+depends on survival. Lives in `engine/scenario/start_ages.py::check_start_ages`,
+and in `engine/benefits/cpp.py::pension_monthly` and
 `oas.py::gross_pension_monthly` for the start at the opening.
 
 ## Registered accounts
@@ -442,11 +458,14 @@ federal rules (s.123(b)). Its first minimum is fixed the following January. Not
 modelled: the younger-spouse election for the minimum, and any one-year
 reduction of the minimum. Lives in `engine/accounts/rrif.py`.
 
-**L27. LIF maximum.** In reality Alberta's maximum is the greater of the
-factor result and the prior year's investment return. We apply the factor
-result only. Direction: conservative on the LIF maximum: the modelled
-ceiling is never higher than the rule allows. Not modelled: the one-time
-unlocking transfer, small-balance and hardship unlocking. Lives in
+**L27. LIF maximum.** In reality Alberta's maximum is the greatest of the factor
+result, the prior year's investment return and the year's minimum (Employment
+Pension Plans Regulation s.123(a)). Leaving the minimum out changes nothing
+while the minimum factor is at or below the maximum factor at every age, which
+`tests/params/test_lif_minimum_below_maximum.py` holds for the parameter files.
+We apply the factor result only. Direction: conservative on the LIF maximum: the
+modelled ceiling is never higher than the rule allows. Not modelled: the
+one-time unlocking transfer, small-balance and hardship unlocking. Lives in
 `engine/accounts/lif.py`.
 
 **L55. LIRA conversion timing.** In reality a LIRA may be converted to a LIF
@@ -491,34 +510,38 @@ scenario produces no number. Lives in
 `engine/scenario/locked_in.py::check_locked_in`.
 
 **L28. TFSA.** Over-contribution is impossible by construction, so the penalty
-is not modelled. Not modelled: room accrued before the start year is a scenario
-input rather than computed from history.
+is not modelled. Room accrued before the start year is a scenario input rather
+than computed from history. Lives in `engine/accounts/tfsa.py::contribute`.
 
 **L29. FHSA.** Not modelled.
 
 ## RESP
 
-**L30. Student's tax.** In reality grants and growth are taxable to the
-student when paid out. We pay them tax-free, on the grounds that a student
-drawing a typical plan over four years stays below the basic personal amounts.
-Direction: optimistic on the student's tax when the student has other income.
+**L30. Student's tax.** In reality grants and growth are taxable to the student
+when paid out. We pay them tax-free, on the grounds that a student drawing a
+typical plan over four years stays below the basic personal amounts. Direction:
+optimistic on the student's tax when the student has other income. Lives in
+`engine/accounts/resp.py::education_draw` and
+`engine/core/step.py::_phase3_education_draws`.
 
 **L31. Withdrawal shape.** The plan pays the scheduled monthly education cost,
 or the plan's whole value if less; the payment draws grant and income in
 proportion to their shares while income is positive, and from grant alone when
 income is zero or negative; contributions are drawn only once grant and income
 are exhausted. Not modelled: the cap on assistance payments in the first
-thirteen weeks of study. Nothing checks the education cost against it: where
-the cost over those weeks exceeds the cap, the excess is still drawn from grant
-and income first. Direction: either way.
+thirteen weeks of study. Nothing checks the education cost against it: where the
+cost over those weeks exceeds the cap, the excess is still drawn from grant and
+income first. Direction: either way. Lives in
+`engine/accounts/resp.py::education_draw`.
 
-**L32. Wind-up.** At the end of the education window any unused grant is
-repaid and vanishes; any accumulated income is taxable income of the
-subscriber, or of the living spouse where the subscriber has died (L41),
-assessed with the special tax, and goes to cash net of that tax withheld at
-source (L60); and any contributions go to cash tax-free. Not modelled: rolling
-accumulated income into an RRSP with room, the ten-year and age-21 conditions
-on the wind-up, plan lifetime limits.
+**L32. Wind-up.** At the end of the education window any unused grant is repaid
+and vanishes; any accumulated income is taxable income of the subscriber, or of
+the living spouse where the subscriber has died (L41), assessed with the special
+tax, and goes to cash net of that tax withheld at source (L60); and any
+contributions go to cash tax-free. Not modelled: rolling accumulated income into
+an RRSP with room, the ten-year and age-21 conditions on the wind-up, plan
+lifetime limits. Lives in `engine/accounts/resp.py::wind_up`, called from
+`engine/core/step.py::_phase8_transfers`.
 
 **L60. Withholding on an accumulated income payment.** In reality the RESP
 provider withholds tax when it pays an accumulated income payment (Form T1171,
@@ -547,12 +570,14 @@ income, not the one on their terminal return — keeps counting. Direction:
 counting a deceased spouse's income overstates family income and so lowers the
 rate; conservative.
 
-*Stale income against this year's edges.* In reality the comparison is between
-a past year's nominal income and this year's published, nominal cut-offs. We
+*Stale income against this year's edges.* In reality the comparison is between a
+past year's nominal income and this year's published, nominal cut-offs. We
 compare a real-dollar income with a cut-off the engine has deflated, so the
 income runs high by roughly two years of inflation. Direction: conservative — a
-household crosses a cut-off slightly early — and small: at most one rate step
-on the eligible window per beneficiary per year.
+household crosses a cut-off slightly early — and small: at most one rate step on
+the eligible window per beneficiary per year. Lives in
+`engine/accounts/resp.py::basic_grant`, `enhanced_grant` and `contribute`; the
+family income in `engine/core/step.py::_phase8_transfers`.
 
 **L34. RESP at death.** The plan is excluded from the estate calculation and is
 assumed to pass to the beneficiary intact. At the second death of the
@@ -565,7 +590,8 @@ is no longer paid. Lives in `engine/core/step.py::resolve_deaths`.
 **L35. Return model.** Monthly returns are independent lognormal draws
 calibrated so that twelve compounded reproduce the annual real mean and
 covariance given in the scenario. Not modelled: fat tails, mean reversion,
-regime dependence, sequence effects beyond what the draws produce.
+regime dependence, sequence effects beyond what the draws produce. Lives in
+`engine/mc/moments.py::monthly_log_moments`, `engine/mc/returns.py::generate`.
 
 **L36. Tax character of returns.** Each asset class carries fixed yields for
 interest, eligible dividends, and distributed capital gains as fractions of
@@ -574,8 +600,10 @@ reinvested and raise the adjusted cost base. Withdrawals realise a
 proportional share of the embedded gain. Direction: neutral on tax in
 expectation. Lives in `engine/accounts/taxable.py`.
 
-**L37. Allocation.** Each account holds fixed weights over asset classes and
-is rebalanced monthly at no cost. No glide path.
+**L37. Allocation.** Each account holds fixed weights over asset classes and is
+rebalanced monthly at no cost. No glide path. Lives in
+`engine/mc/market.py::MarketInputs.weights`, applied in
+`engine/core/step.py::_phase10_growth`.
 
 **L38. Cash.** Cash pays zero real return. Negative cash at a month end is not
 allowed: the step force-withdraws in the policy's order, and if nothing
@@ -598,78 +626,90 @@ couples with unequal incomes. Lives in
 
 **L39. Employment income.** A real step schedule per person. CPP and EI
 contributions are taken on it. Not modelled: self-employment and the employer
-share, bonuses, leave, unemployment.
+share, bonuses, leave, unemployment. Lives in `engine/benefits/employment.py`.
 
 **L40. Spending.** A real step schedule for the household, reduced by a
 survivor share from the month the first death takes effect (the first month
 the deceased is not alive), plus education cost per beneficiary. No other
 age-related change. Lives in `engine/core/step.py`.
 
-**L41. First death.** Every RRSP, RRIF and LIRA rolls to the survivor's
-account of the same kind, tax-deferred; a LIRA stays locked in. A LIF does
-not: Alberta's Employment Pension Plans Regulation, s.136(1), has the issuer
-pay a member owner's LIF to the surviving pension partner as a lump sum. We
-move it, tax-deferred, into the survivor's RRIF as the survivor's own money
-(L15), where it counts toward the RRIF minimum from the next January. In
-reality a survivor still young enough to hold an RRSP may transfer it there
-instead and need draw nothing until converting. Direction: conservative — a
-minimum the RRSP route would not impose. A RRIF rolls as if the survivor were
-named successor annuitant, so the inherited share of its payments is
-qualified pension income (L15). In reality the plan may instead be
-transferred to the survivor's own, whose later payments may not qualify.
-Direction: optimistic for such a household. A successor annuitant's plan also
-stays apart from the survivor's own; we merge the two and carry the inherited
-share of the balance (L15 gives the direction of that). The survivor's own
-RRIF/LIF **minimum** for the year of death is unchanged, already fixed in
-January from their own opening balance. The
-deceased's unmet RRIF/LIF minimum for the year of death is not forced out —
-in reality it is paid, or continues to a successor annuitant, direction
-optimistic and small. The TFSA passes to the survivor as successor holder;
-taxable holdings pass at cost (no deemed disposition on the rollover
-itself). DB pensions pay the survivor share excluding any bridge — L59
-covers a pension not yet in pay at the member's death. CPP pays the
-survivor pension per L19, recomputed each month against the survivor's own
-CPP. OAS stops. Pension splitting stops after the year of the first death; in
-that year the maximum split is pro-rated by the months married (ITA 60.03(1);
-T1032 line 18), unless the second death falls in the same year, when every
-person is assessed alone (L42). In reality the age-65 tests on a person who
-died in the year use their age at death (T1032); we use their age on 31
-December. The two differ only for a death in the year of the 65th birthday,
-before the birthday, where RRIF/LIF income then counts as eligible pension
-income one year early and a receiving spouse's pension credit escapes the
-under-65 cap (L15). Direction: optimistic, small. A contribution intended
-for a dead person is capped at zero rather than reaching their account. An
-RESP wind-up's accumulated income is credited to the living spouse when the
-subscriber has died, rather than to the subscriber. Lives in
+**L41. First death.** Every RRSP, RRIF and LIRA rolls to the survivor's account
+of the same kind, tax-deferred; a LIRA stays locked in. A LIF does not:
+Alberta's Employment Pension Plans Regulation, s.136(1), has the issuer pay a
+member owner's LIF to the surviving pension partner as a lump sum. We move it,
+tax-deferred, into the survivor's RRIF as the survivor's own money (L15), where
+it counts toward the RRIF minimum from the next January. In reality a survivor
+still young enough to hold an RRSP may transfer it there instead and need draw
+nothing until converting. Direction: conservative — a minimum the RRSP route
+would not impose.
+
+A RRIF rolls as if the survivor were named successor annuitant, so the inherited
+share of its payments is qualified pension income (L15). In reality the plan may
+instead be transferred to the survivor's own, whose later payments may not
+qualify. Direction: optimistic for such a household. A successor annuitant's
+plan also stays apart from the survivor's own; we merge the two and carry the
+inherited share of the balance (L15 gives the direction of that).
+
+The survivor's own RRIF/LIF **minimum** for the year of death is unchanged,
+already fixed in January from their own opening balance. The deceased's unmet
+RRIF/LIF minimum for the year of death is not forced out — in reality it is
+paid, or continues to a successor annuitant, direction optimistic and small.
+
+The TFSA passes to the survivor as successor holder; taxable holdings pass at
+cost (no deemed disposition on the rollover itself). DB pensions pay the
+survivor share excluding any bridge — L59 covers a pension not yet in pay at the
+member's death. CPP pays the survivor pension per L19, recomputed each month
+against the survivor's own CPP. OAS stops.
+
+Pension splitting stops after the year of the first death; in that year the
+maximum split is pro-rated by the months married (ITA 60.03(1); T1032 line 18),
+unless the second death falls in the same year, when every person is assessed
+alone (L42). In reality the age-65 tests on a person who died in the year use
+their age at death (T1032); we use their age on 31 December. The two differ only
+for a death in the year of the 65th birthday, before the birthday, where
+RRIF/LIF income then counts as eligible pension income one year early and a
+receiving spouse's pension credit escapes the under-65 cap (L15). Direction:
+optimistic, small.
+
+A contribution intended for a dead person is capped at zero rather than reaching
+their account. An RESP wind-up's accumulated income is credited to the living
+spouse when the subscriber has died, rather than to the subscriber. Lives in
 `engine/core/step.py::resolve_deaths`, `_phase8_transfers`,
-`engine/tax/combined.py::household_assessment`, the five rollover functions
-in `engine/accounts/{rrsp,rrif,lira,tfsa,taxable}.py`, and
+`engine/tax/combined.py::household_assessment`, the five rollover functions in
+`engine/accounts/{rrsp,rrif,lira,tfsa,taxable}.py`, and
 `engine/accounts/lif.py::pay_to_survivor`.
 
 **L42. Second death.** The terminal return brings the full registered balance
 (RRSP, RRIF, LIRA, LIF) and the deemed capital gain on taxable holdings into
 income with that year's income, taxed as a single person — every person is
-assessed alone on the terminal return, never split, even in a household of
-two. In reality, where both die in the same year, the two final returns may
-still split; we split nothing that year. Direction: conservative. The whole
-registered balance enters net income as an amount deemed received at death,
-never as pension income, so no part of it earns the pension income amount at
-any age. This matches the law: CRA reports the deemed RRIF amount (T4RIF box
+assessed alone on the terminal return, never split, even in a household of two.
+In reality, where both die in the same year, the two final returns may still
+split; we split nothing that year. Direction: conservative.
+
+The whole registered balance enters net income as an amount deemed received at
+death, never as pension income, so no part of it earns the pension income amount
+at any age. This matches the law: CRA reports the deemed RRIF amount (T4RIF box
 18) on line 13000 and excludes the deemed RRSP amount (T4RSP box 34) from the
-pension income amount; a LIF is a RRIF and a LIRA an RRSP for this purpose. A
-death taking effect in January is taxed that year on an empty ledger, as if it
-had happened on 1 January. The estate is what remains after that tax and any
-balance owing, floored at zero: in reality the heirs owe nothing beyond the
-estate's assets; the shortfall is recorded nowhere. The estate then leaves the
-household entirely — every balance is zeroed, and every later row reads zero.
+pension income amount; a LIF is a RRIF and a LIRA an RRSP for this purpose.
+
+A death taking effect in January is taxed that year on an empty ledger, as if it
+had happened on 1 January.
+
+The estate is what remains after the terminal tax and any balance owing, floored
+at zero: in reality the heirs owe nothing beyond the estate's assets; the
+shortfall is recorded nowhere. The estate then leaves the household entirely —
+every balance is zeroed, and every later row reads zero.
+
 The terminal tax is not part of
 `engine.mc.simulate.SimulationResult.tax_assessed`, which holds December
 assessments only. The after-tax net worth reported for a living household
-(`YearRecord.after_tax_net_worth`) uses the same arithmetic, hypothetically,
-as if every person died on 31 December with no rollover, and is floored at
-zero the same way; `YearRecord.net_worth` is not floored. Not modelled: probate
-(a flat fee in Alberta), charitable bequests, graduated-rate estates. Lives in
-`engine/core/step.py::resolve_deaths` and `close_year`.
+(`YearRecord.after_tax_net_worth`) uses the same arithmetic, hypothetically, as
+if every person died on 31 December with no rollover, and is floored at zero the
+same way; `YearRecord.net_worth` is not floored.
+
+Not modelled: probate (in Alberta a court fee stepped by the net value of the
+deceased's property in Alberta), charitable bequests, graduated-rate estates.
+Lives in `engine/core/step.py::resolve_deaths` and `close_year`.
 
 **L59. DB pension, death before it starts.** In reality the pension law that
 governs the member's benefit sets what a death before the pension starts pays.
@@ -694,12 +734,13 @@ paths only. Lives in `engine/core/step.py`.
 
 **L48. No birth after the run opens.** In reality a household can plan for a
 child not yet born — an RESP beneficiary a scenario states as "assume a child
-born in 2030" is the case we would plausibly want. We refuse any person or
-beneficiary whose birth date falls after 1 January of `start_year`: every age
-the engine derives assumes the birth already happened by the run's opening,
+born in 2030" is the case we would plausibly want. A scenario gives a birth year
+and month. We refuse any person or beneficiary born after January of
+`start_year`, and take a birth in that January as age zero at the opening: every
+age the engine derives assumes the birth already happened by the run's opening,
 and a birth after it would be a negative age with no meaning to give it.
-Direction: neither optimistic nor conservative — a refused scenario produces
-no wrong number at all, so the cost is expressiveness, not accuracy. Lives in
+Direction: neither optimistic nor conservative — a refused scenario produces no
+wrong number at all, so the cost is expressiveness, not accuracy. Lives in
 `engine/scenario/schema.py::Scenario._check_no_one_is_born_after_the_run_opens`.
 
 ## Policies and search
@@ -707,37 +748,47 @@ no wrong number at all, so the cost is expressiveness, not accuracy. Lives in
 **L44. Policies.** The first version offers one contribution rule (fixed split
 with spill) and one withdrawal rule (fixed order, fill to a bracket edge,
 optional pension-credit fill). The bracket fill draws RRIF then RRSP every
-month, whether or not cash is short, toward a federal bracket edge. It
-measures the edge against year-to-date net income (no pension split, no OAS
-repayment, since neither is known before December) plus a projection of the
-rest of the year: the year to date's run rate, registered withdrawals
-excluded, carried over the months still to come, and the LIF minimum not yet
-drawn. What remains under the edge is spread evenly over the months left in
-the year; a policy may turn the fill off entirely. In reality the bracket
-fill's own brackets apply to taxable income after the pension-splitting
-election and the OAS repayment deduction; we measure it against net income,
-year to date plus the projection, with neither applied, since neither is known
-before December.
-Direction: the bracket fill under-fills for a person who transfers pension
-income away and for one who repays OAS -- both lower taxable income below the
-projected net income the fill measures -- and it can over-fill for the person
-receiving a pension-split transfer, whose taxable income ends up above it. In
-reality the year's income is whatever the rest of the year brings; we project it
-from the run rate so far. Direction: income that arrives later than its run rate
-implies -- a pension that starts mid-year, investment income, which posts
-after each month's decision, and any gain December's own draws realise after
-its fill -- lands on top of a fill already taken, so the year can end above
-the edge by that much; income that falls off during the year makes the early
-months under-fill, which December's fill, measured with nothing left to
-project, makes up. The pension-credit fill acts only from the year a person
-is `eligible_pension_income.rrif_minimum_age_years` at year end. In reality an
-under-65 survivor's withdrawals from a plan inherited from the deceased earn
-the credit too (L15); we never fill toward it below that age. Direction:
-conservative. The contribution spill pours through `spill_order` person 0
-before person 1, so an unlimited taxable spill concentrates investment income
-on person 0 rather than sharing it the way a real couple would; this is
-pessimistic on tax exactly where person 0 carries the higher marginal rate.
+month, whether or not cash is short, toward a federal bracket edge. It measures
+the edge against year-to-date net income (no pension split, no OAS repayment,
+since neither is known before December) plus a projection of the rest of the
+year: the year to date's run rate, registered withdrawals excluded, carried over
+the months still to come, and the LIF minimum not yet drawn. What remains under
+the edge is spread evenly over the months left in the year; a policy may turn
+the fill off entirely.
+
+In reality the bracket fill's own brackets apply to taxable income after the
+pension-splitting election and the OAS repayment deduction; we measure it
+against net income, year to date plus the projection, with neither applied,
+since neither is known before December. Direction: the bracket fill under-fills
+for a person who transfers pension income away and for one who repays OAS — both
+lower taxable income below the projected net income the fill measures — and it
+can over-fill for the person receiving a pension-split transfer, whose taxable
+income ends up above it.
+
+In reality the year's income is whatever the rest of the year brings; we project
+it from the run rate so far. Direction: income that arrives later than its run
+rate implies — a pension that starts mid-year, investment income, which posts
+after each month's decision, and any gain December's own draws realise after its
+fill — lands on top of a fill already taken, so the year can end above the edge
+by that much; income that falls off during the year makes the early months
+under-fill, which December's fill, measured with nothing left to project, makes
+up.
+
+The pension-credit fill acts only from the year a person is
+`eligible_pension_income.rrif_minimum_age_years` at year end. In reality an
+under-65 survivor's withdrawals from a plan inherited from the deceased earn the
+credit too (L15); we never fill toward it below that age. Direction:
+conservative.
+
+The contribution spill pours through `spill_order` person 0 before person 1, so
+an unlimited taxable spill concentrates investment income on person 0 rather
+than sharing it the way a real couple would; this is conservative on tax exactly
+where person 0 carries the higher marginal rate.
+
 Benefit start ages and the RRIF conversion election are elections the same
 policy makes. The optimizer evaluates a named list of policies, with optional
-grid expansion, against common random numbers. Not modelled: dynamic rules
-that respond to market state, spending rules that vary with wealth.
+grid expansion, against common random numbers. Not modelled: dynamic rules that
+respond to market state, spending rules that vary with wealth. Lives in
+`engine/policy/withdrawal.py`, `engine/policy/contribution.py`,
+`engine/policy/build.py`; the pension-credit fill in
+`engine/core/step.py::_phase6_forced_withdrawals`.

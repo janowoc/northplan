@@ -910,7 +910,7 @@ def _phase8_transfers(
     list[NDArray[np.float64]],
 ]:
     """Apply every withdrawal, in order, then every contribution, in order; then wind up any
-    RESP whose education window has ended.
+    RESP whose education window has ended (L32).
 
     A contribution to a dead person's own account is capped at zero (L41); so is an RRSP
     contribution once the person's age at the end of ``year`` exceeds
@@ -969,7 +969,7 @@ def _phase8_transfers(
             requested = np.minimum(transfer.amount, available)
             b = transfer.person_index
             beneficiary = beneficiaries[b]
-            family_income = sum(p.net_income_two_years_prior for p in persons)
+            family_income = sum(p.net_income_two_years_prior for p in persons)  # L33
             age_end = timeline.age_at_end_of_year(
                 beneficiary.birth_year, beneficiary.birth_month, year
             )

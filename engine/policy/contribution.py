@@ -8,10 +8,11 @@ no ``elections``, no ``withdrawal_order()``, and no ``free_parameters()``. It is
 contribution half a :class:`~engine.policy.build.CompositePolicy` combines with
 :class:`~engine.policy.withdrawal.OrderedWithdrawal`.
 
-Weights are the optimizer's free variables. Each kind's share of the month's budget is split
-equally across the persons or beneficiaries eligible for it; whatever a kind's share cannot
-place -- no room, no eligible beneficiary, nobody alive -- pours into ``spill_order``, kind by
-kind, from the top. What the pool cannot place there stays in cash.
+Weights are the optimizer's free variables. Each kind's share of the month's budget is split equally
+across the persons or beneficiaries eligible for it; whatever a kind's share cannot place -- no
+room, no eligible beneficiary, nobody alive -- pours into ``spill_order``, kind by kind, from the
+top, and within a kind a person holds, person 0 before person 1 (L44). What the pool cannot place
+there stays in cash.
 """
 
 from __future__ import annotations

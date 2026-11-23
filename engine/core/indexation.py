@@ -25,11 +25,12 @@ therefore the one function here that depends on time.
 The real-terms view
 --------------------
 
-:class:`RealParamSet` wraps a :class:`~engine.params.loader.ParamSet` with the scenario's
-inflation rate and is the **only** supported way for engine code to reach a dollar amount. Its
-guarantee is negative, like the loader's: the raw accessors it inherits the names of refuse a
-routed path, so a dollar cannot be read undeflated by forgetting the right method;
-:meth:`RealParamSet.amount` is the one that cannot return an undeflated figure.
+:class:`RealParamSet` wraps a :class:`~engine.params.loader.ParamSet` with the scenario's inflation
+rate, one constant for the run (``docs/limitations.md`` L6), and is the **only** supported way for
+engine code to reach a dollar amount. Its guarantee is negative, like the loader's: the raw
+accessors it inherits the names of refuse a routed path, so a dollar cannot be read undeflated by
+forgetting the right method; :meth:`RealParamSet.amount` is the one that cannot return an undeflated
+figure.
 
 Which amounts sit on which schedule is declared in each parameter file's ``indexation`` block,
 by hand, with a source. An amount whose rule has not been recorded is not indexed "annually by

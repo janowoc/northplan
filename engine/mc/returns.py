@@ -226,7 +226,7 @@ def generate(
 
     Asset order is positional (``Assumptions.asset_class_names``). Log-returns come from
     :func:`engine.mc.moments.monthly_log_moments`, which moment-matches the monthly
-    lognormal draw to the annual mean and covariance given. The asset axis is moved with
+    lognormal draw to the annual mean and covariance given (L35). The asset axis is moved with
     :func:`numpy.moveaxis` to match :attr:`RandomDraws.real_returns`, and an exact ``0.0``
     mortality uniform becomes the smallest positive double, since
     :func:`engine.core.mortality.death_month_index` refuses either endpoint.
