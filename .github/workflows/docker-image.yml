@@ -6,12 +6,13 @@
 # opened from it, which tests the branch merged with its base and runs nothing
 # while the two conflict. Every run tests and, once the tests pass, builds the
 # image for amd64 and arm64; only main and v* tags publish it to ghcr.io. A push
-# to main or a v* tag also builds the browser page's two halves, the root from
-# the highest annotated vN.N.N tag and main/ from main, and deploys them to
-# GitHub Pages once the tests pass; pull requests deploy nothing. Uses
-# GITHUB_TOKEN and no other secret. Every action is pinned to a commit; the
-# comment names its release. The QEMU image, buildx and BuildKit are pinned too.
-# docs/maintenance.md says how each pin is updated.
+# to main or a v* tag also builds the browser page's two halves once the tests
+# pass, the root from the highest annotated vN.N.N tag and main/ from main, in
+# the pages-build job, and the pages-deploy job then deploys that build to
+# GitHub Pages; pull requests deploy nothing. Uses GITHUB_TOKEN and no other
+# secret. Every action is pinned to a commit; the comment names its release.
+# The QEMU image, buildx and BuildKit are pinned too. docs/maintenance.md says
+# how each pin is updated.
 
 name: docker-image
 
@@ -77,9 +78,30 @@ jobs:
           NORTHPLAN_REQUIRE_NODE: "1"
           NORTHPLAN_REQUIRE_BROWSER: "1"
 
-  pages:
+  pages-build:
     needs: test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 browser/site.py "$RUNNER_TEMP/site" "$MAIN_REF"
+        env:
+          MAIN_REF: ${{ github.ref_type == 'tag' && 'origin/main' || github.sha }}
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+          retention-days: 7
+
+  # Only deploys the artifact that pages-build uploaded to this run, so a
+  # re-run of this job alone uploads nothing and does not rebuild.
+  pages-deploy:
+    needs: pages-build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -93,16 +115,6 @@ jobs:
       group: pages
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - run: python3 browser/site.py "$RUNNER_TEMP/site" "$MAIN_REF"
-        env:
-          MAIN_REF: ${{ github.ref_type == 'tag' && 'origin/main' || github.sha }}
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: ${{ runner.temp }}/site
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 

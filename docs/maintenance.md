@@ -15,7 +15,7 @@ pin and how it moves.
 | Python base image, tag and digest | `Dockerfile`, the `python` `FROM` | Dependabot (`docker`) |
 | Python patch version | `.python-version` | by hand, with the base image |
 | uv | `Dockerfile`, the `uv` stage | Dependabot (`docker`) |
-| uv in CI | `setup-uv` `version` in both jobs of the workflow | by hand, with the `uv` stage |
+| uv in CI | `setup-uv` `version` in the test and image jobs of the workflow | by hand, with the `uv` stage |
 | GitHub Actions | the workflow's `uses:` commits | Dependabot (`github-actions`) |
 | setuptools, the build backend | `[tool.uv] build-constraint-dependencies` in `pyproject.toml` | by hand, with `uv.lock` |
 | ruff | `pyproject.toml` and `uv.lock` | by hand, in a commit of its own that reformats the tree |
@@ -104,7 +104,7 @@ a commit and then a tag:
 3. Then, with no other run of main or of a `v*` tag in progress or queued,
    tag that commit with an annotated tag and push the tag. Until the tag's run
    has finished, push nothing else to main or as a `v*` tag, and re-run no run.
-   A deploy fetches every tag when its pages job checks out, so a tag that
+   A run fetches every tag when its pages-build job checks out, so a tag that
    exists then could be served by the root before its own run had tested it:
 
        git tag -a vX.Y.Z -m "northplan X.Y.Z"
@@ -125,27 +125,68 @@ a commit and then a tag:
 The page's root and the image's `latest` both follow the highest annotated
 `vN.N.N` tag, its three numbers compared as integers, so v0.10.0 is higher
 than v0.9.1. The image's `X.Y` follows the highest annotated tag of the form
-`vX.Y.N`. `browser/site.py` holds the rule: the pages job builds the root from
-that tag, and a tag's image job asks it whether the tag gets `X.Y` and
+`vX.Y.N`. `browser/site.py` holds the rule: the pages-build job builds the root
+from that tag, and a tag's image job asks it whether the tag gets `X.Y` and
 `latest`. `main/` serves the head of main. The rule ignores a lightweight tag
 and every other `v*` name; the image publishes a lightweight `vN.N.N` tag as
-`X.Y.Z` only, so tags must be annotated, as step 3 shows. A deploy fails, and
-does not fall back to another tag, when the highest tag's `pyproject.toml`
-version is not the tag's, or when its tree has no `browser/build.py`.
+`X.Y.Z` only, so tags must be annotated, as step 3 shows. The pages-build job
+fails, and does not fall back to another tag, when the highest tag's
+`pyproject.toml` version is not the tag's, or when its tree has no
+`browser/build.py`; nothing is then deployed.
 
 If a tag's test job fails, nothing was published or deployed from it. Delete
 the tag before anything else is pushed to main or as a `v*` tag, and before any
-run is re-run: if it is the highest annotated `vN.N.N` tag, the next deploy
-would otherwise build the root from it, or fail on it. Delete it with:
+run is re-run: if it is the highest annotated `vN.N.N` tag, the next run's
+pages-build would otherwise build the root from it, or fail on it. Delete it
+with:
 
     git push origin --delete refs/tags/vX.Y.Z
     git tag -d vX.Y.Z
 
-If the test job passed and the image or pages job failed, do not delete the
-tag: the other job may already have published or deployed from it. Re-run the
-failed jobs:
+Do not re-run the deleted tag's run; to release, tag again as in step 3 (step 4
+of a backport).
+
+If the test job passed and the image, pages-build or pages-deploy job failed,
+do not delete the tag: another job may already have published or deployed from
+it. Re-run the failed jobs, under the rule below:
 
     gh run rerun <run-id> --failed
+
+A re-run that reaches pages-deploy, whether of pages-deploy alone, of
+pages-build too, or of every job, deploys that run's build over the page. A
+re-run of pages-deploy alone does not rebuild: it deploys the build that the
+run's pages-build uploaded, with the root chosen from the tags that existed
+when pages-build checked out. A re-run of a main run's image job publishes that
+run's commit as the `main` image. So re-run only the latest run of main or of a
+`v*` tag, and only while no other run of main or of a `v*` tag is in progress
+or queued. A failure in an older run is left to the next push to main: once
+that push's run passes, it has deployed the page and published the `main`
+image. If an older run of main published no image, its commit gets no
+`sha-<short>` image. `gh run list --workflow docker-image.yml` lists the runs,
+and `gh run view <run-id>` shows which of a run's jobs passed.
+
+The one exception is an older tag run, of a version after 0.2.0, whose image
+job failed: no later run publishes its `X.Y.Z`. While no other run of main or
+of a `v*` tag is in progress or queued, re-run that job alone, which deploys
+nothing, with the job's id from the first command:
+
+    gh run view <run-id> --json jobs --jq '.jobs[] | {name, databaseId}'
+    gh run rerun --job <job-id>
+
+The build is kept for seven days after it is uploaded, and a re-run of
+pages-deploy alone needs it. Once it has expired, leave the failed deploy: the
+next run of main that passes deploys the page.
+
+A re-run that runs pages-build again after an earlier attempt's upload finished
+uploads another `github-pages` artifact, and pages-deploy then fails because it
+finds more than one. That includes a re-run of every job, and a re-run of
+failed jobs when pages-build failed after its upload. Before such a re-run,
+delete the run's `github-pages` artifacts. If pages-deploy has already failed
+that way, delete every one but the newest and re-run the failed jobs. The first
+command lists them, oldest first:
+
+    gh api repos/janowoc/northplan/actions/runs/<run-id>/artifacts --jq '.artifacts | sort_by(.created_at)[] | select(.name == "github-pages") | [.id, .created_at] | @tsv'
+    gh api -X DELETE repos/janowoc/northplan/actions/artifacts/<artifact-id>
 
 The image job decides `X.Y` and `latest` from the tags that exist when it
 checks out, and pushes them when its build ends. Two tag runs that overlap can

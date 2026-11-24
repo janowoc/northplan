@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Jan Owoc
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""browser/site.py: which tag is the root, what it refuses, and that it cleans up."""
+"""browser/site.py and the workflow around it.
+
+Which tag is the root, what the script refuses, that it cleans up, how the
+image job asks it for the moving tags, and how the page is built and deployed.
+"""
 
 from __future__ import annotations
 
@@ -790,3 +794,103 @@ def test_the_image_job_asks_the_script_for_its_moving_tags(
     assert site.main(["site.py", "--image-tags", "v7.7.7"]) == 0
     printed = capsys.readouterr().out.splitlines()
     assert {line.split("=", 1)[0] for line in printed} == read
+
+
+def workflow_document() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+def workflow_jobs() -> dict[str, dict]:
+    return workflow_document()["jobs"]
+
+
+def jobs_using(jobs: dict[str, dict], action: str) -> list[str]:
+    return [
+        name
+        for name, job in jobs.items()
+        if any(step.get("uses", "").startswith(action) for step in job["steps"])
+    ]
+
+
+def test_the_pages_deploy_job_only_deploys_what_pages_build_uploaded() -> None:
+    jobs = workflow_jobs()
+    assert jobs_using(jobs, "actions/deploy-pages@") == ["pages-deploy"]
+    assert jobs_using(jobs, "actions/upload-pages-artifact@") == ["pages-build"]
+    deploy = jobs["pages-deploy"]
+    assert len(deploy["steps"]) == 1
+    assert deploy["steps"][0]["uses"].startswith("actions/deploy-pages@")
+    assert deploy["steps"][0]["id"] == "deployment"
+    assert set(deploy["steps"][0]) == {"id", "uses"}
+    assert deploy["needs"] == "pages-build"
+    assert "if" not in deploy
+
+
+def test_only_the_pages_deploy_job_can_deploy() -> None:
+    workflow = workflow_document()
+    assert workflow["permissions"] == {"contents": "read"}
+    jobs = workflow["jobs"]
+    deploy = jobs["pages-deploy"]
+    assert deploy["permissions"] == {"contents": "read", "pages": "write", "id-token": "write"}
+    assert deploy["environment"] == {
+        "name": "github-pages",
+        "url": "${{ steps.deployment.outputs.page_url }}",
+    }
+    assert deploy["concurrency"] == {"group": "pages", "cancel-in-progress": False}
+    for name, job in jobs.items():
+        if name == "pages-deploy":
+            continue
+        permissions = job.get("permissions", workflow["permissions"])
+        assert permissions.get("pages") != "write", name
+        assert permissions.get("id-token") != "write", name
+        assert "environment" not in job, name
+        concurrency = job.get("concurrency")
+        group = concurrency.get("group") if isinstance(concurrency, dict) else concurrency
+        assert group != "pages", name
+
+
+def test_the_pages_build_job_builds_from_every_tag_after_the_tests() -> None:
+    jobs = workflow_jobs()
+    assert jobs_using(jobs, "actions/upload-pages-artifact@") == ["pages-build"]
+    build = jobs["pages-build"]
+    assert build["needs"] == "test"
+    assert build["if"] == (
+        "github.event_name == 'push' && (github.ref == 'refs/heads/main' "
+        "|| startsWith(github.ref, 'refs/tags/v'))"
+    )
+    assert build["permissions"] == {"contents": "read"}
+    steps = build["steps"]
+    assert steps[0]["uses"].startswith("actions/checkout@")
+    assert steps[0]["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    site = [
+        i
+        for i, step in enumerate(steps)
+        if step.get("run", "").startswith("python3 browser/site.py ")
+    ]
+    assert len(site) == 1
+    assert steps[site[0]] == {
+        "run": 'python3 browser/site.py "$RUNNER_TEMP/site" "$MAIN_REF"',
+        "env": {"MAIN_REF": "${{ github.ref_type == 'tag' && 'origin/main' || github.sha }}"},
+    }
+    upload = [
+        i
+        for i, step in enumerate(steps)
+        if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    ]
+    assert len(upload) == 1
+    assert steps[upload[0]]["with"] == {
+        "path": "${{ runner.temp }}/site",
+        "retention-days": 7,
+    }
+    assert site[0] < upload[0]
+    assert len(steps) == 3
+    assert site == [1]
+    assert upload == [2]
+    assert set(steps[2]) == {"uses", "with"}
+    assert "continue-on-error" not in build
+
+
+def test_no_job_continues_on_error() -> None:
+    for name, job in workflow_jobs().items():
+        assert "continue-on-error" not in job, name
+        for i, step in enumerate(job.get("steps") or []):
+            assert "continue-on-error" not in step, f"{name} step {i}"
