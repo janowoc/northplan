@@ -22,7 +22,10 @@ which source to check, never what the answer is.
   health premium hooks it would force into the template.
 - **Federally regulated pension jurisdiction.** Needs a file of its own with
   the OSFI LIF table. Decide the code before writing it: `federal` collides
-  with the tax file; `pbsa` is clearer.
+  with the tax file and `pbsa` is clearer, but the scenario schema admits only
+  two-letter codes (`JurisdictionCode`), so either the code is two letters, and
+  so also accepted by the schema as a province code, or the pattern changes,
+  and with it the list of available codes in `engine/scenario/locked_in.py`.
 - **The Alberta LIF greater-of rule.** `ab.yaml` records the flag. Modelling
   it needs the prior year's investment earnings carried per account, credited
   growth only, not closing minus opening. See L27.
@@ -30,5 +33,6 @@ which source to check, never what the answer is.
   It is a step table with a top-up, not a line, and it is computed on the
   prior year's income for a July-to-June benefit year. See L2.
 - **More policies.** Dynamic spending rules, a glide path per account, RESP
-  capital preservation near enrolment, spousal RRSPs. See L44.
+  capital preservation near enrolment, spousal RRSPs. See L44, L37 for the
+  glide path and RESP capital preservation, and L15 and L25 for spousal RRSPs.
 - **Stochastic inflation** and mortality improvement scales. See L6, L8.
