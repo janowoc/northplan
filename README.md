@@ -15,9 +15,11 @@ Three use cases, one engine:
 | Decumulation | Withdrawal order and bracket ceiling; CPP, OAS and RRIF conversion ages |
 
 One run covers a household from the start year to the second death, so the
-same simulation serves all three. The objective is the after-tax estate at
-death with spending met; success probability and GIS exposure are reported
-alongside it.
+same simulation serves all three. The optimizer maximises one objective,
+chosen for the run: the median after-tax estate, a certainty-equivalent
+estate, or the probability of never running out. Whichever it maximises, it
+reports each policy's median after-tax estate, success probability and GIS
+exposure.
 
 There is exactly one simulation loop and it is over months. If a second one
 appears, something has gone wrong.
@@ -71,11 +73,11 @@ Scope of the first version: Alberta residents, no GIS, no Quebec. See
    parameter year serves the whole run. An indexed amount is constant in real
    terms except for the erosion it suffers between adjustment dates, which is a
    constant factor per indexation schedule computed once per scenario in
-   `engine/core/indexation.py`. An amount fixed in nominal terms by statute —
-   the pension income amount, the CESG figures, a non-indexed DB pension —
-   decays without limit and is decayed explicitly. Which amounts are on which
-   schedule is declared in the parameter files, not in code. Conversion to
-   nominal happens only at display.
+   `engine/core/indexation.py`. An amount fixed in nominal terms — by statute,
+   as the federal pension income amount and the CESG limits are, or by a
+   plan's terms, as a non-indexed DB pension is — decays without limit and is
+   decayed explicitly. Which amounts are on which schedule is declared in the
+   parameter files, not in code. Conversion to nominal happens only at display.
 6. **The timestep is one month.** Life events happen mid-year, benefits are
    paid monthly, and the balance owing on a tax year is paid in the filing
    month of the next one. Annual events — the assessment, contribution room,
@@ -121,10 +123,11 @@ browser/         the static page that runs the engine in the browser under
 cli/             YAML scenario in, results out
 scenarios/       example.yaml, late_life_couple.yaml and minimal.yaml are committed;
                  *.local.yaml is gitignored
-docs/            limitations.md (every simplification), maintenance.md (pins)
+docs/            limitations.md (every simplification), maintenance.md (pins, releases)
   archive/       the roadmap that built v0.1.0, not updated
 tests/golden/    cases whose expected values the human supplied — sacred
-tests/character*/ behaviour snapshots, regenerated only on instruction
+tests/character*/ kept for behaviour snapshots, regenerated only on
+                 instruction; empty today
 tests/params/    structural and provenance tests over the real parameter files
 ```
 
@@ -307,7 +310,7 @@ ruff format .
 This needs [uv](https://docs.astral.sh/uv/). `uv sync --locked` installs the
 versions in `uv.lock` on the Python in `.python-version`, the ones the image
 and CI use. [docs/maintenance.md](docs/maintenance.md) says how each pinned
-version is updated.
+version is updated and how a release is made.
 
 `pytest` runs the tests on as many worker processes as `-n auto` picks, at
 most eight; a larger `-n` also needs a larger `--maxprocesses`. `pytest -n 0`
