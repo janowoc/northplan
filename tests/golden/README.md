@@ -14,12 +14,14 @@ checks under `tests/params/`: those ask whether a file is internally
 consistent, this asks whether the engine's arithmetic agrees with the world.
 
 Cases are written by the human, by hand, from that external source. An agent
-may add the harness that turns a case file into a test — the files in this
-directory other than `cases/*.yaml` — but must never add, edit, or delete a
-case, and must never edit an expected value to make a failing test pass. A
-golden test that fails means the implementation is wrong until a human says
-otherwise; it does not mean the test's expected value needs adjusting. If a
-case looks wrong, the right response is to say so and stop, not to fix it.
+may add the harness that turns a case file into a test — the Python files in
+this directory — but must never add, edit, or delete a case under `cases/`, or
+edit or delete `sources/2026.ods`, the human's working spreadsheet for 2026,
+with a sheet each for gross tax and the OAS repayment, and must never edit an
+expected value to make a failing test pass. A golden test that fails means the
+implementation is wrong until a human says otherwise; it does not mean the
+test's expected value needs adjusting. If a case looks wrong, the right
+response is to say so and stop, not to fix it.
 
 ## Why `source` and `checked` are mandatory
 
