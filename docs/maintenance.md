@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: 2026 Jan Owoc -->
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
-# Maintaining the pins
+# Maintenance: pins and releases
 
 Every version the image and CI install is pinned, so that two builds of one
 commit install the same packages on the same base image. GitHub's runner
 image, `ubuntu-24.04`, is not pinned, and neither are the system libraries
 that `playwright install --with-deps` installs on it. This page lists each
-pin and how it moves.
+pin and how it moves, and then how a release and a backport are made.
 
 | Pin | Where | Updated by |
 | --- | --- | --- |
