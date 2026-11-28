@@ -57,12 +57,13 @@ Review in this order, and grep aggressively rather than trusting a read:
    literal `0.15`, `1.0`, `12` or similar in tax-adjacent code is guilty until
    proven to be a structural constant (an array index, a count of months as a
    unit conversion, an identity element) rather than a policy number.
-2. **Altered expected values in tests.** Compare against git history where
-   available. Any expected value in `tests/golden/` that changed in the same
-   change as the implementation it tests is a BLOCKER. Also flag widened
-   tolerances (`pytest.approx` with a new `rel`/`abs`), added `skip`, `xfail`,
-   deleted assertions, or a test narrowed so it no longer exercises the case
-   it names.
+2. **Altered expected values in tests.** You have no git. Compare against the
+   earlier tree or the diff your brief hands you; if it hands you neither, say
+   that you could not check. Any expected value in `tests/golden/` that
+   changed in the same change as the implementation it tests is a BLOCKER.
+   Also flag widened tolerances (`pytest.approx` with a new `rel`/`abs`),
+   added `skip`, `xfail`, deleted assertions, or a test narrowed so it no
+   longer exercises the case it names.
 3. **Silent unit and convention mismatches.** This is the largest category
    in a monthly engine and deserves the most time.
    - **Monthly vs annual amounts.** The timestep is a month; tax is a year.
@@ -70,7 +71,13 @@ Review in this order, and grep aggressively rather than trusting a read:
      rate applied monthly that should be annual compounds to something far
      worse. Neither raises. Functions in `engine/benefits/` return monthly
      amounts unless the name ends `_annual`; functions in `engine/tax/` take
-     annual figures and are called once a year from the year-end close.
+     annual figures, and the assessment is made once a year from the year-end
+     close. Three exceptions: `engine/tax/withholding.py` is monthly; in any
+     month, a policy may call `federal.net_income` and
+     `brackets.room_below_edge`, and phase 6 may call
+     `federal.eligible_pension_income`, on the year to date (the bracket fill
+     adds a projection of the rest of the year, L44); and the terminal return
+     at the second death is assessed in the month of that death (L42).
    - **Annual limits enforced per month.** A LIF maximum, a contribution room
      figure, an RESP grant maximum, or a bracket ceiling checked against one
      month's amount rather than the year-to-date total permits twelve times
@@ -99,14 +106,20 @@ Review in this order, and grep aggressively rather than trusting a read:
      factor on a figure that came from `RealParamSet`.
    - `erosion_factor(inflation_rate, adjustments_per_year)` is the constant for
      an amount that IS indexed; `unindexed_factor(inflation_rate, month_index)`
-     is for one fixed in nominal terms by statute. Note the asymmetry: the
-     first does not depend on the month and the second must. A per-month
-     recomputation of the erosion factor, or an adjustment calendar threaded
-     through the loop, has reintroduced a model that was deliberately removed;
-     an unindexed amount that does NOT vary with `month_index` has silently
-     stopped decaying, which overstates it without limit.
-   - There is no `real_factor` and no `lag_months` argument. A reference to
-     either, anywhere, is stale and is itself a finding.
+     is for one fixed in nominal terms: a parameter on a schedule with no
+     adjustment months, and a DB pension that is not indexed, which counts its
+     months from its own start, or from the opening if it began earlier. Note
+     the asymmetry: the first does not depend on the month and the second
+     must. A per-month recomputation of the erosion factor, or an adjustment
+     calendar threaded through the loop, has reintroduced a model that was
+     deliberately removed; an unindexed amount that does NOT vary with
+     `month_index` has silently stopped decaying, which overstates it without
+     limit. A nominal balance the state carries takes one year of the same
+     decay each January after the first instead, through
+     `nominal_carry_factor` (L57).
+   - There is no function or argument named `real_factor`, and no
+     `lag_months` argument. A reference to either is stale and is itself a
+     finding. `as_filed_to_real_factor` is a different function and is live.
 4. **Ordering errors in the loop, within a month and across month
    boundaries.** The order within a month is fixed in `advance_month`'s
    docstring; the January, December, and filing-month phases are fixed in
@@ -117,7 +130,9 @@ Review in this order, and grep aggressively rather than trusting a read:
    - Whether the OAS repayment is assessed once, at the December close, on the
      current year's net income including OAS, capped at OAS received that
      year, and settled with the balance owing; any monthly withholding of it,
-     or any use of a prior year's income for it, is a finding.
+     or any use of a prior year's income for it, is a finding. The one
+     exception is the terminal return at the second death, which assesses it
+     with the rest of that year's tax in the month of the death (L42).
    - Whether contributions, growth, withdrawals, benefits, and the year-to-date
      accrual happen in the intended sequence within the month, and whether
      growth uses this month's return applied once.
@@ -169,8 +184,9 @@ Review in this order, and grep aggressively rather than trusting a read:
    post-grant, while the minimums and maximums are still fixed. **Negative
    month indexes**, which mean an event predating the run — a pension already
    in pay, an employment band already ended, a bridge whose end month is
-   behind the opening. A run that ends before the filing month, leaving a
-   balance owing unpaid. December and January in the same step sequence. A
+   behind the opening. A second death in or before the filing month, whose
+   estate settles the prior year's balance owing (L42); in the start year
+   there is none (L4). December and January in the same step sequence. A
    death in the first month, and one in December. A benefit starting in
    December. A person who never starts a benefit. The first and last simulated
    month, and the first and last simulated year, which are not the same
